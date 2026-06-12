@@ -75,40 +75,48 @@ struct PanelHeader: View {
     }
 }
 
-/// 文件 / 源代码管理两个导航图标（点击已选中的会收起侧边栏）。
-/// 侧边栏展开时显示在其标题区；收起后由 MainSplitView 在详情工具栏补位。
+/// 文件 / 源代码管理导航：胶囊分段样式（点击已选中的会收起侧边栏）。
 struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        navButton(
-            tab: .files,
-            systemImage: "folder",
-            help: tr("文件 (⌘1)", "Files (⌘1)")
-        )
-        navButton(
-            tab: .changes,
-            systemImage: "plus.forwardslash.minus",
-            badge: vm.changes.count,
-            help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
-        )
+        HStack(spacing: 2) {
+            segment(
+                tab: .files,
+                systemImage: "folder",
+                help: tr("文件 (⌘1)", "Files (⌘1)")
+            )
+            segment(
+                tab: .changes,
+                systemImage: "plus.forwardslash.minus",
+                badge: vm.changes.count,
+                help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
+            )
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
     }
 
-    private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
+    private func segment(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
         let selected = vm.sidebarVisible && vm.sidebarTab == tab
-        // label 结构与 SyncControls 完全一致（Image+Text），
-        // overlay/offset 角标会让工具栏按钮失去点击响应
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            HStack(spacing: 2) {
+            HStack(spacing: 3) {
                 Image(systemName: systemImage)
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .font(.system(size: 11, weight: .medium))
                 Text(badge > 0 ? "\(min(badge, 99))" : "")
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
             }
+            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(selected ? Color.accentColor.opacity(0.16) : .clear)
+            )
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
         .help(help)
     }
 }
