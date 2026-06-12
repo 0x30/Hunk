@@ -856,9 +856,11 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 在历史面板查看某个文件的全部提交。
+    /// 在历史面板查看某个文件的全部提交（侧边栏收起时自动展开）。
     func showFileHistory(_ path: String) {
+        sidebarVisible = true
         sidebarTab = .changes
+        historyPanelCollapsed = false
         setHistoryFilter(path)
     }
 
@@ -909,8 +911,9 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 在文件列表中定位并打开。
+    /// 在文件列表中定位并打开（侧边栏收起时自动展开）。
     func revealInFiles(_ path: String) {
+        sidebarVisible = true
         sidebarTab = .files
         selection = .file(path: path)
         revealFileRequest = path
