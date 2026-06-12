@@ -84,18 +84,6 @@ struct ChangesListView: View {
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)
-        .overlay {
-            if vm.changes.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.quaternary)
-                    Text(tr("没有更改", "No changes"))
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                }
-            }
-        }
         .confirmationDialog(
             discardTitle,
             isPresented: Binding(
