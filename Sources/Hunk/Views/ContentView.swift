@@ -88,48 +88,14 @@ struct MainSplitView: View {
             DetailView()
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar(removing: .sidebarToggle)
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .navigationSubtitle(vm.headSummary ?? "")
         .toolbar {
-            // Xcode 式：导航器图标组（点选中的再点一次收起侧边栏），分支与同步紧随其后
             ToolbarItemGroup(placement: .navigation) {
-                navButton(
-                    tab: .files,
-                    systemImage: "folder",
-                    help: tr("文件 (⌘1)", "Files (⌘1)")
-                )
-                navButton(
-                    tab: .changes,
-                    systemImage: "plus.forwardslash.minus",
-                    badge: vm.changes.count,
-                    help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
-                )
                 BranchMenu()
                 SyncControls()
             }
         }
-    }
-
-    private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
-        let selected = vm.sidebarVisible && vm.sidebarTab == tab
-        return Button {
-            vm.toggleSidebarTab(tab)
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .overlay(alignment: .topTrailing) {
-                    Text(badge > 0 ? "\(min(badge, 99))" : "")
-                        .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, badge > 0 ? 3 : 0)
-                        .padding(.vertical, badge > 0 ? 0.5 : 0)
-                        .background(Capsule().fill(badge > 0 ? Color.accentColor : .clear))
-                        .offset(x: 9, y: -5)
-                }
-        }
-        .help(help)
     }
 }
 

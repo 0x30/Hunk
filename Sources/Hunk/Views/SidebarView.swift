@@ -4,19 +4,69 @@ struct SidebarView: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        switch vm.sidebarTab {
-        case .files:
-            FilesView()
-        case .changes:
-            VStack(spacing: 0) {
-                // VS Code 式：提交信息在最上面
-                CommitBarView()
-                Divider()
-                ChangesListView()
-                Divider()
-                HistoryPanel()
+        Group {
+            switch vm.sidebarTab {
+            case .files:
+                FilesView()
+            case .changes:
+                VStack(spacing: 0) {
+                    // VS Code 式：提交信息在最上面
+                    CommitBarView()
+                    Divider()
+                    ChangesListView()
+                    Divider()
+                    HistoryPanel()
+                }
             }
         }
+        .toolbar(removing: .sidebarToggle)
+        // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）
+        .toolbar {
+            ToolbarItemGroup {
+                SidebarNavButtons()
+            }
+        }
+    }
+}
+
+/// 文件 / 源代码管理两个导航图标（点击已选中的会收起侧边栏）。
+/// 侧边栏展开时显示在其标题区；收起后由 MainSplitView 在详情工具栏补位。
+struct SidebarNavButtons: View {
+    @EnvironmentObject var vm: RepoViewModel
+
+    var body: some View {
+        navButton(
+            tab: .files,
+            systemImage: "folder",
+            help: tr("文件 (⌘1)", "Files (⌘1)")
+        )
+        navButton(
+            tab: .changes,
+            systemImage: "plus.forwardslash.minus",
+            badge: vm.changes.count,
+            help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
+        )
+    }
+
+    private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
+        let selected = vm.sidebarVisible && vm.sidebarTab == tab
+        return Button {
+            vm.toggleSidebarTab(tab)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .overlay(alignment: .topTrailing) {
+                    Text(badge > 0 ? "\(min(badge, 99))" : "")
+                        .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, badge > 0 ? 3 : 0)
+                        .padding(.vertical, badge > 0 ? 0.5 : 0)
+                        .background(Capsule().fill(badge > 0 ? Color.accentColor : .clear))
+                        .offset(x: 9, y: -5)
+                }
+        }
+        .help(help)
     }
 }
 
