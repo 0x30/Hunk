@@ -239,6 +239,122 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
+    // MARK: - 提交历史
+
+    public struct Commit: Identifiable, Hashable, Sendable {
+        public let hash: String
+        public let shortHash: String
+        public let author: String
+        public let subject: String
+        public let date: Date
+        /// 分支 / 标签装饰（HEAD -> main、origin/main…）
+        public let refs: [String]
+        public var id: String { hash }
+    }
+
+    /// 历史中的一行：提交行或纯图形延续行（"|/" 之类）。
+    public struct LogEntry: Identifiable, Hashable, Sendable {
+        public let id: Int
+        public let graph: String
+        public let commit: Commit?
+    }
+
+    /// 提交历史。`path` 非空时为单文件历史（--follow，无图形）；
+    /// 否则为全分支图形历史。
+    public func history(limit: Int = 300, path: String? = nil) async throws -> [LogEntry] {
+        let format = "%x01%H%x09%h%x09%an%x09%at%x09%D%x09%s"
+        let args: [String]
+        if let path {
+            args = ["log", "--follow", "-n", "\(limit)", "--format=\(format)", "--", path]
+        } else {
+            args = ["log", "--all", "--graph", "--date-order", "-n", "\(limit)", "--format=\(format)"]
+        }
+        let result = try await git.run(args, allowedExitCodes: [0, 128])
+        guard result.exitCode == 0 else { return [] }
+
+        var entries: [LogEntry] = []
+        for (index, rawLine) in result.stdout.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            let line = String(rawLine)
+            guard let marker = line.range(of: "\u{01}") else {
+                entries.append(LogEntry(id: index, graph: line, commit: nil))
+                continue
+            }
+            let graph = String(line[..<marker.lowerBound])
+            let fields = line[marker.upperBound...]
+                .split(separator: "\t", maxSplits: 5, omittingEmptySubsequences: false)
+                .map(String.init)
+            guard fields.count >= 6 else { continue }
+            let refs = fields[4]
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            entries.append(LogEntry(
+                id: index,
+                graph: graph,
+                commit: Commit(
+                    hash: fields[0],
+                    shortHash: fields[1],
+                    author: fields[2],
+                    subject: fields[5],
+                    date: Date(timeIntervalSince1970: Double(fields[3]) ?? 0),
+                    refs: refs
+                )
+            ))
+        }
+        return entries
+    }
+
+    public struct CommitFileChange: Identifiable, Hashable, Sendable {
+        public let kind: ChangeKind
+        public let path: String
+        public let oldPath: String?
+        public var id: String { path }
+    }
+
+    /// 某个提交改动的文件列表。
+    public func filesChanged(in hash: String) async throws -> [CommitFileChange] {
+        let result = try await git.run(["show", "--name-status", "--format=", hash])
+        return Self.parseNameStatus(result.stdout)
+    }
+
+    /// 两个引用之间改动的文件列表。
+    public func filesChanged(from base: String, to target: String) async throws -> [CommitFileChange] {
+        let result = try await git.run(["diff", "--name-status", base, target])
+        return Self.parseNameStatus(result.stdout)
+    }
+
+    /// 某个提交里单个文件的 diff。
+    public func diff(in hash: String, path: String) async throws -> FileDiff? {
+        let result = try await git.run(["show", "--format=", hash, "--", path])
+        return DiffParser.parse(result.stdout).first
+    }
+
+    /// 两个引用之间单个文件的 diff。
+    public func diff(from base: String, to target: String, path: String) async throws -> FileDiff? {
+        let result = try await git.run(["diff", base, target, "--", path])
+        return DiffParser.parse(result.stdout).first
+    }
+
+    private static func parseNameStatus(_ text: String) -> [CommitFileChange] {
+        text.split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: "\t").map(String.init)
+            guard parts.count >= 2, let statusChar = parts[0].first else { return nil }
+            let kind: ChangeKind
+            switch statusChar {
+            case "A": kind = .added
+            case "D": kind = .deleted
+            case "R": kind = .renamed
+            case "C": kind = .copied
+            case "T": kind = .typeChanged
+            default: kind = .modified
+            }
+            if (statusChar == "R" || statusChar == "C"), parts.count >= 3 {
+                return CommitFileChange(kind: kind, path: parts[2], oldPath: parts[1])
+            }
+            return CommitFileChange(kind: kind, path: parts[1], oldPath: nil)
+        }
+    }
+
     // MARK: - Blame
 
     public struct BlameInfo: Sendable {
