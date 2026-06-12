@@ -96,6 +96,7 @@ final class RepoViewModel: ObservableObject {
     @Published var pendingDiscard: FileChange?
     @Published var pendingFolderDrop: URL?
     @Published var showQuickOpen = false
+    @Published var showBranchPanel = false
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。
     @Published var revealFileRequest: String?
 

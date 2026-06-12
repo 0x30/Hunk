@@ -76,6 +76,24 @@ struct ContentView: View {
                 QuickOpenView()
             }
         }
+        // 分支面板：窗口内浮层（贴近工具栏分支胶囊的位置）
+        .overlay(alignment: .topLeading) {
+            if vm.showBranchPanel {
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .onTapGesture { vm.showBranchPanel = false }
+
+                    BranchPopover(isPresented: $vm.showBranchPanel)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(.regularMaterial))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
+                        .shadow(color: .black.opacity(0.25), radius: 20, y: 8)
+                        .padding(.leading, 14)
+                        .padding(.top, 6)
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             guard vm.repoRoot != nil, !vm.isSyncing else { return }
             Task { await vm.refresh() }
@@ -108,8 +126,11 @@ struct MainSplitView: View {
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())
         .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
+            // 分支与同步分属两个独立组（各自成胶囊）
+            ToolbarItem(placement: .navigation) {
                 BranchMenu()
+            }
+            ToolbarItemGroup(placement: .navigation) {
                 SyncControls()
             }
         }
