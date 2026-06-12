@@ -167,6 +167,12 @@ private struct AppCommands: Commands {
             .keyboardShortcut("2", modifiers: .command)
             .disabled(vm == nil)
 
+            Button(tr("终端", "Terminal")) {
+                vm?.toggleTerminal()
+            }
+            .keyboardShortcut("j", modifiers: .command)
+            .disabled(vm?.repoRoot == nil)
+
             Divider()
 
             Button(tr("下一个标签页", "Next Tab")) {

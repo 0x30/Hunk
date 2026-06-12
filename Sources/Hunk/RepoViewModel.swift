@@ -101,6 +101,20 @@ final class RepoViewModel: ObservableObject {
     @Published var showBranchPanel = false
     @Published var showGlobalSearch = false
 
+    // MARK: 内嵌终端（⌘J）
+
+    @Published var showTerminal = false
+    /// 终端会话跨显示/隐藏保活，挂在视图模型上随窗口走
+    let terminal = TerminalSession()
+
+    func toggleTerminal() {
+        showTerminal.toggle()
+        if !showTerminal {
+            // 关闭面板后把键盘还给主内容
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+    }
+
     /// 打开全局搜索结果：跳到对应文件并滚动选中该行。
     func openSearchResult(_ hit: Repository.GrepHit) {
         showGlobalSearch = false
@@ -256,6 +270,10 @@ final class RepoViewModel: ObservableObject {
         } else if let last = defaults.string(forKey: "lastRepo"),
                   FileManager.default.fileExists(atPath: last) {
             Task { await open(URL(fileURLWithPath: last)) }
+        }
+        // shell 退出（exit）时自动收起终端面板
+        terminal.onExit = { [weak self] in
+            Task { @MainActor in self?.showTerminal = false }
         }
     }
 

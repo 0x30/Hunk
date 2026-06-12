@@ -178,7 +178,16 @@ struct MainSplitView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 460)
         } detail: {
-            DetailView()
+            // 终端是详情区底部的可拖拽分栏（VS Code 式，⌘J 切换）
+            VSplitView {
+                DetailView()
+                    .frame(minHeight: 160)
+                    .layoutPriority(1)
+                if vm.showTerminal {
+                    TerminalPanel()
+                        .frame(minHeight: 100, idealHeight: 240)
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
