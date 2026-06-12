@@ -301,6 +301,8 @@ struct ChangeRow: View {
 
     @ViewBuilder
     private var hoverActions: some View {
+        // 注意：可选中 List 行内的按钮必须用 .borderless，
+        // .plain 的点击会被行选中吞掉
         HStack(spacing: 4) {
             switch area {
             case .unstaged:
@@ -308,32 +310,36 @@ struct ChangeRow: View {
                     vm.requestDiscard(change)
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(tr("丢弃更改", "Discard Changes"))
 
                 Button {
                     vm.stageFile(change.path)
                 } label: {
                     Image(systemName: "plus")
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(tr("暂存", "Stage"))
             case .staged:
                 Button {
                     vm.unstageFile(change.path)
                 } label: {
                     Image(systemName: "minus")
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(tr("取消暂存", "Unstage"))
             case .conflicted:
                 Button {
                     vm.stageFile(change.path)
                 } label: {
                     Image(systemName: "checkmark")
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(tr("标记为已解决", "Mark as Resolved"))
             }
         }
