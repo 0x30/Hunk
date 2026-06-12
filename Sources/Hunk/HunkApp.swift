@@ -36,8 +36,37 @@ struct HunkApp: App {
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!vm.editorDirty)
+
+                Button(tr("关闭标签页", "Close Tab")) {
+                    vm.closeActiveTab()
+                }
+                .keyboardShortcut("w", modifiers: .command)
             }
             CommandGroup(after: .toolbar) {
+                Button(tr("文件", "Files")) {
+                    vm.sidebarTab = .files
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button(tr("源代码管理", "Source Control")) {
+                    vm.sidebarTab = .changes
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Divider()
+
+                Button(tr("下一个标签页", "Next Tab")) {
+                    vm.activateNeighborTab(offset: 1)
+                }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+
+                Button(tr("上一个标签页", "Previous Tab")) {
+                    vm.activateNeighborTab(offset: -1)
+                }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+
+                Divider()
+
                 Button(tr("刷新", "Refresh")) {
                     Task { await vm.refresh() }
                 }

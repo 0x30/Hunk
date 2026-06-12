@@ -61,6 +61,16 @@ struct ChangesListView: View {
                     }
                 }
             }
+
+            if !vm.stashes.isEmpty {
+                Section {
+                    ForEach(vm.stashes) { stash in
+                        StashRow(stash: stash)
+                    }
+                } header: {
+                    sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count) { EmptyView() }
+                }
+            }
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)
@@ -211,6 +221,37 @@ struct ChangesListView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
+    }
+}
+
+/// 贮藏行（应用 / 弹出 / 删除 via 右键菜单）。
+private struct StashRow: View {
+    @EnvironmentObject var vm: RepoViewModel
+    let stash: Stash
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "archivebox")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(stash.message)
+                    .lineLimit(1)
+                    .font(.callout)
+                Text(stash.ref)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 1)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button(tr("应用", "Apply")) { vm.applyStash(stash, pop: false) }
+            Button(tr("弹出（应用并删除）", "Pop (Apply & Drop)")) { vm.applyStash(stash, pop: true) }
+            Divider()
+            Button(tr("删除", "Drop"), role: .destructive) { vm.dropStash(stash) }
+        }
     }
 }
 

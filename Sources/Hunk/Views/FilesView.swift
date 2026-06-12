@@ -1,27 +1,61 @@
 import SwiftUI
 import HunkCore
 
-/// 「文件」标签页：整个工作区的文件树（git ls-files，跟踪 + 未跟踪未忽略）。
+/// 「文件」标签页：工作区文件树。
+/// 键盘：↑↓ 移动选择，← 折叠目录/跳到父目录，→ 展开目录/进入第一个子项，⏎ 切换目录展开。
 struct FilesView: View {
     @EnvironmentObject var vm: RepoViewModel
+    @State private var expanded: Set<String> = []
+    @State private var localSelection: String?
+    @State private var didInitialExpand = false
+    @FocusState private var focused: Bool
+
+    private struct Row: Identifiable {
+        let node: FileNode
+        let depth: Int
+        var id: String { node.path }
+    }
+
+    private var rows: [Row] {
+        flatten(vm.workspaceTree, depth: 0)
+    }
+
+    private func flatten(_ nodes: [FileNode], depth: Int) -> [Row] {
+        var result: [Row] = []
+        for node in nodes {
+            result.append(Row(node: node, depth: depth))
+            if node.isDirectory, expanded.contains(node.path) {
+                result += flatten(node.children ?? [], depth: depth + 1)
+            }
+        }
+        return result
+    }
 
     var body: some View {
-        List(selection: $vm.selection) {
-            OutlineGroup(vm.workspaceTree, children: \.children) { node in
-                if node.isDirectory {
-                    HStack(spacing: 5) {
-                        FileIconView(fileName: node.name, isDirectory: true)
-                        Text(node.name)
-                            .lineLimit(1)
-                    }
-                } else {
-                    FileRow(node: node)
-                        .tag(SidebarSelection.file(path: node.path))
-                }
+        List(selection: $localSelection) {
+            ForEach(rows) { row in
+                FileTreeRow(
+                    node: row.node,
+                    depth: row.depth,
+                    isExpanded: expanded.contains(row.node.path),
+                    toggle: { toggle(row.node) }
+                )
+                .tag(row.node.path)
             }
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)
+        .focused($focused)
+        .onAppear {
+            focused = true
+            initialExpandIfNeeded()
+        }
+        .onChange(of: vm.workspaceFiles) { _, _ in
+            initialExpandIfNeeded()
+        }
+        .onKeyPress(.leftArrow) { handleLeft() }
+        .onKeyPress(.rightArrow) { handleRight() }
+        .onKeyPress(.return) { handleReturn() }
         .overlay {
             if vm.workspaceTree.isEmpty {
                 Text(tr("空仓库", "Empty repository"))
@@ -29,23 +63,100 @@ struct FilesView: View {
             }
         }
     }
+
+    /// 树数据首次就绪时展开第一层目录。
+    private func initialExpandIfNeeded() {
+        guard !didInitialExpand, !vm.workspaceTree.isEmpty else { return }
+        didInitialExpand = true
+        expanded.formUnion(vm.workspaceTree.filter(\.isDirectory).map(\.path))
+    }
+
+    private func toggle(_ node: FileNode) {
+        guard node.isDirectory else { return }
+        if expanded.contains(node.path) {
+            expanded.remove(node.path)
+        } else {
+            expanded.insert(node.path)
+        }
+    }
+
+    private var selectedRow: Row? {
+        guard let selected = localSelection else { return nil }
+        return rows.first { $0.id == selected }
+    }
+
+    private func handleLeft() -> KeyPress.Result {
+        guard let row = selectedRow else { return .ignored }
+        if row.node.isDirectory, expanded.contains(row.node.path) {
+            expanded.remove(row.node.path)
+            return .handled
+        }
+        // 跳到父目录
+        let parent = (row.node.path as NSString).deletingLastPathComponent
+        if !parent.isEmpty, rows.contains(where: { $0.id == parent }) {
+            localSelection = parent
+            return .handled
+        }
+        return .ignored
+    }
+
+    private func handleRight() -> KeyPress.Result {
+        guard let row = selectedRow, row.node.isDirectory else { return .ignored }
+        if !expanded.contains(row.node.path) {
+            expanded.insert(row.node.path)
+        } else if let firstChild = row.node.children?.first {
+            localSelection = firstChild.path
+        }
+        return .handled
+    }
+
+    private func handleReturn() -> KeyPress.Result {
+        guard let row = selectedRow else { return .ignored }
+        if row.node.isDirectory {
+            toggle(row.node)
+        } else {
+            vm.selection = .file(path: row.node.path)
+        }
+        return .handled
+    }
 }
 
-private struct FileRow: View {
+private struct FileTreeRow: View {
     @EnvironmentObject var vm: RepoViewModel
     let node: FileNode
+    let depth: Int
+    let isExpanded: Bool
+    let toggle: () -> Void
 
-    /// 该文件当前的变更状态（如有），行尾显示徽标。
     private var change: FileChange? {
         vm.changes.first { $0.path == node.path }
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            FileIconView(fileName: node.name)
+        HStack(spacing: 4) {
+            // 展开箭头（目录）/ 占位（文件）
+            Group {
+                if node.isDirectory {
+                    Button(action: toggle) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 12)
+
+            FileIconView(fileName: node.name, isDirectory: node.isDirectory, expanded: isExpanded)
+
             Text(node.name)
                 .lineLimit(1)
+
             Spacer(minLength: 4)
+
             if let kind = change?.unstaged ?? change?.staged {
                 Text(kind.badge)
                     .font(.caption.weight(.semibold).monospaced())
@@ -53,17 +164,25 @@ private struct FileRow: View {
                     .help(kind.localizedName)
             }
         }
+        .padding(.vertical, 1)
+        .padding(.leading, CGFloat(depth) * 14)
         .contentShape(Rectangle())
+        .onTapGesture {
+            // 单击：目录切换展开，文件打开（List 选中由 tag 机制处理）
+            if node.isDirectory {
+                toggle()
+            } else {
+                vm.selection = .file(path: node.path)
+            }
+        }
         .contextMenu {
-            if change != nil {
+            if let change {
                 Button(tr("查看更改", "View Changes")) {
                     vm.sidebarTab = .changes
-                    if let change {
-                        let area: ChangeArea = change.isConflicted
-                            ? .conflicted
-                            : (change.unstaged != nil ? .unstaged : .staged)
-                        vm.selection = .change(path: change.path, area: area)
-                    }
+                    let area: ChangeArea = change.isConflicted
+                        ? .conflicted
+                        : (change.unstaged != nil ? .unstaged : .staged)
+                    vm.selection = .change(path: change.path, area: area)
                 }
                 Divider()
             }

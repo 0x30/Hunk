@@ -81,20 +81,16 @@ struct DetailView: View {
             EmptyDetailView()
         case .change(let path, let area):
             if area == .conflicted {
-                EditorView(path: path, showConflictBar: true)
+                EditorArea(activePath: path, showConflictBar: true)
             } else if FileIcon.isImage(path) {
                 ImagePreviewView(path: path)
             } else if vm.editingChangedFile {
-                EditorView(path: path, showConflictBar: false)
+                EditorArea(activePath: path)
             } else {
                 DiffDetailView(path: path)
             }
         case .file(let path):
-            if FileIcon.isImage(path) {
-                ImagePreviewView(path: path)
-            } else {
-                EditorView(path: path, showConflictBar: !vm.conflictBlocks.isEmpty)
-            }
+            EditorArea(activePath: path, showConflictBar: !vm.conflictBlocks.isEmpty && vm.editorPath == path)
         }
     }
 }
