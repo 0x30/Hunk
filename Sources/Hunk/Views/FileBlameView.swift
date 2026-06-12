@@ -102,7 +102,8 @@ struct FileBlameView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 3)
-            .frame(width: 190, alignment: .leading)
+            .frame(width: 190, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .top)  // 撑满整个块的高度，色块覆盖全部行
             .background(blockTint(block).opacity(0.10))
             .overlay(alignment: .leading) {
                 Rectangle().fill(blockTint(block).opacity(0.7)).frame(width: 2)
