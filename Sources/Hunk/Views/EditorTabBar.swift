@@ -4,11 +4,34 @@ import SwiftUI
 struct EditorTabBar: View {
     @EnvironmentObject var vm: RepoViewModel
 
+    private var blameActive: Bool {
+        vm.blameViewPath != nil && vm.blameViewPath == vm.editorPath
+    }
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                ForEach(vm.openTabs, id: \.self) { path in
-                    EditorTabItem(path: path, isActive: path == vm.editorPath)
+        HStack(spacing: 0) {
+            // blame 视图开关：查看当前文件的逐块归属与提交
+            Button {
+                vm.toggleBlameView()
+            } label: {
+                Image(systemName: "person.text.rectangle")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(blameActive ? Color.accentColor : Color.secondary)
+                    .frame(width: 30, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(tr("Blame 视图：查看每一块代码的作者与提交", "Blame view: who wrote each block"))
+
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.5))
+                .frame(width: 1, height: 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(vm.openTabs, id: \.self) { path in
+                        EditorTabItem(path: path, isActive: path == vm.editorPath)
+                    }
                 }
             }
         }
@@ -103,6 +126,8 @@ struct EditorArea: View {
             }
             if FileIcon.isImage(activePath) {
                 ImagePreviewView(path: activePath)
+            } else if vm.blameViewPath == activePath {
+                FileBlameView(path: activePath)
             } else {
                 EditorView(path: activePath, showConflictBar: showConflictBar)
             }

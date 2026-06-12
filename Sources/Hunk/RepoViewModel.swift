@@ -78,6 +78,9 @@ final class RepoViewModel: ObservableObject {
     @Published var conflictIndex = 0
     @Published var scrollToLine: Int?
     @Published var blameText: String?
+    /// blame 视图：非空且等于当前文件时，编辑区显示整文件 blame 块
+    @Published var blameViewPath: String?
+    @Published var fileBlame: [Repository.BlameLine] = []
     private var buffers: [String: EditorBuffer] = [:]
     private var blameTask: Task<Void, Never>?
     private var blameCache: [String: String] = [:]
@@ -454,6 +457,21 @@ final class RepoViewModel: ObservableObject {
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 切换当前文件的 blame 视图。
+    func toggleBlameView() {
+        guard let path = editorPath else { return }
+        if blameViewPath == path {
+            blameViewPath = nil
+            return
+        }
+        blameViewPath = path
+        fileBlame = []
+        Task {
+            guard let repo else { return }
+            fileBlame = (try? await repo.blameFile(path: path)) ?? []
         }
     }
 
