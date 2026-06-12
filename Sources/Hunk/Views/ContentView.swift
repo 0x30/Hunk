@@ -104,13 +104,25 @@ struct MainSplitView: View {
             DetailView()
         }
         .navigationSplitViewStyle(.balanced)
+        // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
-        .navigationSubtitle(vm.headSummary ?? "")
+        .modifier(HideToolbarTitle())
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 BranchMenu()
                 SyncControls()
             }
+        }
+    }
+}
+
+/// 隐藏标题栏文字（macOS 15+；旧系统保留标题）。
+private struct HideToolbarTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
         }
     }
 }

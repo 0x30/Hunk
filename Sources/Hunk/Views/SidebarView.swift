@@ -1,4 +1,5 @@
 import SwiftUI
+import HunkCore
 
 struct SidebarView: View {
     @EnvironmentObject var vm: RepoViewModel
@@ -101,80 +102,185 @@ struct SidebarNavButtons: View {
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            HStack(spacing: 2) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                Text(badge > 0 ? "\(min(badge, 99))" : "")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            }
+            // 固定框 + 角标 overlay：计数变化不会让图标移位
+            Image(systemName: systemImage)
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .frame(width: 22, height: 18)
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Text("\(min(badge, 99))")
+                            .font(.system(size: 8, weight: .bold).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 0.5)
+                            .background(Capsule().fill(selected ? Color.accentColor : Color.secondary))
+                            .offset(x: 5, y: -4)
+                    }
+                }
         }
         .help(help)
     }
 }
 
-// MARK: - 工具栏：分支切换
+// MARK: - 工具栏：仓库 + 分支（Xcode 式）
 
 struct BranchMenu: View {
     @EnvironmentObject var vm: RepoViewModel
-    @State private var showNewBranch = false
-    @State private var newBranchName = ""
+    @State private var showPopover = false
 
     var body: some View {
-        Menu {
-            ForEach(vm.branches) { branch in
-                Button {
-                    vm.checkout(branch)
-                } label: {
-                    if branch.isCurrent {
-                        Label(branch.name, systemImage: "checkmark")
-                    } else {
-                        Text(branch.name)
-                    }
-                }
-            }
-            Divider()
-            Button(tr("新建分支…", "New Branch…")) {
-                newBranchName = ""
-                showNewBranch = true
-            }
+        Button {
+            showPopover.toggle()
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: 11, weight: .medium))
-                Text(vm.currentBranch)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    HStack(spacing: 2) {
+                        Text(vm.currentBranch)
+                            .font(.system(size: 10.5))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                }
             }
         }
-        .menuIndicator(.visible)
-        .fixedSize()
-        .help(tr("切换分支", "Switch branch"))
-        .sheet(isPresented: $showNewBranch) {
-            VStack(spacing: 16) {
-                Text(tr("从当前分支新建", "Create from current branch"))
-                    .font(.headline)
-                TextField(tr("分支名", "Branch name"), text: $newBranchName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                    .onSubmit { create() }
-                HStack {
-                    Button(tr("取消", "Cancel")) { showNewBranch = false }
-                        .keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button(tr("创建并切换", "Create & Switch")) { create() }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(newBranchName.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                .frame(width: 260)
-            }
-            .padding(20)
+        .help(tr("分支：切换 / 新建", "Branches: switch / create"))
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            BranchPopover(isPresented: $showPopover)
+                .environmentObject(vm)
+        }
+    }
+}
+
+/// Xcode 式分支面板：搜索、当前分支信息、切换、新建。
+private struct BranchPopover: View {
+    @EnvironmentObject var vm: RepoViewModel
+    @Binding var isPresented: Bool
+    @State private var query = ""
+    @State private var newBranchName = ""
+
+    private var filtered: [Branch] {
+        vm.branches.filter {
+            !$0.isCurrent && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query))
         }
     }
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField(tr("查找分支", "Find branch"), text: $query)
+                    .textFieldStyle(.plain)
+            }
+            .padding(10)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(tr("当前分支", "Current Branch"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, 2)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(vm.currentBranch)
+                                .font(.system(size: 13, weight: .semibold))
+                            if let head = vm.headSummary {
+                                Text(head)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+
+                    if !filtered.isEmpty {
+                        Divider()
+                            .padding(.vertical, 4)
+                        Text(tr("切换到", "Switch To"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 2)
+
+                        ForEach(filtered) { branch in
+                            BranchPopoverRow(branch: branch) {
+                                vm.checkout(branch)
+                                isPresented = false
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+            .frame(maxHeight: 280)
+
+            Divider()
+
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                TextField(tr("新建分支并切换…", "New branch & switch…"), text: $newBranchName)
+                    .textFieldStyle(.plain)
+                    .onSubmit { create() }
+                if !newBranchName.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Button(tr("创建", "Create")) { create() }
+                        .controlSize(.small)
+                }
+            }
+            .padding(10)
+        }
+        .frame(width: 300)
+    }
+
     private func create() {
-        vm.createBranch(newBranchName)
-        showNewBranch = false
+        let name = newBranchName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        vm.createBranch(name)
+        newBranchName = ""
+        isPresented = false
+    }
+}
+
+private struct BranchPopoverRow: View {
+    let branch: Branch
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(.secondary)
+                Text(branch.name)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(hovering ? Color.accentColor.opacity(0.14) : .clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -184,26 +290,30 @@ struct SyncControls: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        // 计数文本始终在视图树中（空串），避免 NSToolbar 重建丢点击
+        // 简洁模式：抓取常驻；有落后才显示拉取，有领先才显示推送
         Button { vm.fetch() } label: {
             syncLabel("arrow.triangle.2.circlepath", count: 0)
         }
         .help(tr("抓取", "Fetch") + upstreamSuffix)
         .disabled(vm.isSyncing)
 
-        Button { vm.pull() } label: {
-            syncLabel("arrow.down", count: vm.sync.behind)
+        if vm.sync.behind > 0 {
+            Button { vm.pull() } label: {
+                syncLabel("arrow.down", count: vm.sync.behind)
+            }
+            .help(tr("拉取", "Pull") + upstreamSuffix)
+            .disabled(vm.isSyncing)
         }
-        .help(tr("拉取", "Pull") + upstreamSuffix)
-        .disabled(vm.isSyncing)
 
-        Button { vm.push() } label: {
-            syncLabel("arrow.up", count: vm.sync.ahead)
+        if vm.sync.ahead > 0 {
+            Button { vm.push() } label: {
+                syncLabel("arrow.up", count: vm.sync.ahead)
+            }
+            .help(vm.sync.upstream == nil
+                  ? tr("推送（将发布分支）", "Push (will publish branch)")
+                  : tr("推送", "Push") + upstreamSuffix)
+            .disabled(vm.isSyncing)
         }
-        .help(vm.sync.upstream == nil
-              ? tr("推送（将发布分支）", "Push (will publish branch)")
-              : tr("推送", "Push") + upstreamSuffix)
-        .disabled(vm.isSyncing)
     }
 
     private func syncLabel(_ systemImage: String, count: Int) -> some View {
