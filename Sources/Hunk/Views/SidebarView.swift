@@ -31,10 +31,13 @@ struct SidebarView: View {
             }
         }
         .toolbar(removing: .sidebarToggle)
-        // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）
+        // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）。
+        // 包成单个固定间距容器：侧边栏收起/展开时内部间距保持一致
         .toolbar {
-            ToolbarItemGroup {
-                SidebarNavButtons()
+            ToolbarItem {
+                HStack(spacing: 14) {
+                    SidebarNavButtons()
+                }
             }
         }
     }

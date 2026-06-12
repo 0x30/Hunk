@@ -126,9 +126,12 @@ struct MainSplitView: View {
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())
         .toolbar {
-            // 分支与同步分属两个独立组（各自成胶囊）
+            // 分支与同步分属两个独立组，用 ToolbarSpacer 强制分开成两个胶囊
             ToolbarItem(placement: .navigation) {
                 BranchMenu()
+            }
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.fixed, placement: .navigation)
             }
             ToolbarItemGroup(placement: .navigation) {
                 SyncControls()
@@ -183,15 +186,9 @@ struct DetailView: View {
 
 struct EmptyDetailView: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "plus.forwardslash.minus")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.quaternary)
-            Text(tr("选择一个文件查看差异或编辑", "Select a file to view its diff or edit"))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        // 未选择文件时保持纯净，不展示任何提示内容
+        Color(nsColor: .textBackgroundColor)
+            .ignoresSafeArea(edges: .bottom)
     }
 }
 
