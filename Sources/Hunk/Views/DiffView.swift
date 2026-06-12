@@ -2,18 +2,18 @@ import SwiftUI
 import HunkCore
 
 /// 更改详情：文件头 + diff 内容（统一 / 分栏），支持行级暂存。
-/// 行选择方式：点击行或勾选框逐行切换；在左侧 gutter（行号区）按住拖拽
-/// 可像选文本一样连续选行；⇧+点击 gutter 做范围选择。
+/// 行选择方式：点击行逐行切换；在内容任意位置按住拖拽，像选文本一样连选；
+/// ⇧+点击做范围选择。
 struct DiffDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
     @EnvironmentObject var settings: SettingsStore
     let path: String
 
-    // gutter 拖拽选择状态
+    // 拖拽 / 范围选择状态
     @State private var rowFrames: [String: CGRect] = [:]
     @State private var dragAnchorKey: String?
     @State private var dragBaseSelection: Set<Int>?
-    @State private var tapAnchorKey: String?
+    @State private var lastTappedLineID: Int?
     // GitHub 式「展开未更改区域」
     @State private var expandedGaps: Set<Int> = []
 
@@ -180,7 +180,7 @@ struct DiffDetailView: View {
 
             Spacer()
 
-            Text(tr("提示：行号区可拖拽连选，⇧+点击范围选择", "Tip: drag in the gutter to select; ⇧-click for range"))
+            Text(tr("提示：按住拖拽可像选文本一样连选，⇧+点击范围选择", "Tip: drag to select like text; ⇧-click for range"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -209,12 +209,12 @@ struct DiffDetailView: View {
                             HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging, isUntracked: isUntracked)
                             if settings.splitDiff {
                                 ForEach(hunk.splitRows) { row in
-                                    SplitDiffRow(row: row, filePath: path, selectable: supportsLineStaging)
+                                    SplitDiffRow(row: row, filePath: path, selectable: supportsLineStaging, onLineTap: handleLineTap)
                                         .background(rowFrameReader("s-\(hunkIndex)-\(row.id)"))
                                 }
                             } else {
                                 ForEach(hunk.lines) { line in
-                                    UnifiedDiffRow(line: line, filePath: path, selectable: supportsLineStaging)
+                                    UnifiedDiffRow(line: line, filePath: path, selectable: supportsLineStaging, onLineTap: handleLineTap)
                                         .background(rowFrameReader("u-\(line.id)"))
                                 }
                             }
@@ -225,11 +225,8 @@ struct DiffDetailView: View {
                     }
                     .coordinateSpace(name: "diffRows")
                     .onPreferenceChange(RowFramesKey.self) { rowFrames = $0 }
-                    .overlay(alignment: .topLeading) {
-                        if supportsLineStaging {
-                            gutterSelectionStrip
-                        }
-                    }
+                    // 在内容任意位置拖拽 = 像选文本一样连选行（macOS 点击拖拽不与滚动冲突）
+                    .simultaneousGesture(supportsLineStaging ? selectionDrag : nil)
                     // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
                     .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
                     .padding(.bottom, 20)
@@ -343,42 +340,51 @@ struct DiffDetailView: View {
         return rows
     }
 
-    private var gutterWidth: CGFloat {
-        settings.splitDiff ? 44 : 108
+    /// 内容区任意位置的拖拽选择（像选文本一样）。
+    /// simultaneousGesture + 5pt 启动距离，不影响行点击与按钮。
+    private var selectionDrag: some Gesture {
+        DragGesture(minimumDistance: 5, coordinateSpace: .named("diffRows"))
+            .onChanged { value in
+                if dragBaseSelection == nil {
+                    dragBaseSelection = vm.selectedLineIDs
+                    dragAnchorKey = rowKey(atY: value.startLocation.y)
+                }
+                guard let anchor = dragAnchorKey,
+                      let current = rowKey(atY: value.location.y),
+                      let base = dragBaseSelection
+                else { return }
+                vm.selectedLineIDs = base.union(lineIDs(from: anchor, to: current))
+            }
+            .onEnded { _ in
+                if let anchor = dragAnchorKey,
+                   let row = rowOrder.first(where: { $0.key == anchor }),
+                   let first = row.lineIDs.first {
+                    lastTappedLineID = first
+                }
+                dragAnchorKey = nil
+                dragBaseSelection = nil
+            }
     }
 
-    private var gutterSelectionStrip: some View {
-        Color.clear
-            .frame(width: gutterWidth)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 1, coordinateSpace: .named("diffRows")) { location in
-                gutterTap(at: location)
-            }
-            .gesture(
-                DragGesture(minimumDistance: 3, coordinateSpace: .named("diffRows"))
-                    .onChanged { value in
-                        if dragBaseSelection == nil {
-                            dragBaseSelection = vm.selectedLineIDs
-                            dragAnchorKey = rowKey(atY: value.startLocation.y)
-                        }
-                        guard let anchor = dragAnchorKey,
-                              let current = rowKey(atY: value.location.y),
-                              let base = dragBaseSelection
-                        else { return }
-                        vm.selectedLineIDs = base.union(lineIDs(from: anchor, to: current))
-                    }
-                    .onEnded { _ in
-                        tapAnchorKey = dragAnchorKey ?? tapAnchorKey
-                        dragAnchorKey = nil
-                        dragBaseSelection = nil
-                    }
-            )
-            .help(tr("拖拽选择多行；⇧+点击做范围选择", "Drag to select lines; ⇧-click for range"))
+    /// 行点击：普通点击切换单行，⇧+点击从上次点过的行连选到当前行。
+    private func handleLineTap(_ id: Int) {
+        if NSEvent.modifierFlags.contains(.shift),
+           let anchor = lastTappedLineID,
+           let anchorKey = rowKeyContaining(anchor),
+           let currentKey = rowKeyContaining(id) {
+            vm.selectedLineIDs.formUnion(lineIDs(from: anchorKey, to: currentKey))
+        } else {
+            vm.toggleLine(id)
+        }
+        lastTappedLineID = id
     }
 
     private func rowKey(atY y: CGFloat) -> String? {
         rowFrames.first { $0.value.minY <= y && y < $0.value.maxY }?.key
+    }
+
+    private func rowKeyContaining(_ lineID: Int) -> String? {
+        rowOrder.first { $0.lineIDs.contains(lineID) }?.key
     }
 
     private func lineIDs(from keyA: String, to keyB: String) -> Set<Int> {
@@ -387,19 +393,6 @@ struct DiffDetailView: View {
               let b = order.firstIndex(where: { $0.key == keyB })
         else { return [] }
         return Set(order[min(a, b)...max(a, b)].flatMap(\.lineIDs))
-    }
-
-    private func gutterTap(at point: CGPoint) {
-        guard let key = rowKey(atY: point.y),
-              let row = rowOrder.first(where: { $0.key == key })
-        else { return }
-
-        if NSEvent.modifierFlags.contains(.shift), let anchor = tapAnchorKey {
-            vm.selectedLineIDs.formUnion(lineIDs(from: anchor, to: key))
-        } else {
-            for id in row.lineIDs { vm.toggleLine(id) }
-            tapAnchorKey = key
-        }
     }
 }
 
@@ -492,6 +485,7 @@ private struct UnifiedDiffRow: View {
     let line: DiffLine
     let filePath: String
     let selectable: Bool
+    var onLineTap: ((Int) -> Void)?
 
     private var isSelected: Bool { vm.selectedLineIDs.contains(line.id) }
     private var isChanged: Bool { line.kind != .context }
@@ -537,7 +531,7 @@ private struct UnifiedDiffRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard selectable, isChanged else { return }
-            vm.toggleLine(line.id)
+            (onLineTap ?? vm.toggleLine)(line.id)
         }
     }
 
@@ -576,6 +570,7 @@ private struct SplitDiffRow: View {
     let row: SplitRow
     let filePath: String
     let selectable: Bool
+    var onLineTap: ((Int) -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -612,7 +607,7 @@ private struct SplitDiffRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard selectable, let line = showsLine, line.kind != .context else { return }
-            vm.toggleLine(line.id)
+            (onLineTap ?? vm.toggleLine)(line.id)
         }
     }
 
