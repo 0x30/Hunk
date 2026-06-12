@@ -34,6 +34,7 @@ struct PlainTextEditor: NSViewRepresentable {
             action: #selector(Coordinator.blankAreaClicked(_:))
         )
         blankClick.delegate = context.coordinator
+        blankClick.delaysPrimaryMouseButtonEvents = false  // 不要拖延正常的文本点击
         scrollView.contentView.addGestureRecognizer(blankClick)
 
         textView.isRichText = false
@@ -176,8 +177,18 @@ struct PlainTextEditor: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         }
 
+        /// 编辑器是否持有键盘焦点——blame 注解只在用户聚焦编辑后才出现
+        private var editorFocused: Bool {
+            guard let textView else { return false }
+            return textView.window?.firstResponder === textView
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView, let ruler else { return }
+            guard editorFocused else {
+                blameLabel?.isHidden = true
+                return
+            }
             let caret = textView.selectedRange().location
             let line = ruler.lineNumber(forCharacterPublic: caret)
             if line != lastCursorLine {
@@ -192,7 +203,7 @@ struct PlainTextEditor: NSViewRepresentable {
             guard text != lastBlameText else { return }
             lastBlameText = text
             guard let blameLabel else { return }
-            if let text, !text.isEmpty {
+            if let text, !text.isEmpty, editorFocused {
                 blameLabel.stringValue = text
                 blameLabel.sizeToFit()
                 blameLabel.isHidden = false
