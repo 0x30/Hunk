@@ -138,6 +138,9 @@ final class ExtensionStore: ObservableObject {
             await MainActor.run {
                 self.loadInstalled()
                 self.lastError = nil
+                // 立即生效：图标主题（自动模式）即装即用；颜色主题刷新可选列表
+                IconThemeStore.shared.loadActive()
+                ThemeStore.shared.loadActive()
             }
             return parsed
         } catch {

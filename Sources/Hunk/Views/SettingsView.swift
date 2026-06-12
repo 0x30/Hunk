@@ -41,6 +41,13 @@ private struct AppearanceSettings: View {
                 .onChange(of: settings.themeID) { _, _ in
                     ThemeStore.shared.loadActive()
                 }
+
+                if extensions.installed.flatMap(\.colorThemes).isEmpty {
+                    Text(tr("还没有可选主题——到「扩展」页从 open-vsx 下载（如 One Dark Pro、Dracula）。",
+                            "No themes yet — install some from open-vsx in the Extensions tab (e.g. One Dark Pro, Dracula)."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section(tr("文件图标", "File Icons")) {
@@ -123,10 +130,16 @@ private struct ExtensionSettings: View {
     var body: some View {
         Form {
             Section {
-                Text(tr(
-                    "从 open-vsx.org 下载 VS Code 图标主题与颜色主题（只使用其中的静态资产，不运行扩展代码）。",
-                    "Download VS Code icon & color themes from open-vsx.org (static assets only — no extension code is executed)."
-                ))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(tr(
+                        "从 open-vsx.org 下载 VS Code 图标主题与颜色主题（只使用其中的静态资产，不运行扩展代码）。",
+                        "Download VS Code icon & color themes from open-vsx.org (static assets only — no extension code is executed)."
+                    ))
+                    Text(tr(
+                        "用法：① 点下载；② 图标主题立即生效（图标主题处于「自动」时）；③ 颜色主题到「外观 → 颜色主题」中选择。自定义扩展标识可在 open-vsx.org 的扩展页 URL 中找到，格式为 namespace.name。",
+                        "Usage: ① Install; ② icon themes apply immediately (when Icon Theme is set to Auto); ③ pick color themes under Appearance → Color Theme. Find custom identifiers in the open-vsx.org extension URL, formatted namespace.name."
+                    ))
+                }
                 .font(.callout)
                 .foregroundStyle(.secondary)
             }
