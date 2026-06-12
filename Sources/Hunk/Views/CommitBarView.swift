@@ -31,12 +31,12 @@ struct CommitBarView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(0)
             .overlay(
+                // 编辑器铺满整个输入框（滚动条贴盒子右缘），发送按钮浮在其上
                 TextEditor(text: $vm.commitMessage)
                     .font(.system(size: 12.5))
                     .scrollContentBackground(.hidden)
                     .focused($messageFocused)
-                    .padding(.leading, 4)
-                    .padding(.trailing, 24)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, 6)
             )
             .overlay(alignment: .topLeading) {
