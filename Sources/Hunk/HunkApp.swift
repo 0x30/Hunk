@@ -12,6 +12,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = ThemeStore.shared
         _ = IconThemeStore.shared
     }
+
+    /// `hunk` 命令行 / 访达「打开方式」送来的路径
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        CLIOpenRouter.deliver(url.path)
+    }
+}
+
+/// 命令行打开请求的路由：冷启动暂存，热运行广播；窗口原子领取防止多窗重复处理。
+enum CLIOpenRouter {
+    static let notification = Notification.Name("hunk.cli.open")
+    private static var pendingPath: String?
+    private static let lock = NSLock()
+
+    static func deliver(_ path: String) {
+        lock.lock()
+        pendingPath = path
+        lock.unlock()
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+
+    static func takePending() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        let path = pendingPath
+        pendingPath = nil
+        return path
+    }
 }
 
 @main
@@ -62,6 +90,10 @@ private struct AppCommands: Commands {
             Button(tr("检查更新…", "Check for Updates…")) {
                 Task { await UpdateChecker.shared.check(userInitiated: true) }
             }
+            Button(tr("安装 hunk 命令行工具…", "Install 'hunk' Command…")) {
+                vm?.notice = CLIInstaller.install()
+            }
+            .disabled(vm == nil)
         }
         CommandGroup(replacing: .newItem) {
             Button(tr("新建文件", "New File")) {

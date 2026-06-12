@@ -92,6 +92,8 @@ final class RepoViewModel: ObservableObject {
 
     @Published var commitMessage = ""
     @Published var errorMessage: String?
+    /// 一般性提示（如命令行工具安装结果）
+    @Published var notice: String?
     @Published var isSyncing = false
     @Published var pendingDiscard: FileChange?
     @Published var pendingFolderDrop: URL?
@@ -927,6 +929,25 @@ final class RepoViewModel: ObservableObject {
         sidebarTab = .files
         selection = .file(path: path)
         revealFileRequest = path
+    }
+
+    // MARK: - 命令行打开
+
+    /// `hunk [path]`：目录直接打开仓库；文件则打开其所在仓库并定位该文件。
+    func openFromCLI(_ path: String) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        let url = URL(fileURLWithPath: path)
+        Task {
+            if isDirectory.boolValue {
+                await open(url)
+            } else {
+                await open(url.deletingLastPathComponent())
+                if let root = repoRoot, path.hasPrefix(root.path + "/") {
+                    revealInFiles(String(path.dropFirst(root.path.count + 1)))
+                }
+            }
+        }
     }
 
     // MARK: - 拖拽打开

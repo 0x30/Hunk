@@ -104,7 +104,28 @@ struct ContentView: View {
             guard vm.repoRoot != nil, !vm.isSyncing else { return }
             Task { await vm.refresh() }
         }
+        // `hunk` 命令行送来的路径（原子领取，多窗口只处理一次）
+        .onReceive(NotificationCenter.default.publisher(for: CLIOpenRouter.notification)) { _ in
+            if let path = CLIOpenRouter.takePending() {
+                vm.openFromCLI(path)
+            }
+        }
+        .alert(
+            tr("提示", "Notice"),
+            isPresented: Binding(
+                get: { vm.notice != nil },
+                set: { if !$0 { vm.notice = nil } }
+            )
+        ) {
+            Button(tr("好", "OK"), role: .cancel) { vm.notice = nil }
+        } message: {
+            Text(vm.notice ?? "")
+        }
         .task {
+            // 冷启动：open 事件早于视图订阅送达时，路径暂存在路由里，这里补领一次
+            if let path = CLIOpenRouter.takePending() {
+                vm.openFromCLI(path)
+            }
             // 文件图标默认走 open-vsx：首启自动安装 Material Icon Theme
             IconThemeStore.shared.bootstrap()
             // 静默检查新版本（开发构建跳过）
