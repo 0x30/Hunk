@@ -8,6 +8,8 @@ struct FilesView: View {
     @State private var expanded: Set<String> = []
     @State private var localSelection: String?
     @State private var didInitialExpand = false
+    /// 启动宽限期：窗口状态恢复会触发 selection 变化，期间不自动打开文件
+    @State private var suppressAutoOpen = true
     @FocusState private var focused: Bool
 
     private struct Row: Identifiable {
@@ -70,9 +72,21 @@ struct FilesView: View {
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)
         .focused($focused)
+        // 键盘 ↑↓ 移动选择后立即打开文件（无需再按 ⏎）
+        .onChange(of: localSelection) { _, selected in
+            guard !suppressAutoOpen,
+                  let selected,
+                  let row = rows.first(where: { $0.id == selected }),
+                  !row.node.isDirectory
+            else { return }
+            vm.selection = .file(path: selected)
+        }
         .onAppear {
             focused = true
             initialExpandIfNeeded()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                suppressAutoOpen = false
+            }
             // 切回文件标签时若有待定位请求，立即处理
             if let request = vm.revealFileRequest {
                 vm.revealFileRequest = nil
