@@ -32,22 +32,39 @@ struct FilesView: View {
     }
 
     var body: some View {
-        List(selection: $localSelection) {
-            ForEach(rows) { row in
-                FileTreeRow(
-                    node: row.node,
-                    depth: row.depth,
-                    isExpanded: expanded.contains(row.node.path),
-                    toggle: { toggle(row.node) },
-                    select: {
-                        // onTapGesture 会吞掉 List 的选中事件，手动同步选中态
-                        localSelection = row.node.path
-                        if !row.node.isDirectory {
-                            vm.selection = .file(path: row.node.path)
+        ScrollViewReader { proxy in
+            List(selection: $localSelection) {
+                ForEach(rows) { row in
+                    FileTreeRow(
+                        node: row.node,
+                        depth: row.depth,
+                        isExpanded: expanded.contains(row.node.path),
+                        toggle: { toggle(row.node) },
+                        select: {
+                            // onTapGesture 会吞掉 List 的选中事件，手动同步选中态
+                            localSelection = row.node.path
+                            if !row.node.isDirectory {
+                                vm.selection = .file(path: row.node.path)
+                            }
                         }
-                    }
-                )
-                .tag(row.node.path)
+                    )
+                    .tag(row.node.path)
+                    .id(row.node.path)
+                }
+            }
+            .onChange(of: vm.revealFileRequest) { _, request in
+                guard let request else { return }
+                // 展开祖先目录并定位文件
+                var ancestor = (request as NSString).deletingLastPathComponent
+                while !ancestor.isEmpty {
+                    expanded.insert(ancestor)
+                    ancestor = (ancestor as NSString).deletingLastPathComponent
+                }
+                localSelection = request
+                DispatchQueue.main.async {
+                    proxy.scrollTo(request, anchor: .center)
+                    vm.revealFileRequest = nil
+                }
             }
         }
         .listStyle(.sidebar)
@@ -56,6 +73,11 @@ struct FilesView: View {
         .onAppear {
             focused = true
             initialExpandIfNeeded()
+            // 切回文件标签时若有待定位请求，立即处理
+            if let request = vm.revealFileRequest {
+                vm.revealFileRequest = nil
+                DispatchQueue.main.async { vm.revealFileRequest = request }
+            }
         }
         .onChange(of: vm.workspaceFiles) { _, _ in
             initialExpandIfNeeded()
@@ -191,6 +213,10 @@ private struct FileTreeRow: View {
                         : (change.unstaged != nil ? .unstaged : .staged)
                     vm.selection = .change(path: change.path, area: area)
                 }
+                Divider()
+            }
+            if !node.isDirectory {
+                Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(node.path) }
                 Divider()
             }
             Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(node.path) }

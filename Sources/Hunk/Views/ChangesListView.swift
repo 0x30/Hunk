@@ -357,6 +357,9 @@ struct ChangeRow: View {
             Button(tr("标记为已解决", "Mark as Resolved")) { vm.stageFile(change.path) }
         }
         Divider()
+        Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(change.path) }
+        Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(change.path) }
+        Divider()
         Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(change.path) }
         Button(tr("复制路径", "Copy Path")) { vm.copyPath(change.path) }
     }

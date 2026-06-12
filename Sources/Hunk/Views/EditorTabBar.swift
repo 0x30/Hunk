@@ -80,6 +80,9 @@ private struct EditorTabItem: View {
             Button(tr("关闭已保存", "Close Saved")) { vm.closeSavedTabs() }
             Button(tr("关闭右侧", "Close to the Right")) { vm.closeTabsToTheRight(of: path) }
             Divider()
+            Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
+            Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
+            Divider()
             Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
             Button(tr("复制路径", "Copy Path")) { vm.copyPath(path) }
         }
