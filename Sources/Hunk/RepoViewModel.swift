@@ -317,9 +317,19 @@ final class RepoViewModel: ObservableObject {
     private(set) var repo: Repository?
     private let defaults = UserDefaults.standard
 
+    // MARK: 多窗口路由
+
+    /// 所有存活窗口的视图模型（弱引用），命令行打开请求据此分发
+    static let instances = NSHashTable<RepoViewModel>.weakObjects()
+    /// 所在窗口（WindowAccessor 注入），用于聚焦
+    weak var window: NSWindow?
+    /// 请求在新窗口打开仓库：由 ContentView 调用 openWindow 兑现
+    @Published var openWindowRequest: String?
+
     init(initialPath: String? = nil) {
         let savedHeight = UserDefaults.standard.double(forKey: "terminalHeight")
         terminalHeight = savedHeight > 0 ? CGFloat(savedHeight) : 240
+        RepoViewModel.instances.add(self)
         if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
             Task { await open(URL(fileURLWithPath: initialPath)) }
         } else if let last = defaults.string(forKey: "lastRepo"),
@@ -1006,14 +1016,15 @@ final class RepoViewModel: ObservableObject {
     func openFromCLI(_ path: String) {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
-        let url = URL(fileURLWithPath: path)
+        // 解析符号链接，与 git 返回的仓库根对齐
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         Task {
             if isDirectory.boolValue {
                 await open(url)
             } else {
                 await open(url.deletingLastPathComponent())
-                if let root = repoRoot, path.hasPrefix(root.path + "/") {
-                    revealInFiles(String(path.dropFirst(root.path.count + 1)))
+                if let root = repoRoot, url.path.hasPrefix(root.path + "/") {
+                    revealInFiles(String(url.path.dropFirst(root.path.count + 1)))
                 }
             }
         }

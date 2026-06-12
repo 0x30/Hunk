@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `hunk` 命令行 / 访达「打开方式」送来的路径
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
-        CLIOpenRouter.deliver(url.path)
+        Task { @MainActor in CLIOpenRouter.route(url.path) }
     }
 
     /// 所有窗口都关闭后自动退出应用
@@ -25,25 +25,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// 命令行打开请求的路由：冷启动暂存，热运行广播；窗口原子领取防止多窗重复处理。
+/// 命令行打开请求的路由（VS Code 式）：
+/// 已有窗口开着该仓库 → 聚焦它；有空白窗口 → 就地打开；否则开新窗口。
+/// 冷启动时窗口还不存在，路径暂存，由首个窗口的 .task 补领。
+@MainActor
 enum CLIOpenRouter {
-    static let notification = Notification.Name("hunk.cli.open")
+    /// 冷启动暂存的路径
     private static var pendingPath: String?
-    private static let lock = NSLock()
+    /// 等新窗口仓库打开后要定位的文件
+    private static var pendingReveal: String?
 
-    static func deliver(_ path: String) {
-        lock.lock()
-        pendingPath = path
-        lock.unlock()
-        NotificationCenter.default.post(name: notification, object: nil)
+    static func route(_ path: String) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        // 解析符号链接（如 /tmp → /private/tmp），与 git 返回的仓库根对齐
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let directory = isDirectory.boolValue ? url : url.deletingLastPathComponent()
+        let file = isDirectory.boolValue ? nil : url.path
+
+        let vms = RepoViewModel.instances.allObjects
+        guard !vms.isEmpty else {
+            pendingPath = path
+            return
+        }
+
+        // 1. 某个窗口已打开该仓库（目标在其根目录内）→ 聚焦并定位
+        // 仓库根也走同样的符号链接归一化（git 返回 /private/tmp，URL 解析出 /tmp）
+        func canonicalRoot(_ vm: RepoViewModel) -> String? {
+            vm.repoRoot?.resolvingSymlinksInPath().path
+        }
+        if let vm = vms.first(where: { vm in
+            guard let root = canonicalRoot(vm) else { return false }
+            return directory.path == root || directory.path.hasPrefix(root + "/")
+        }) {
+            vm.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            if let file, let root = canonicalRoot(vm), file.hasPrefix(root + "/") {
+                vm.revealInFiles(String(file.dropFirst(root.count + 1)))
+            }
+            return
+        }
+
+        // 2. 有空白窗口（欢迎页）→ 就地打开
+        if let vm = vms.first(where: { $0.repoRoot == nil }) {
+            vm.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            vm.openFromCLI(path)
+            return
+        }
+
+        // 3. 都被占用 → 开新窗口（绝不替换现有窗口的仓库）
+        pendingReveal = file
+        let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+        requester.openWindowRequest = directory.path
     }
 
     static func takePending() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        let path = pendingPath
-        pendingPath = nil
-        return path
+        defer { pendingPath = nil }
+        return pendingPath
+    }
+
+    static func takePendingReveal() -> String? {
+        defer { pendingReveal = nil }
+        return pendingReveal
     }
 }
 
@@ -59,6 +103,8 @@ struct HunkApp: App {
                 .environmentObject(settings)
                 .id(settings.language)  // 切换语言时整树重建
         }
+        // 打开事件统一走 AppDelegate 路由，禁止 SwiftUI 自己再造窗口
+        .handlesExternalEvents(matching: [])
         .commands { AppCommands() }
 
         Settings {
@@ -83,6 +129,23 @@ private struct WindowRoot: View {
             .environmentObject(vm)
             .frame(minWidth: 900, minHeight: 560)
             .focusedSceneObject(vm)
+            // 记录所在 NSWindow，供命令行路由聚焦窗口
+            .background(WindowAccessor { vm.window = $0 })
+    }
+}
+
+/// 捕获视图所在的 NSWindow。
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onWindow(view.window) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { onWindow(view.window) }
     }
 }
 

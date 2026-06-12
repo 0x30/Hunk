@@ -104,11 +104,20 @@ struct ContentView: View {
             guard vm.repoRoot != nil, !vm.isSyncing else { return }
             Task { await vm.refresh() }
         }
-        // `hunk` 命令行送来的路径（原子领取，多窗口只处理一次）
-        .onReceive(NotificationCenter.default.publisher(for: CLIOpenRouter.notification)) { _ in
-            if let path = CLIOpenRouter.takePending() {
-                vm.openFromCLI(path)
+        // 命令行路由要求开新窗口（当前窗口都被占用时）
+        .onChange(of: vm.openWindowRequest) { _, path in
+            if let path {
+                vm.openWindowRequest = nil
+                openWindow(value: path)
             }
+        }
+        // 新窗口的仓库打开后，定位命令行指定的文件
+        .onChange(of: vm.repoRoot) { _, root in
+            guard let root,
+                  let reveal = CLIOpenRouter.takePendingReveal(),
+                  reveal.hasPrefix(root.path + "/")
+            else { return }
+            vm.revealInFiles(String(reveal.dropFirst(root.path.count + 1)))
         }
         .alert(
             tr("提示", "Notice"),
