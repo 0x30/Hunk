@@ -45,6 +45,22 @@ struct ContentView: View {
             }
         }
         .alert(
+            tr("新建文件", "New File"),
+            isPresented: Binding(
+                get: { vm.newFilePrompt != nil },
+                set: { if !$0 { vm.newFilePrompt = nil } }
+            )
+        ) {
+            TextField(tr("文件名（可含子路径，如 docs/note.md）", "File name (may include subpath)"), text: $vm.newFileName)
+            Button(tr("创建", "Create")) { vm.confirmNewFile() }
+            Button(tr("取消", "Cancel"), role: .cancel) { vm.newFilePrompt = nil }
+        } message: {
+            let dir = vm.newFilePrompt?.directory ?? ""
+            Text(dir.isEmpty
+                 ? tr("位置：仓库根目录", "Location: repository root")
+                 : tr("位置：\(dir)/", "Location: \(dir)/"))
+        }
+        .alert(
             tr("出错了", "Something went wrong"),
             isPresented: Binding(
                 get: { vm.errorMessage != nil },

@@ -99,6 +99,50 @@ final class RepoViewModel: ObservableObject {
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。
     @Published var revealFileRequest: String?
 
+    // MARK: 新建文件
+
+    struct NewFilePrompt: Identifiable {
+        /// 相对仓库根的目录，"" 表示根目录
+        let directory: String
+        var id: String { directory }
+    }
+
+    @Published var newFilePrompt: NewFilePrompt?
+    @Published var newFileName = ""
+
+    func promptNewFile(in directory: String? = nil) {
+        guard repoRoot != nil else { return }
+        newFileName = ""
+        newFilePrompt = NewFilePrompt(directory: directory ?? "")
+    }
+
+    func confirmNewFile() {
+        guard let prompt = newFilePrompt, let repo else { return }
+        newFilePrompt = nil
+        let name = newFileName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let relativePath = prompt.directory.isEmpty ? name : prompt.directory + "/" + name
+        let url = repo.fileURL(for: relativePath)
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            errorMessage = tr("「\(relativePath)」已存在", "“\(relativePath)” already exists")
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "".write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        Task {
+            await refresh()
+            revealInFiles(relativePath)
+        }
+    }
+
     // MARK: 历史
 
     enum HistoryDetail: Equatable {

@@ -54,6 +54,12 @@ private struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
+            Button(tr("新建文件…", "New File…")) {
+                vm?.promptNewFile()
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(vm?.repoRoot == nil)
+
             Button(tr("打开仓库…", "Open Repository…")) {
                 vm?.openRepoPanel()
             }

@@ -71,6 +71,12 @@ struct FilesView: View {
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)
+        // 空白区域右键：在仓库根目录新建
+        .contextMenu {
+            Button(tr("新建文件…", "New File…")) {
+                vm.promptNewFile()
+            }
+        }
         .focused($focused)
         // 键盘 ↑↓ 移动选择后立即打开文件（无需再按 ⏎）
         .onChange(of: localSelection) { _, selected in
@@ -219,6 +225,12 @@ private struct FileTreeRow: View {
             }
         }
         .contextMenu {
+            Button(tr("新建文件…", "New File…")) {
+                vm.promptNewFile(in: node.isDirectory
+                                 ? node.path
+                                 : (node.path as NSString).deletingLastPathComponent)
+            }
+            Divider()
             if let change {
                 Button(tr("查看更改", "View Changes")) {
                     vm.sidebarTab = .changes
