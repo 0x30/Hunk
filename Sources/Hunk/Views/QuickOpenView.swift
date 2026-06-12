@@ -13,7 +13,9 @@ struct QuickOpenView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.15)
+            // 无蒙层（避免工具栏反衬高亮），仅用透明层捕获外部点击关闭
+            Color.clear
+                .contentShape(Rectangle())
                 .ignoresSafeArea()
                 .onTapGesture { vm.showQuickOpen = false }
 
@@ -78,7 +80,7 @@ struct QuickOpenView: View {
             Spacer()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        .padding(.vertical, 9)
         .background(highlighted ? Color.accentColor.opacity(0.18) : .clear)
         .contentShape(Rectangle())
     }
