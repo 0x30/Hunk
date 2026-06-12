@@ -97,21 +97,18 @@ struct SidebarNavButtons: View {
 
     private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
         let selected = vm.sidebarVisible && vm.sidebarTab == tab
+        // label 结构与 SyncControls 完全一致（Image+Text），
+        // overlay/offset 角标会让工具栏按钮失去点击响应
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .overlay(alignment: .topTrailing) {
-                    Text(badge > 0 ? "\(min(badge, 99))" : "")
-                        .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, badge > 0 ? 3 : 0)
-                        .padding(.vertical, badge > 0 ? 0.5 : 0)
-                        .background(Capsule().fill(badge > 0 ? Color.accentColor : .clear))
-                        .offset(x: 9, y: -5)
-                }
+            HStack(spacing: 2) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                Text(badge > 0 ? "\(min(badge, 99))" : "")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            }
         }
         .help(help)
     }
