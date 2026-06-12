@@ -5,12 +5,28 @@ import HunkCore
 struct HistoryPanel: View {
     @EnvironmentObject var vm: RepoViewModel
 
+    private var collapsed: Bool { vm.historyPanelCollapsed }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text(tr("历史", "History"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        vm.historyPanelCollapsed.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(collapsed ? 0 : 90))
+                        Text(tr("历史", "History"))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
                 if let path = vm.historyFilterPath {
                     HStack(spacing: 3) {
@@ -51,8 +67,17 @@ struct HistoryPanel: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
 
-            Divider()
+            if !collapsed {
+                Divider()
+                historyList
+            }
+        }
+        // 「文件变化」折叠时历史占满剩余空间，否则固定高度
+        .frame(height: (!collapsed && !vm.changesPanelCollapsed) ? 230 : nil)
+        .frame(maxHeight: (!collapsed && vm.changesPanelCollapsed) ? .infinity : nil)
+    }
 
+    private var historyList: some View {
             List {
                 ForEach(vm.history) { entry in
                     if let commit = entry.commit {
@@ -70,8 +95,6 @@ struct HistoryPanel: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)  // 透出侧边栏磨砂材质
             .environment(\.defaultMinListRowHeight, 14)
-        }
-        .frame(height: 230)
     }
 }
 

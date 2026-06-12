@@ -33,6 +33,9 @@ final class RepoViewModel: ObservableObject {
 
     @Published var sidebarTab: SidebarTab = .files
     @Published var sidebarVisible = true
+    /// 源代码管理两个模块的折叠状态（点击头部切换）
+    @Published var changesPanelCollapsed = false
+    @Published var historyPanelCollapsed = false
 
     /// Xcode 式导航器切换：点未选中的标签则切换并展开，点已选中的则收起侧边栏。
     func toggleSidebarTab(_ tab: SidebarTab) {

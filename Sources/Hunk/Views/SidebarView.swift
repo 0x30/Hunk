@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @EnvironmentObject var vm: RepoViewModel
+    @EnvironmentObject var settings: SettingsStore
 
     var body: some View {
         Group {
@@ -13,9 +14,19 @@ struct SidebarView: View {
                     // VS Code 式：提交信息在最上面
                     CommitBarView()
                     Divider()
-                    ChangesListView()
+                    PanelHeader(
+                        title: tr("文件变化", "Changes"),
+                        count: vm.changes.count,
+                        collapsed: $vm.changesPanelCollapsed
+                    )
+                    if !vm.changesPanelCollapsed {
+                        ChangesListView()
+                    }
                     Divider()
                     HistoryPanel()
+                    if vm.changesPanelCollapsed && vm.historyPanelCollapsed {
+                        Spacer(minLength: 0)
+                    }
                 }
             }
         }
@@ -26,6 +37,42 @@ struct SidebarView: View {
                 SidebarNavButtons()
             }
         }
+    }
+}
+
+/// 可折叠模块的头部（chevron + 标题 + 计数）。
+struct PanelHeader: View {
+    let title: String
+    var count: Int = 0
+    @Binding var collapsed: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                collapsed.toggle()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(count > 0 ? "\(count)" : "")
+                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, count > 0 ? 4.5 : 0)
+                    .padding(.vertical, count > 0 ? 1 : 0)
+                    .background(Capsule().fill(.quaternary.opacity(count > 0 ? 0.6 : 0)))
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
