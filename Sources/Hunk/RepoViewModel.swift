@@ -237,7 +237,8 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    @Published var history: [Repository.LogEntry] = []
+    @Published var history: [GraphRow] = []
+    @Published var historyMaxColumns = 1
     @Published var historyFilterPath: String?
     @Published var historyDetail: HistoryDetail?
     @Published var historyFiles: [Repository.CommitFileChange] = []
@@ -344,7 +345,9 @@ final class RepoViewModel: ObservableObject {
                 self.workspaceFiles = newFiles
                 self.workspaceTree = FileTreeBuilder.build(paths: newFiles)
             }
-            assignIfChanged((try? await repo.history(path: self.historyFilterPath)) ?? [], to: \.history)
+            let graph = GraphBuilder.rows(from: (try? await repo.history(path: self.historyFilterPath)) ?? [])
+            assignIfChanged(graph.rows, to: \.history)
+            assignIfChanged(graph.maxColumns, to: \.historyMaxColumns)
 
             // 选中的更改已不存在时清掉详情
             if case .change(let path, let area) = selection {
@@ -857,7 +860,9 @@ final class RepoViewModel: ObservableObject {
         historyFilterPath = path
         Task {
             guard let repo else { return }
-            history = (try? await repo.history(path: path)) ?? []
+            let graph = GraphBuilder.rows(from: (try? await repo.history(path: path)) ?? [])
+            history = graph.rows
+            historyMaxColumns = graph.maxColumns
         }
     }
 

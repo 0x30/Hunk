@@ -261,56 +261,55 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
-    /// 历史中的一行：提交行或纯图形延续行（"|/" 之类）。
-    public struct LogEntry: Identifiable, Hashable, Sendable {
-        public let id: Int
-        public let graph: String
-        public let commit: Commit?
-    }
-
-    /// 提交历史。`path` 非空时为单文件历史（--follow，无图形）；
-    /// 否则为全分支图形历史。
-    public func history(limit: Int = 300, path: String? = nil) async throws -> [LogEntry] {
-        let format = "%x01%H%x09%h%x09%an%x09%at%x09%D%x09%s"
+    /// 提交历史（含父指针，供泳道图布局）。
+    /// `path` 非空时为单文件历史（--follow），人工串成单线。
+    public func history(limit: Int = 300, path: String? = nil) async throws -> [GraphCommit] {
+        let format = "%H%x09%h%x09%P%x09%an%x09%at%x09%D%x09%s"
         let args: [String]
         if let path {
             args = ["log", "--follow", "-n", "\(limit)", "--format=\(format)", "--", path]
         } else {
-            args = ["log", "--all", "--graph", "--date-order", "-n", "\(limit)", "--format=\(format)"]
+            args = ["log", "--all", "--date-order", "-n", "\(limit)", "--format=\(format)"]
         }
         let result = try await git.run(args, allowedExitCodes: [0, 128])
         guard result.exitCode == 0 else { return [] }
 
-        var entries: [LogEntry] = []
-        for (index, rawLine) in result.stdout.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
-            let line = String(rawLine)
-            guard let marker = line.range(of: "\u{01}") else {
-                entries.append(LogEntry(id: index, graph: line, commit: nil))
-                continue
-            }
-            let graph = String(line[..<marker.lowerBound])
-            let fields = line[marker.upperBound...]
-                .split(separator: "\t", maxSplits: 5, omittingEmptySubsequences: false)
+        var commits: [GraphCommit] = []
+        for rawLine in result.stdout.split(separator: "\n", omittingEmptySubsequences: true) {
+            let fields = rawLine
+                .split(separator: "\t", maxSplits: 6, omittingEmptySubsequences: false)
                 .map(String.init)
-            guard fields.count >= 6 else { continue }
-            let refs = fields[4]
+            guard fields.count >= 7 else { continue }
+            let refs = fields[5]
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-            entries.append(LogEntry(
-                id: index,
-                graph: graph,
-                commit: Commit(
-                    hash: fields[0],
-                    shortHash: fields[1],
-                    author: fields[2],
-                    subject: fields[5],
-                    date: Date(timeIntervalSince1970: Double(fields[3]) ?? 0),
-                    refs: refs
-                )
+            commits.append(GraphCommit(
+                hash: fields[0],
+                shortHash: fields[1],
+                parents: fields[2].split(separator: " ").map(String.init),
+                author: fields[3],
+                subject: fields[6],
+                date: Date(timeIntervalSince1970: Double(fields[4]) ?? 0),
+                refs: refs
             ))
         }
-        return entries
+
+        // 文件历史：截断的父指针会断图，人工串成单线
+        if path != nil {
+            commits = commits.enumerated().map { index, commit in
+                GraphCommit(
+                    hash: commit.hash,
+                    shortHash: commit.shortHash,
+                    parents: index + 1 < commits.count ? [commits[index + 1].hash] : [],
+                    author: commit.author,
+                    subject: commit.subject,
+                    date: commit.date,
+                    refs: commit.refs
+                )
+            }
+        }
+        return commits
     }
 
     public struct CommitFileChange: Identifiable, Hashable, Sendable {

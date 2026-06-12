@@ -129,30 +129,107 @@ struct HistoryPanel: View {
     }
 
     private var historyList: some View {
-            List {
-                ForEach(vm.history) { entry in
-                    if let commit = entry.commit {
-                        HistoryRow(entry: entry, commit: commit)
-                    } else {
-                        // 纯图形延续行（"|/" 之类）
-                        Text(entry.graph)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 4))
-                            .frame(height: 9)
-                    }
+        ScrollView {
+            // spacing 0 + 固定行高：泳道线在行间无缝衔接
+            LazyVStack(spacing: 0) {
+                ForEach(vm.history) { row in
+                    HistoryRow(row: row, maxColumns: vm.historyMaxColumns)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)  // 透出侧边栏磨砂材质
-            .environment(\.defaultMinListRowHeight, 14)
+        }
+    }
+}
+
+/// 泳道图单元：贯穿线 / 汇入曲线 / 分出曲线 / 提交圆点。
+private struct GraphCanvas: View {
+    let row: GraphRow
+    let maxColumns: Int
+
+    static let palette: [Color] = [.blue, .purple, .teal, .orange, .pink, .green, .indigo, .red]
+    private static let laneWidth: CGFloat = 9
+
+    static func width(for columns: Int) -> CGFloat {
+        CGFloat(min(max(columns, 1), 10)) * laneWidth + 2
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let height = size.height
+            let midY = height / 2
+            func x(_ column: Int) -> CGFloat { Self.laneWidth / 2 + CGFloat(column) * Self.laneWidth + 1 }
+            func color(_ column: Int) -> Color { Self.palette[column % Self.palette.count] }
+            func stroke(_ path: Path, _ column: Int) {
+                context.stroke(path, with: .color(color(column)), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+            }
+
+            for column in row.throughColumns {
+                var path = Path()
+                path.move(to: CGPoint(x: x(column), y: 0))
+                path.addLine(to: CGPoint(x: x(column), y: height))
+                stroke(path, column)
+            }
+
+            let dotX = x(row.column)
+            if row.hasTopStub {
+                var path = Path()
+                path.move(to: CGPoint(x: dotX, y: 0))
+                path.addLine(to: CGPoint(x: dotX, y: midY))
+                stroke(path, row.column)
+            }
+            if row.hasBottomStub {
+                var path = Path()
+                path.move(to: CGPoint(x: dotX, y: midY))
+                path.addLine(to: CGPoint(x: dotX, y: height))
+                stroke(path, row.column)
+            }
+            for column in row.joinColumns {
+                var path = Path()
+                path.move(to: CGPoint(x: x(column), y: 0))
+                path.addCurve(
+                    to: CGPoint(x: dotX, y: midY),
+                    control1: CGPoint(x: x(column), y: midY * 0.65),
+                    control2: CGPoint(x: dotX, y: midY * 0.35)
+                )
+                stroke(path, column)
+            }
+            for column in row.forkColumns {
+                var path = Path()
+                path.move(to: CGPoint(x: dotX, y: midY))
+                path.addCurve(
+                    to: CGPoint(x: x(column), y: height),
+                    control1: CGPoint(x: dotX, y: midY + (height - midY) * 0.35),
+                    control2: CGPoint(x: x(column), y: midY + (height - midY) * 0.65)
+                )
+                stroke(path, column)
+            }
+
+            // 提交圆点
+            let radius: CGFloat = 3.4
+            let dotRect = CGRect(x: dotX - radius, y: midY - radius, width: radius * 2, height: radius * 2)
+            context.fill(Path(ellipseIn: dotRect), with: .color(color(row.column)))
+        }
+        .frame(width: Self.width(for: maxColumns))
     }
 }
 
 private struct HistoryRow: View {
     @EnvironmentObject var vm: RepoViewModel
-    let entry: Repository.LogEntry
-    let commit: Repository.Commit
+    let row: GraphRow
+    let maxColumns: Int
+
+    private var commit: GraphCommit { row.commit }
+
+    /// 供历史详情/比较使用的 Commit 形态
+    private var legacyCommit: Repository.Commit {
+        Repository.Commit(
+            hash: commit.hash,
+            shortHash: commit.shortHash,
+            author: commit.author,
+            subject: commit.subject,
+            date: commit.date,
+            refs: commit.refs
+        )
+    }
 
     private var isActive: Bool {
         if case .commit(let current) = vm.historyDetail { return current.hash == commit.hash }
@@ -160,13 +237,8 @@ private struct HistoryRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            if !entry.graph.isEmpty {
-                Text(entry.graph)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
-            }
+        HStack(spacing: 6) {
+            GraphCanvas(row: row, maxColumns: maxColumns)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -190,16 +262,17 @@ private struct HistoryRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 1)
-        .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 4))
-        .listRowBackground(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .frame(height: 32)  // 固定行高，保证泳道线连续
+        .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture {
-            vm.openHistoryDetail(.commit(commit))
+            vm.openHistoryDetail(.commit(legacyCommit))
         }
         .contextMenu {
             Button(tr("查看此提交的更改", "View Changes in This Commit")) {
-                vm.openHistoryDetail(.commit(commit))
+                vm.openHistoryDetail(.commit(legacyCommit))
             }
             Divider()
             Button(tr("与 HEAD 比较", "Compare with HEAD")) {
