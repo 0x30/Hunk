@@ -34,6 +34,13 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.font = SettingsStore.shared.editorNSFont
         textView.delegate = context.coordinator
 
+        // 行号 gutter
+        let ruler = LineNumberRulerView(textView: textView)
+        scrollView.verticalRulerView = ruler
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = true
+        context.coordinator.ruler = ruler
+
         context.coordinator.textView = textView
         return scrollView
     }
@@ -57,6 +64,9 @@ struct PlainTextEditor: NSViewRepresentable {
             coordinator.highlightNow()
         } else if coordinator.lastConflicts != conflicts {
             coordinator.highlightNow()
+        } else if coordinator.lastThemeName != ThemeStore.shared.active?.name {
+            // 颜色主题切换后重新着色
+            coordinator.highlightNow()
         }
 
         if let line = scrollToLine {
@@ -72,7 +82,9 @@ struct PlainTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: PlainTextEditor
         weak var textView: NSTextView?
+        weak var ruler: LineNumberRulerView?
         var lastConflicts: [ConflictBlock] = []
+        var lastThemeName: String?
         private var pendingHighlight: DispatchWorkItem?
 
         init(parent: PlainTextEditor) {
@@ -83,6 +95,7 @@ struct PlainTextEditor: NSViewRepresentable {
             guard let textView else { return }
             parent.text = textView.string
             parent.onEdit()
+            ruler?.invalidateLineIndex()
             scheduleHighlight()
         }
 
@@ -108,8 +121,10 @@ struct PlainTextEditor: NSViewRepresentable {
             lastConflicts = parent.conflicts
 
             let theme = ThemeStore.shared
+            lastThemeName = theme.active?.name
             textView.backgroundColor = theme.editorBackground ?? .textBackgroundColor
             textView.insertionPointColor = theme.editorForeground ?? .labelColor
+            ruler?.invalidateLineIndex()
 
             storage.beginEditing()
             storage.setAttributes([
@@ -191,7 +206,7 @@ struct PlainTextEditor: NSViewRepresentable {
         }
 
         /// 每一行的 NSRange（含行内容，不含换行符）。
-        private static func lineRanges(of nsString: NSString) -> [NSRange] {
+        static func lineRanges(of nsString: NSString) -> [NSRange] {
             var result: [NSRange] = []
             var location = 0
             while location <= nsString.length {
@@ -209,6 +224,138 @@ struct PlainTextEditor: NSViewRepresentable {
                 }
             }
             return result
+        }
+    }
+}
+
+// MARK: - 行号 gutter
+
+/// NSTextView 的行号标尺：缓存行起始偏移，滚动/编辑时按可见区域绘制。
+final class LineNumberRulerView: NSRulerView {
+    private weak var textView: NSTextView?
+    /// 每行起始字符偏移（utf16），首元素恒为 0。
+    private var lineStarts: [Int] = [0]
+    private var lineIndexValid = false
+
+    init(textView: NSTextView) {
+        self.textView = textView
+        super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
+        clientView = textView
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(needsRedraw),
+            name: NSView.boundsDidChangeNotification,
+            object: textView.enclosingScrollView?.contentView
+        )
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func needsRedraw() {
+        needsDisplay = true
+    }
+
+    func invalidateLineIndex() {
+        lineIndexValid = false
+        needsDisplay = true
+    }
+
+    private func rebuildLineIndexIfNeeded() {
+        guard !lineIndexValid, let textView else { return }
+        let nsString = textView.string as NSString
+        var starts: [Int] = [0]
+        var location = 0
+        while location < nsString.length {
+            let newline = nsString.range(of: "\n", options: [], range: NSRange(location: location, length: nsString.length - location))
+            if newline.location == NSNotFound { break }
+            starts.append(newline.location + 1)
+            location = newline.location + 1
+        }
+        lineStarts = starts
+        lineIndexValid = true
+
+        let digits = max(3, String(starts.count).count)
+        ruleThickness = CGFloat(digits) * 8 + 14
+    }
+
+    /// 字符偏移所在行号（1 基）。
+    private func lineNumber(forCharacter location: Int) -> Int {
+        var low = 0, high = lineStarts.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if lineStarts[mid] <= location { low = mid } else { high = mid - 1 }
+        }
+        return low + 1
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let textView,
+              let layoutManager = textView.layoutManager,
+              let container = textView.textContainer
+        else { return }
+
+        rebuildLineIndexIfNeeded()
+
+        let background = ThemeStore.shared.editorBackground ?? NSColor.textBackgroundColor
+        background.setFill()
+        bounds.fill()
+
+        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        NSRect(x: bounds.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
+
+        let visibleRect = textView.visibleRect
+        let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: container)
+        guard glyphRange.length > 0 || (textView.string as NSString).length == 0 else { return }
+
+        let numberColor = (ThemeStore.shared.editorForeground ?? .labelColor).withAlphaComponent(0.35)
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: max(9, SettingsStore.shared.editorFontSize - 3),
+            weight: .regular
+        )
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: numberColor]
+        let inset = textView.textContainerInset
+
+        var lastDrawnLine = -1
+        var glyphIndex = glyphRange.location
+        while glyphIndex < NSMaxRange(glyphRange) {
+            var fragmentGlyphRange = NSRange()
+            let fragmentRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &fragmentGlyphRange)
+            let charIndex = layoutManager.characterIndexForGlyph(at: fragmentGlyphRange.location)
+            let line = lineNumber(forCharacter: charIndex)
+
+            // 软换行的后续片段不重复编号
+            if line != lastDrawnLine, lineStarts[line - 1] == charIndex {
+                lastDrawnLine = line
+                let y = fragmentRect.minY + inset.height - visibleRect.minY
+                let text = "\(line)" as NSString
+                let size = text.size(withAttributes: attributes)
+                text.draw(
+                    at: NSPoint(x: bounds.width - size.width - 6, y: y + (fragmentRect.height - size.height) / 2),
+                    withAttributes: attributes
+                )
+            }
+            glyphIndex = NSMaxRange(fragmentGlyphRange)
+        }
+
+        // 末尾空行（文本以换行结尾时 layoutManager 有 extra fragment）
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            let fragmentRect = layoutManager.extraLineFragmentRect
+            let line = lineStarts.count
+            if line != lastDrawnLine {
+                let y = fragmentRect.minY + inset.height - visibleRect.minY
+                let text = "\(line)" as NSString
+                let size = text.size(withAttributes: attributes)
+                text.draw(
+                    at: NSPoint(x: bounds.width - size.width - 6, y: y + (fragmentRect.height - size.height) / 2),
+                    withAttributes: attributes
+                )
+            }
         }
     }
 }
