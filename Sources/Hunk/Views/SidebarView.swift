@@ -94,7 +94,15 @@ struct SidebarNavButtons: View {
             )
         }
         .padding(2)
-        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        // 与系统工具栏胶囊一致的实底悬浮感（侧边栏浅底上也清晰可辨）
+        .background(
+            Capsule()
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+        )
+        .overlay(
+            Capsule().strokeBorder(.separator.opacity(0.45), lineWidth: 0.5)
+        )
     }
 
     private func segment(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
