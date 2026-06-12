@@ -95,21 +95,19 @@ public struct SplitRow: Identifiable, Hashable, Sendable {
 
 extension DiffHunk {
     /// 把 hunk 内连续的删除串与新增串逐行配对，供左右分栏渲染。
+    /// 行 id 复用 DiffLine 的全文件唯一 id——多个 hunk 的行会进入同一个
+    /// Lazy 容器，id 重复会导致行被吞掉。
     public var splitRows: [SplitRow] {
         var rows: [SplitRow] = []
-        var rowID = 0
         var deletions: [DiffLine] = []
         var additions: [DiffLine] = []
 
         func flushPairs() {
             let count = max(deletions.count, additions.count)
             for k in 0..<count {
-                rows.append(SplitRow(
-                    id: rowID,
-                    left: k < deletions.count ? deletions[k] : nil,
-                    right: k < additions.count ? additions[k] : nil
-                ))
-                rowID += 1
+                let left = k < deletions.count ? deletions[k] : nil
+                let right = k < additions.count ? additions[k] : nil
+                rows.append(SplitRow(id: left?.id ?? right!.id, left: left, right: right))
             }
             deletions.removeAll()
             additions.removeAll()
@@ -123,8 +121,7 @@ extension DiffHunk {
                 additions.append(line)
             case .context:
                 flushPairs()
-                rows.append(SplitRow(id: rowID, left: line, right: line))
-                rowID += 1
+                rows.append(SplitRow(id: line.id, left: line, right: line))
             }
         }
         flushPairs()
