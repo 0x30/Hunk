@@ -19,6 +19,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/$CONFIG/Hunk" "$APP/Contents/MacOS/Hunk"
 cp "$ROOT/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+# 声明中英双语言包：AppKit 据此按用户/应用语言加载系统菜单（文件/编辑/窗口…）
+mkdir -p "$APP/Contents/Resources/zh-Hans.lproj" "$APP/Contents/Resources/en.lproj"
+touch "$APP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" \
+      "$APP/Contents/Resources/en.lproj/InfoPlist.strings"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -62,6 +67,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>NSApplication</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
 </dict>
 </plist>
 PLIST
