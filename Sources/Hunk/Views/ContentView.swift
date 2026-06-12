@@ -164,15 +164,9 @@ struct MainSplitView: View {
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())
         .toolbar {
-            // 分支与同步分属两个独立组，用 ToolbarSpacer 强制分开成两个胶囊
+            // 同步操作在「历史」模块头部，工具栏只保留分支
             ToolbarItem(placement: .navigation) {
                 BranchMenu()
-            }
-            if #available(macOS 26.0, *) {
-                ToolbarSpacer(.fixed, placement: .navigation)
-            }
-            ToolbarItemGroup(placement: .navigation) {
-                SyncControls()
             }
         }
     }

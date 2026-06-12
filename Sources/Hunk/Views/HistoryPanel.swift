@@ -52,17 +52,48 @@ struct HistoryPanel: View {
 
                 Spacer()
 
-                if let upstream = vm.sync.upstream {
-                    Button {
-                        vm.openHistoryDetail(.compare(base: upstream, target: "HEAD"))
-                    } label: {
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.system(size: 10))
+                // 远端同步：刷新 / 拉取(落后数) / 推送(领先数)
+                HStack(spacing: 10) {
+                    if let upstream = vm.sync.upstream {
+                        Button {
+                            vm.openHistoryDetail(.compare(base: upstream, target: "HEAD"))
+                        } label: {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.borderless)
+                        .help(tr("比较 \(upstream) ↔ 本地分支", "Compare \(upstream) ↔ local branch"))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help(tr("比较 \(upstream) ↔ 本地分支", "Compare \(upstream) ↔ local branch"))
+
+                    Button { vm.fetch() } label: {
+                        syncIcon("arrow.triangle.2.circlepath", count: 0)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(tr("抓取", "Fetch") + upstreamSuffix)
+                    .disabled(vm.isSyncing)
+
+                    if vm.sync.behind > 0 {
+                        Button { vm.pull() } label: {
+                            syncIcon("arrow.down", count: vm.sync.behind)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(tr("拉取", "Pull") + upstreamSuffix)
+                        .disabled(vm.isSyncing)
+                    }
+
+                    // 有待推送，或分支还没有上游（首推自动 push -u 发布分支）
+                    if vm.sync.ahead > 0 || vm.sync.upstream == nil {
+                        Button { vm.push() } label: {
+                            syncIcon("arrow.up", count: vm.sync.ahead)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(vm.sync.upstream == nil
+                              ? tr("推送并发布分支（push -u origin）", "Push & publish branch (push -u origin)")
+                              : tr("推送", "Push") + upstreamSuffix)
+                        .disabled(vm.isSyncing)
+                    }
                 }
+                .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -75,6 +106,21 @@ struct HistoryPanel: View {
         // 「文件变化」折叠时历史占满剩余空间，否则固定高度
         .frame(height: (!collapsed && !vm.changesPanelCollapsed) ? 230 : nil)
         .frame(maxHeight: (!collapsed && vm.changesPanelCollapsed) ? .infinity : nil)
+    }
+
+    private func syncIcon(_ systemImage: String, count: Int) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .medium))
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+            }
+        }
+    }
+
+    private var upstreamSuffix: String {
+        vm.sync.upstream.map { " (\($0))" } ?? ""
     }
 
     private var historyList: some View {
