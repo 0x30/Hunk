@@ -49,8 +49,9 @@ jobs:
             fi
             echo
             echo
-            echo "> 下载 Hunk.zip，解压后拖入「应用程序」。首次打开如被拦截："
-            echo "> 右键 → 打开，或在「系统设置 → 隐私与安全性」中允许。"
+            echo "> 下载 Hunk.zip，解压后拖入「应用程序」。"
+            echo "> 包暂未经过 Apple 公证，首次打开若提示「已损坏，移到废纸篓」，执行："
+            echo "> \`xattr -cr /Applications/Hunk.app\`"
           } > release-notes.md
           cat release-notes.md
 

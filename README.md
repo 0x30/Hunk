@@ -35,6 +35,11 @@
 
 到 [Releases](https://github.com/0x30/Hunk/releases/latest) 下载 `Hunk.app.zip`，解压后拖进「应用程序」。
 
+> 包暂未经过 Apple 公证，首次打开若提示「已损坏，移到废纸篓」，执行一次：
+> ```sh
+> xattr -cr /Applications/Hunk.app
+> ```
+
 命令行：菜单「Hunk → 安装 hunk 命令行工具…」一次授权后即可使用：
 
 ```sh
