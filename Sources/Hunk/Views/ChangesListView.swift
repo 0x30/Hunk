@@ -42,6 +42,16 @@ struct ChangesListView: View {
                 sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count) {
                     HStack(spacing: 6) {
                         Button {
+                            settings.changesAsTree.toggle()
+                        } label: {
+                            Image(systemName: settings.changesAsTree ? "list.bullet" : "list.bullet.indent")
+                        }
+                        .buttonStyle(.plain)
+                        .help(settings.changesAsTree
+                              ? tr("切换为扁平列表", "Switch to flat list")
+                              : tr("切换为树状视图", "Switch to tree view"))
+
+                        Button {
                             vm.stashAll()
                         } label: {
                             Image(systemName: "archivebox")
@@ -85,24 +95,6 @@ struct ChangesListView: View {
                         .font(.callout)
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack {
-                Spacer()
-                Button {
-                    settings.changesAsTree.toggle()
-                } label: {
-                    Image(systemName: settings.changesAsTree ? "list.bullet" : "list.bullet.indent")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help(settings.changesAsTree
-                      ? tr("切换为扁平列表", "Switch to flat list")
-                      : tr("切换为树状视图", "Switch to tree view"))
-                .padding(6)
-            }
-            .background(.bar)
         }
         .confirmationDialog(
             discardTitle,
