@@ -80,12 +80,16 @@ struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             segment(
                 tab: .files,
                 systemImage: "folder",
                 help: tr("文件 (⌘1)", "Files (⌘1)")
             )
+            // Xcode 式分段分隔线
+            Rectangle()
+                .fill(.separator.opacity(0.6))
+                .frame(width: 1, height: 12)
             segment(
                 tab: .changes,
                 systemImage: "plus.forwardslash.minus",
@@ -93,7 +97,7 @@ struct SidebarNavButtons: View {
                 help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
             )
         }
-        .padding(2)
+        .padding(3)
         // 与系统工具栏胶囊一致的实底悬浮感（侧边栏浅底上也清晰可辨）
         .background(
             Capsule()
@@ -116,9 +120,13 @@ struct SidebarNavButtons: View {
                 Text(badge > 0 ? "\(min(badge, 99))" : "")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
             }
-            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            // Xcode 式：选中段 = 实心强调色填充 + 白色图标
+            .foregroundStyle(selected ? Color.white : Color.secondary)
             .padding(.horizontal, 10)
             .frame(height: 24)  // 与系统工具栏胶囊（分支 / 同步）等高
+            .background(
+                Capsule().fill(selected ? Color.accentColor : .clear)
+            )
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
