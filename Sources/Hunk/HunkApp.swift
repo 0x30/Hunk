@@ -103,8 +103,13 @@ private struct AppCommands: Commands {
             .disabled(vm == nil)
         }
         CommandGroup(replacing: .newItem) {
-            Button(tr("新建文件", "New File")) {
-                vm?.newUntitledFile()
+            // 终端聚焦时 ⌘N/⌘W 切换为终端语义（VS Code 式）
+            Button(vm?.terminalFocused == true ? tr("新建终端", "New Terminal") : tr("新建文件", "New File")) {
+                if let vm, vm.terminalFocused {
+                    vm.newTerminal()
+                } else {
+                    vm?.newUntitledFile()
+                }
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(vm?.repoRoot == nil)
@@ -122,9 +127,13 @@ private struct AppCommands: Commands {
             .keyboardShortcut("s", modifiers: .command)
             .disabled(vm?.editorDirty != true)
 
-            Button(tr("关闭标签页", "Close Tab")) {
+            Button(vm?.terminalFocused == true ? tr("关闭终端", "Kill Terminal") : tr("关闭标签页", "Close Tab")) {
                 if let vm {
-                    vm.closeActiveTab()
+                    if vm.terminalFocused {
+                        vm.closeActiveTerminal()
+                    } else {
+                        vm.closeActiveTab()
+                    }
                 } else {
                     // 设置等无 vm 的窗口：⌘W 直接关窗
                     NSApp.keyWindow?.performClose(nil)

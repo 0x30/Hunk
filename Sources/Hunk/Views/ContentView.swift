@@ -178,14 +178,15 @@ struct MainSplitView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 460)
         } detail: {
-            // 终端是详情区底部的可拖拽分栏（VS Code 式，⌘J 切换）
-            VSplitView {
+            // 终端是详情区底部的固定高度面板（VS Code 式，⌘J 切换）：
+            // 高度只由拖拽分隔条改变，开关面板/切换文件不影响
+            VStack(spacing: 0) {
                 DetailView()
-                    .frame(minHeight: 160)
-                    .layoutPriority(1)
+                    .frame(maxHeight: .infinity)
                 if vm.showTerminal {
+                    TerminalResizeDivider()
                     TerminalPanel()
-                        .frame(minHeight: 100, idealHeight: 240)
+                        .frame(height: vm.terminalHeight)
                 }
             }
         }

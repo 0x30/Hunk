@@ -104,13 +104,61 @@ final class RepoViewModel: ObservableObject {
     // MARK: 内嵌终端（⌘J）
 
     @Published var showTerminal = false
-    /// 终端会话跨显示/隐藏保活，挂在视图模型上随窗口走
-    let terminal = TerminalSession()
+    /// 终端会话列表：跨显示/隐藏保活，挂在视图模型上随窗口走
+    @Published var terminals: [TerminalSession] = []
+    @Published var activeTerminalID: UUID?
+    /// 终端是否持有键盘焦点（⌘N/⌘W 据此切换为终端语义）
+    @Published var terminalFocused = false
+    /// 面板高度：拖拽调整后持久化，开关面板/切换文件都不会变
+    @Published var terminalHeight: CGFloat {
+        didSet { defaults.set(Double(terminalHeight), forKey: "terminalHeight") }
+    }
+
+    var activeTerminal: TerminalSession? {
+        terminals.first { $0.id == activeTerminalID } ?? terminals.first
+    }
 
     func toggleTerminal() {
         showTerminal.toggle()
-        if !showTerminal {
+        if showTerminal {
+            if terminals.isEmpty { newTerminal() }
+        } else {
+            terminalFocused = false
             // 关闭面板后把键盘还给主内容
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+    }
+
+    /// 新建一个 shell 会话并切为当前（终端聚焦时 ⌘N）。
+    func newTerminal() {
+        let session = TerminalSession()
+        session.onExit = { [weak self] session in
+            Task { @MainActor in self?.removeTerminal(session) }
+        }
+        session.onFocusChange = { [weak self] focused in
+            Task { @MainActor in self?.terminalFocused = focused }
+        }
+        terminals.append(session)
+        activeTerminalID = session.id
+        showTerminal = true
+    }
+
+    /// 结束当前会话（终端聚焦时 ⌘W）；最后一个会话关闭后收起面板。
+    func closeActiveTerminal() {
+        guard let session = activeTerminal else { return }
+        session.terminate()
+        removeTerminal(session)
+    }
+
+    private func removeTerminal(_ session: TerminalSession) {
+        guard let index = terminals.firstIndex(where: { $0.id == session.id }) else { return }
+        terminals.remove(at: index)
+        if activeTerminalID == session.id {
+            activeTerminalID = terminals.indices.contains(index) ? terminals[index].id : terminals.last?.id
+        }
+        if terminals.isEmpty {
+            showTerminal = false
+            terminalFocused = false
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
     }
@@ -265,15 +313,13 @@ final class RepoViewModel: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init(initialPath: String? = nil) {
+        let savedHeight = UserDefaults.standard.double(forKey: "terminalHeight")
+        terminalHeight = savedHeight > 0 ? CGFloat(savedHeight) : 240
         if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
             Task { await open(URL(fileURLWithPath: initialPath)) }
         } else if let last = defaults.string(forKey: "lastRepo"),
                   FileManager.default.fileExists(atPath: last) {
             Task { await open(URL(fileURLWithPath: last)) }
-        }
-        // shell 退出（exit）时自动收起终端面板
-        terminal.onExit = { [weak self] in
-            Task { @MainActor in self?.showTerminal = false }
         }
     }
 
