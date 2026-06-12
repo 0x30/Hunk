@@ -31,13 +31,10 @@ struct SidebarView: View {
             }
         }
         .toolbar(removing: .sidebarToggle)
-        // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）。
-        // 包成单个固定间距容器：侧边栏收起/展开时内部间距保持一致
+        // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）
         .toolbar {
             ToolbarItem {
-                HStack(spacing: 14) {
-                    SidebarNavButtons()
-                }
+                SidebarNavButtons()
             }
         }
     }
@@ -79,25 +76,38 @@ struct PanelHeader: View {
     }
 }
 
-/// 文件 / 源代码管理导航：胶囊分段样式（点击已选中的会收起侧边栏）。
+/// 文件 / 源代码管理导航（点击已选中的会收起侧边栏）。
+/// 胶囊容器常驻保证两种状态几何一致：侧边栏在场时胶囊透明（只见图标），
+/// 收起后恢复胶囊背景——位置与间距永不跳变。
 struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        // 纯系统工具栏按钮（与同步组同款，不加任何自定义底色）：
-        // 侧边栏在场时系统按侧边栏区渲染为独立按钮，
-        // 收起后并入主区由系统自动包进胶囊——与 Xcode 行为一致
-        navButton(
-            tab: .files,
-            systemImage: "folder",
-            help: tr("文件 (⌘1)", "Files (⌘1)")
+        let capsuleVisible = !vm.sidebarVisible
+        HStack(spacing: 6) {
+            navButton(
+                tab: .files,
+                systemImage: "folder",
+                help: tr("文件 (⌘1)", "Files (⌘1)")
+            )
+            navButton(
+                tab: .changes,
+                systemImage: "plus.forwardslash.minus",
+                badge: vm.changes.count,
+                help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
+            )
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(
+            Capsule()
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(capsuleVisible ? 1 : 0))
+                .shadow(color: .black.opacity(capsuleVisible ? 0.18 : 0), radius: 1.5, y: 0.5)
         )
-        navButton(
-            tab: .changes,
-            systemImage: "plus.forwardslash.minus",
-            badge: vm.changes.count,
-            help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
+        .overlay(
+            Capsule().strokeBorder(.separator.opacity(capsuleVisible ? 0.45 : 0), lineWidth: 0.5)
         )
+        .animation(.easeOut(duration: 0.15), value: capsuleVisible)
     }
 
     private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
