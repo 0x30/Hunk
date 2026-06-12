@@ -77,7 +77,7 @@ final class SettingsStore: ObservableObject {
         themeID = defaults.string(forKey: "themeID") ?? "system"
         iconThemeID = defaults.string(forKey: "iconThemeID") ?? ""
         changesAsTree = defaults.object(forKey: "changesAsTree") as? Bool ?? true
-        splitDiff = defaults.bool(forKey: "splitDiff")
+        splitDiff = defaults.object(forKey: "splitDiff") as? Bool ?? true  // 默认左右分栏比对
     }
 
     var resolvedLanguage: ResolvedLanguage {

@@ -2,10 +2,18 @@ import SwiftUI
 import HunkCore
 
 /// 更改详情：文件头 + diff 内容（统一 / 分栏），支持行级暂存。
+/// 行选择方式：点击行或勾选框逐行切换；在左侧 gutter（行号区）按住拖拽
+/// 可像选文本一样连续选行；⇧+点击 gutter 做范围选择。
 struct DiffDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
     @EnvironmentObject var settings: SettingsStore
     let path: String
+
+    // gutter 拖拽选择状态
+    @State private var rowFrames: [String: CGRect] = [:]
+    @State private var dragAnchorKey: String?
+    @State private var dragBaseSelection: Set<Int>?
+    @State private var tapAnchorKey: String?
 
     private var change: FileChange? {
         vm.changes.first { $0.path == path }
@@ -109,15 +117,14 @@ struct DiffDetailView: View {
                 }
             }
 
-            Button {
-                settings.splitDiff.toggle()
-            } label: {
-                Image(systemName: settings.splitDiff ? "rectangle" : "rectangle.split.2x1")
+            Picker("", selection: $settings.splitDiff) {
+                Text(tr("统一", "Unified")).tag(false)
+                Text(tr("分栏", "Split")).tag(true)
             }
-            .controlSize(.small)
-            .help(settings.splitDiff
-                  ? tr("切换为统一视图", "Switch to unified view")
-                  : tr("切换为分栏视图", "Switch to split view"))
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help(tr("diff 布局", "Diff layout"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -136,19 +143,30 @@ struct DiffDetailView: View {
             } else {
                 ScrollView([.vertical]) {
                     LazyVStack(spacing: 0, pinnedViews: []) {
-                        ForEach(diff.hunks) { hunk in
+                        ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { hunkIndex, hunk in
                             HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging)
                             if settings.splitDiff {
                                 ForEach(hunk.splitRows) { row in
                                     SplitDiffRow(row: row, filePath: path, selectable: supportsLineStaging)
+                                        .background(rowFrameReader("s-\(hunkIndex)-\(row.id)"))
                                 }
                             } else {
                                 ForEach(hunk.lines) { line in
                                     UnifiedDiffRow(line: line, filePath: path, selectable: supportsLineStaging)
+                                        .background(rowFrameReader("u-\(line.id)"))
                                 }
                             }
                         }
                     }
+                    .coordinateSpace(name: "diffRows")
+                    .onPreferenceChange(RowFramesKey.self) { rowFrames = $0 }
+                    .overlay(alignment: .topLeading) {
+                        if supportsLineStaging {
+                            gutterSelectionStrip
+                        }
+                    }
+                    // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
+                    .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
                     .padding(.bottom, 20)
                 }
             }
@@ -166,6 +184,109 @@ struct DiffDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - gutter 拖拽 / 范围选择
+
+    /// 可在 gutter 上拖拽选择的行序表（按显示顺序）。
+    private struct SelectableRow {
+        let key: String
+        let lineIDs: [Int]
+    }
+
+    private var rowOrder: [SelectableRow] {
+        guard let diff = vm.diff else { return [] }
+        var rows: [SelectableRow] = []
+        for (hunkIndex, hunk) in diff.hunks.enumerated() {
+            if settings.splitDiff {
+                for row in hunk.splitRows {
+                    var ids: [Int] = []
+                    if let left = row.left, left.kind == .deletion { ids.append(left.id) }
+                    if let right = row.right, right.kind == .addition { ids.append(right.id) }
+                    rows.append(SelectableRow(key: "s-\(hunkIndex)-\(row.id)", lineIDs: ids))
+                }
+            } else {
+                for line in hunk.lines {
+                    rows.append(SelectableRow(
+                        key: "u-\(line.id)",
+                        lineIDs: line.kind == .context ? [] : [line.id]
+                    ))
+                }
+            }
+        }
+        return rows
+    }
+
+    private var gutterWidth: CGFloat {
+        settings.splitDiff ? 44 : 108
+    }
+
+    private var gutterSelectionStrip: some View {
+        Color.clear
+            .frame(width: gutterWidth)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 1, coordinateSpace: .named("diffRows")) { location in
+                gutterTap(at: location)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 3, coordinateSpace: .named("diffRows"))
+                    .onChanged { value in
+                        if dragBaseSelection == nil {
+                            dragBaseSelection = vm.selectedLineIDs
+                            dragAnchorKey = rowKey(atY: value.startLocation.y)
+                        }
+                        guard let anchor = dragAnchorKey,
+                              let current = rowKey(atY: value.location.y),
+                              let base = dragBaseSelection
+                        else { return }
+                        vm.selectedLineIDs = base.union(lineIDs(from: anchor, to: current))
+                    }
+                    .onEnded { _ in
+                        tapAnchorKey = dragAnchorKey ?? tapAnchorKey
+                        dragAnchorKey = nil
+                        dragBaseSelection = nil
+                    }
+            )
+            .help(tr("拖拽选择多行；⇧+点击做范围选择", "Drag to select lines; ⇧-click for range"))
+    }
+
+    private func rowKey(atY y: CGFloat) -> String? {
+        rowFrames.first { $0.value.minY <= y && y < $0.value.maxY }?.key
+    }
+
+    private func lineIDs(from keyA: String, to keyB: String) -> Set<Int> {
+        let order = rowOrder
+        guard let a = order.firstIndex(where: { $0.key == keyA }),
+              let b = order.firstIndex(where: { $0.key == keyB })
+        else { return [] }
+        return Set(order[min(a, b)...max(a, b)].flatMap(\.lineIDs))
+    }
+
+    private func gutterTap(at point: CGPoint) {
+        guard let key = rowKey(atY: point.y),
+              let row = rowOrder.first(where: { $0.key == key })
+        else { return }
+
+        if NSEvent.modifierFlags.contains(.shift), let anchor = tapAnchorKey {
+            vm.selectedLineIDs.formUnion(lineIDs(from: anchor, to: key))
+        } else {
+            for id in row.lineIDs { vm.toggleLine(id) }
+            tapAnchorKey = key
+        }
+    }
+}
+
+private struct RowFramesKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+private func rowFrameReader(_ key: String) -> some View {
+    GeometryReader { proxy in
+        Color.clear.preference(key: RowFramesKey.self, value: [key: proxy.frame(in: .named("diffRows"))])
     }
 }
 
