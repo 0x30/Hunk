@@ -128,15 +128,18 @@ struct ChangesListView: View {
     private func changeRows(_ changes: [FileChange], area: ChangeArea) -> some View {
         if settings.changesAsTree {
             let lookup = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-            OutlineGroup(FileTreeBuilder.build(paths: changes.map(\.path)), children: \.children) { node in
-                if node.isDirectory {
+            ForEach(Self.flattenTree(FileTreeBuilder.build(paths: changes.map(\.path)))) { item in
+                if item.node.isDirectory {
                     HStack(spacing: 5) {
-                        FileIconView(fileName: node.name, isDirectory: true)
-                        Text(node.name)
+                        FileIconView(fileName: item.node.name, isDirectory: true, expanded: true)
+                        Text(item.displayName)
                             .lineLimit(1)
+                            .foregroundStyle(.secondary)
                     }
-                } else if let change = lookup[node.path] {
+                    .padding(.leading, CGFloat(item.depth) * 14)
+                } else if let change = lookup[item.node.path] {
                     ChangeRow(change: change, area: area, showDirectory: false)
+                        .padding(.leading, CGFloat(item.depth) * 14)
                         .tag(SidebarSelection.change(path: change.path, area: area))
                 }
             }
@@ -146,6 +149,37 @@ struct ChangesListView: View {
                     .tag(SidebarSelection.change(path: change.path, area: area))
             }
         }
+    }
+
+    /// 变更树始终全展开（与 VS Code 一致），并把单子目录链合并为一行（a/b/c）。
+    private struct TreeRowItem: Identifiable {
+        let node: FileNode
+        let depth: Int
+        let displayName: String
+        var id: String { node.id }
+    }
+
+    private static func flattenTree(_ nodes: [FileNode], depth: Int = 0) -> [TreeRowItem] {
+        var result: [TreeRowItem] = []
+        for node in nodes {
+            if node.isDirectory {
+                // 合并只有一个子目录的链
+                var merged = node
+                var name = node.name
+                while let children = merged.children,
+                      children.count == 1,
+                      let only = children.first,
+                      only.isDirectory {
+                    merged = only
+                    name += "/" + only.name
+                }
+                result.append(TreeRowItem(node: merged, depth: depth, displayName: name))
+                result += flattenTree(merged.children ?? [], depth: depth + 1)
+            } else {
+                result.append(TreeRowItem(node: node, depth: depth, displayName: node.name))
+            }
+        }
+        return result
     }
 
     private func sectionHeader<Actions: View>(

@@ -63,6 +63,7 @@ struct BranchMenu: View {
             }
         } label: {
             Label(vm.currentBranch, systemImage: "arrow.triangle.branch")
+                .labelStyle(.titleAndIcon)
         }
         .help(tr("切换分支", "Switch branch"))
         .sheet(isPresented: $showNewBranch) {

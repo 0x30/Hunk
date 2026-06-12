@@ -28,7 +28,8 @@ public final class Repository: @unchecked Sendable {
     // MARK: - 状态
 
     public func status() async throws -> [FileChange] {
-        let result = try await git.run(["status", "--porcelain", "-z"])
+        // -uall：未跟踪目录展开为单个文件，而不是一条 "dir/" 记录
+        let result = try await git.run(["status", "--porcelain", "-uall", "-z"])
         return StatusParser.parse(result.stdoutData)
     }
 
