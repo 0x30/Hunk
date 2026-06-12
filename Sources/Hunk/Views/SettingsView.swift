@@ -1,17 +1,42 @@
 import SwiftUI
 
-/// 设置弹窗（⌘,）：外观 / 编辑器 / 扩展。
+/// 设置窗口（⌘,）：Xcode 风格——左侧分类列表，右侧内容面板。
 struct SettingsView: View {
+    private enum Pane: String, CaseIterable, Identifiable {
+        case appearance, editor, extensions
+        var id: String { rawValue }
+    }
+
+    @State private var pane: Pane = .appearance
+
     var body: some View {
-        TabView {
-            AppearanceSettings()
-                .tabItem { Label(tr("外观", "Appearance"), systemImage: "paintbrush") }
-            EditorSettings()
-                .tabItem { Label(tr("编辑器", "Editor"), systemImage: "square.and.pencil") }
-            ExtensionSettings()
-                .tabItem { Label(tr("扩展", "Extensions"), systemImage: "puzzlepiece.extension") }
+        HStack(spacing: 0) {
+            List(selection: $pane) {
+                Label(tr("外观", "Appearance"), systemImage: "paintbrush")
+                    .tag(Pane.appearance)
+                Label(tr("编辑器", "Editor"), systemImage: "square.and.pencil")
+                    .tag(Pane.editor)
+                Label(tr("扩展", "Extensions"), systemImage: "puzzlepiece.extension")
+                    .tag(Pane.extensions)
+            }
+            .listStyle(.sidebar)
+            .frame(width: 178)
+
+            Divider()
+
+            Group {
+                switch pane {
+                case .appearance:
+                    AppearanceSettings()
+                case .editor:
+                    EditorSettings()
+                case .extensions:
+                    ExtensionSettings()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 740, height: 500)
     }
 }
 
@@ -41,6 +66,11 @@ private struct AppearanceSettings: View {
                 .onChange(of: settings.themeID) { _, _ in
                     ThemeStore.shared.loadActive()
                 }
+
+                Text(tr("选择深色主题时，整个应用会一并切换为深色外观。",
+                        "Choosing a dark theme switches the whole app to dark appearance."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if extensions.installed.flatMap(\.colorThemes).isEmpty {
                     Text(tr("还没有可选主题——到「扩展」页从 open-vsx 下载（如 One Dark Pro、Dracula）。",
