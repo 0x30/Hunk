@@ -38,16 +38,16 @@ struct CommitBarView: View {
                     }
                 )
 
+            // 内容区高度 = 盒高 − 上下各 7pt（与镜像的垂直内边距对称），
+            // 文本与光标垂直居中
             TextEditor(text: $vm.commitMessage)
                 .font(.system(size: 12.5))
                 .scrollContentBackground(.hidden)
                 .focused($messageFocused)
                 .padding(.leading, 4)
                 .padding(.trailing, 24)
-                // 顶部内边距与镜像/占位符对齐，否则空内容时光标贴顶
-                .padding(.top, 6)
-                .padding(.bottom, 2)
-                .frame(height: fieldHeight)
+                .frame(height: max(16, fieldHeight - 14))
+                .padding(.top, 7)
 
             if vm.commitMessage.isEmpty {
                 Text(tr("提交信息（⌘⏎ 提交）", "Commit message (⌘⏎)"))
