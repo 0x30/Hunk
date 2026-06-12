@@ -637,6 +637,83 @@ private struct SplitDiffRow: View {
     }
 }
 
+// MARK: - 只读 diff（历史详情 / 比较）
+
+struct ReadOnlyDiffView: View {
+    @EnvironmentObject var settings: SettingsStore
+    let diff: FileDiff
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                FileIconView(fileName: ((diff.path) as NSString).lastPathComponent)
+                Text(diff.path)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: 4) {
+                    Text("+\(diff.additions)").foregroundStyle(.green)
+                    Text("-\(diff.deletions)").foregroundStyle(.red)
+                }
+                .font(.caption.monospacedDigit().weight(.medium))
+                Spacer()
+                Picker("", selection: $settings.splitDiff) {
+                    Image(systemName: "square.fill.text.grid.1x2").tag(false)
+                    Image(systemName: "rectangle.split.2x1").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .windowBackgroundColor))
+            Divider()
+
+            if diff.isBinary {
+                VStack(spacing: 10) {
+                    Image(systemName: "doc.zipper")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(.quaternary)
+                    Text(tr("二进制文件", "Binary file"))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView([.vertical]) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(diff.hunks) { hunk in
+                            HStack {
+                                Text("@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@ \(hunk.sectionHeading)")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(Color(nsColor: .windowBackgroundColor))
+
+                            if settings.splitDiff {
+                                ForEach(hunk.splitRows) { row in
+                                    SplitDiffRow(row: row, filePath: diff.path, selectable: false)
+                                }
+                            } else {
+                                ForEach(hunk.lines) { line in
+                                    UnifiedDiffRow(line: line, filePath: diff.path, selectable: false)
+                                }
+                            }
+                        }
+                    }
+                    .id("\(diff.path)|\(settings.splitDiff)")
+                    .padding(.bottom, 20)
+                }
+            }
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
 // MARK: - 带语法高亮的行文本
 
 /// 对单行 diff 文本做逐行词法高亮（无跨行状态，速度优先）。
