@@ -1,7 +1,9 @@
 import SwiftUI
 import AppKit
+import notify
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var cliNotifyToken: Int32 = 0
     func applicationDidFinishLaunching(_ notification: Notification) {
         // SPM 可执行程序没有 app bundle，需要手动升级为常规前台应用
         NSApp.setActivationPolicy(.regular)
@@ -11,6 +13,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 不主动触碰的话要等首次打开编辑器才会应用全局外观）
         _ = ThemeStore.shared
         _ = IconThemeStore.shared
+
+        // 预热 LaunchServices：进程内首次 LS 查询会触发整库初始化，期间系统把
+        // 数据库经 XPC 整份拷贝（本机约 200MB），多线程首查还会竞态各拷一份，
+        // 内存瞬时冲到 400MB+。启动时在单一后台线程先查一次，之后打开文件
+        // 走已建好的只读映射，不再出现尖峰。
+        DispatchQueue.global(qos: .utility).async {
+            // 必须是真正命中数据库的查询，太轻的（缓存内）触发不了初始化
+            _ = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
+        }
+
+        // hunk 命令行的轻量通道：应用在运行时脚本走 darwin 通知送路径，
+        // 绕开系统 odoc 打开事件（每次都会触发 LaunchServices 整库拷贝的内存尖峰）
+        notify_register_dispatch(CLIOpenRouter.notifyName, &cliNotifyToken, .main) { _ in
+            Task { @MainActor in CLIOpenRouter.consumeChannelFile() }
+        }
     }
 
     /// `hunk` 命令行 / 访达「打开方式」送来的路径
@@ -88,6 +105,25 @@ enum CLIOpenRouter {
     static func takePendingReveal() -> String? {
         defer { pendingReveal = nil }
         return pendingReveal
+    }
+
+    // MARK: 轻量通道（应用运行中时 hunk 脚本直接送路径，绕开 odoc 事件）
+
+    /// darwin 通知名，与安装的 hunk 脚本约定一致
+    nonisolated static let notifyName = "app.hunk.cli.open"
+
+    /// 路径中转文件：脚本写入，应用读取后删除
+    nonisolated static var channelFile: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Hunk/cli-open")
+    }
+
+    static func consumeChannelFile() {
+        guard let raw = try? String(contentsOf: channelFile, encoding: .utf8) else { return }
+        try? FileManager.default.removeItem(at: channelFile)
+        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+        route(path)
     }
 }
 
