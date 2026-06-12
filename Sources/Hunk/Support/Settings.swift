@@ -36,8 +36,14 @@ final class SettingsStore: ObservableObject {
     private let defaults = UserDefaults.standard
 
     @Published var language: AppLanguage {
-        didSet { defaults.set(language.rawValue, forKey: "appLanguage") }
+        didSet {
+            defaults.set(language.rawValue, forKey: "appLanguage")
+            syncSystemLanguage()
+        }
     }
+
+    /// 应用启动时的语言：用于判断「重启后才生效」的提示该不该显示
+    let launchLanguage: AppLanguage
 
     @Published var editorFontName: String {
         didSet { defaults.set(editorFontName, forKey: "editorFontName") }
@@ -70,7 +76,9 @@ final class SettingsStore: ObservableObject {
     }
 
     private init() {
-        language = AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system
+        let saved = AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system
+        language = saved
+        launchLanguage = saved
         editorFontName = defaults.string(forKey: "editorFontName") ?? "SF Mono"
         let size = defaults.double(forKey: "editorFontSize")
         editorFontSize = size > 0 ? size : 13
@@ -90,6 +98,16 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// 顶部菜单栏（文件/编辑/窗口…与系统标准项）由 AppKit 按应用语言加载，
+    /// 需写入本应用域的 AppleLanguages，重启后生效。
+    private func syncSystemLanguage() {
+        switch language {
+        case .system: defaults.removeObject(forKey: "AppleLanguages")
+        case .zhHans: defaults.set(["zh-Hans"], forKey: "AppleLanguages")
+        case .english: defaults.set(["en"], forKey: "AppleLanguages")
+        }
+    }
+
     var editorNSFont: NSFont {
         NSFont(name: editorFontName, size: editorFontSize)
             ?? .monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
@@ -106,6 +124,23 @@ final class SettingsStore: ObservableObject {
             guard let font = NSFont(name: family, size: 12) else { return false }
             return font.isFixedPitch
         }.sorted()
+    }
+}
+
+// MARK: - 重启应用
+
+/// 重新启动应用（语言切换后让系统菜单生效）。
+enum AppRelaunch {
+    static func relaunch() {
+        let bundlePath = Bundle.main.bundlePath
+        if bundlePath.hasSuffix(".app") {
+            // 先退出再拉起：open 对已退出的应用会启动新实例
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", "sleep 0.3; /usr/bin/open \"\(bundlePath)\""]
+            try? task.run()
+        }
+        NSApp.terminate(nil)
     }
 }
 

@@ -89,6 +89,8 @@ private struct WindowRoot: View {
 /// 菜单命令：作用于当前聚焦窗口的视图模型。
 private struct AppCommands: Commands {
     @FocusedObject private var vm: RepoViewModel?
+    // 观察语言设置：切换语言后自定义菜单项即时换文案
+    @ObservedObject private var settings = SettingsStore.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {

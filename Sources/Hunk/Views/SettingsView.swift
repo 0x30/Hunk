@@ -58,6 +58,20 @@ private struct AppearanceSettings: View {
                         Text(language.displayName).tag(language)
                     }
                 }
+
+                // 顶部菜单栏由系统按启动语言加载，切换后需重启
+                if settings.language != settings.launchLanguage {
+                    HStack(spacing: 8) {
+                        Text(tr("顶部菜单栏将在重新启动后切换语言。",
+                                "The menu bar switches language after a relaunch."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(tr("立即重启", "Relaunch Now")) {
+                            AppRelaunch.relaunch()
+                        }
+                        .controlSize(.small)
+                    }
+                }
             }
 
             Section(tr("颜色主题", "Color Theme")) {
