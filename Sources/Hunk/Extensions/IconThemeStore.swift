@@ -33,17 +33,17 @@ final class IconThemeStore: ObservableObject {
 
     // MARK: - 激活与启动
 
-    /// 依据 SettingsStore.iconThemeID（"sf" 或 "<extensionID>/<label>"）加载查找表。
+    /// 依据 SettingsStore.iconThemeID 加载查找表：
+    /// "" = 自动（取第一个已安装图标主题），"sf" = 内置，其余按 id 匹配。
     func loadActive() {
         let id = SettingsStore.shared.iconThemeID
         guard id != "sf" else {
             setManifest(nil, directory: nil)
             return
         }
-        guard let ref = ExtensionStore.shared.installed
-            .flatMap(\.iconThemes)
-            .first(where: { $0.id == id })
-        else {
+        let available = ExtensionStore.shared.installed.flatMap(\.iconThemes)
+        let ref = id.isEmpty ? available.first : available.first { $0.id == id }
+        guard let ref else {
             setManifest(nil, directory: nil)
             return
         }
@@ -65,8 +65,8 @@ final class IconThemeStore: ObservableObject {
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
-    /// 首次启动自动安装 Material Icon Theme（用户要求文件图标默认走 open-vsx）。
-    /// 失败静默回退 SF Symbols，下次启动再试。
+    /// 首次启动自动安装 Material Icon Theme（文件图标默认走 open-vsx）。
+    /// 已安装则直接生效（"" 自动模式会选中它）；失败静默回退 SF Symbols，下次启动再试。
     func bootstrap() {
         guard !autoInstallAttempted else { return }
         autoInstallAttempted = true
@@ -76,13 +76,10 @@ final class IconThemeStore: ObservableObject {
             loadActive()
             return
         }
-        guard SettingsStore.shared.iconThemeID != "sf-forced" else { return }
+        // 用户显式选择了内置图标时不再自动下载
+        guard SettingsStore.shared.iconThemeID != "sf" else { return }
         Task {
-            if let installed = await ExtensionStore.shared.install("PKief.material-icon-theme"),
-               let first = installed.iconThemes.first {
-                await MainActor.run {
-                    SettingsStore.shared.iconThemeID = first.id
-                }
+            if await ExtensionStore.shared.install("PKief.material-icon-theme") != nil {
                 self.loadActive()
             }
         }

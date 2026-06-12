@@ -52,7 +52,9 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(themeID, forKey: "themeID") }
     }
 
-    /// 文件图标主题 id："sf" 表示内置 SF Symbols，其余为已下载的 VS Code 图标主题
+    /// 文件图标主题 id：
+    /// "" = 自动（优先使用已安装的图标主题），"sf" = 强制内置 SF Symbols，
+    /// 其余为已下载的 VS Code 图标主题 id。
     @Published var iconThemeID: String {
         didSet { defaults.set(iconThemeID, forKey: "iconThemeID") }
     }
@@ -73,7 +75,7 @@ final class SettingsStore: ObservableObject {
         let size = defaults.double(forKey: "editorFontSize")
         editorFontSize = size > 0 ? size : 13
         themeID = defaults.string(forKey: "themeID") ?? "system"
-        iconThemeID = defaults.string(forKey: "iconThemeID") ?? "sf"
+        iconThemeID = defaults.string(forKey: "iconThemeID") ?? ""
         changesAsTree = defaults.object(forKey: "changesAsTree") as? Bool ?? true
         splitDiff = defaults.bool(forKey: "splitDiff")
     }

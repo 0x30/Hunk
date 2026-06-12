@@ -45,6 +45,7 @@ private struct AppearanceSettings: View {
 
             Section(tr("文件图标", "File Icons")) {
                 Picker(tr("图标主题", "Icon Theme"), selection: $settings.iconThemeID) {
+                    Text(tr("自动（优先已安装主题）", "Auto (prefer installed)")).tag("")
                     Text(tr("内置（SF Symbols）", "Built-in (SF Symbols)")).tag("sf")
                     ForEach(extensions.installed.flatMap(\.iconThemes)) { ref in
                         Text(ref.label).tag(ref.id)
