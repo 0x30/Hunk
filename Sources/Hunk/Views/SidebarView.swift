@@ -11,15 +11,14 @@ struct SidebarView: View {
                 FilesView()
             case .changes:
                 VStack(spacing: 0) {
-                    // VS Code 式：提交信息在最上面
-                    CommitBarView()
-                    Divider()
+                    // 「文件变化」模块：提交输入框 + 变更列表，一起折叠
                     PanelHeader(
                         title: tr("文件变化", "Changes"),
                         count: vm.changes.count,
                         collapsed: $vm.changesPanelCollapsed
                     )
                     if !vm.changesPanelCollapsed {
+                        CommitBarView()
                         ChangesListView()
                     }
                     Divider()
