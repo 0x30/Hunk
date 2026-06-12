@@ -32,10 +32,22 @@ final class RepoViewModel: ObservableObject {
     // MARK: 界面状态
 
     @Published var sidebarTab: SidebarTab = .files
+    @Published var sidebarVisible = true
+
+    /// Xcode 式导航器切换：点未选中的标签则切换并展开，点已选中的则收起侧边栏。
+    func toggleSidebarTab(_ tab: SidebarTab) {
+        if sidebarVisible && sidebarTab == tab {
+            sidebarVisible = false
+        } else {
+            sidebarTab = tab
+            sidebarVisible = true
+        }
+    }
     @Published var selection: SidebarSelection? {
         didSet {
             guard selection != oldValue else { return }
             editingChangedFile = false
+            if selection != nil { historyDetail = nil }
             Task { await loadDetail() }
         }
     }
@@ -77,6 +89,30 @@ final class RepoViewModel: ObservableObject {
     @Published var isSyncing = false
     @Published var pendingDiscard: FileChange?
     @Published var pendingFolderDrop: URL?
+    @Published var showQuickOpen = false
+    /// 请求文件列表定位某个文件（展开祖先目录并选中）。
+    @Published var revealFileRequest: String?
+
+    // MARK: 历史
+
+    enum HistoryDetail: Equatable {
+        case commit(Repository.Commit)
+        case compare(base: String, target: String)
+
+        var title: String {
+            switch self {
+            case .commit(let commit): return "\(commit.shortHash) \(commit.subject)"
+            case .compare(let base, let target): return "\(base) ↔ \(target)"
+            }
+        }
+    }
+
+    @Published var history: [Repository.LogEntry] = []
+    @Published var historyFilterPath: String?
+    @Published var historyDetail: HistoryDetail?
+    @Published var historyFiles: [Repository.CommitFileChange] = []
+    @Published var historyDiff: FileDiff?
+    @Published var historyDiffPath: String?
 
     private(set) var repo: Repository?
     private let defaults = UserDefaults.standard
@@ -173,6 +209,7 @@ final class RepoViewModel: ObservableObject {
             self.headSummary = try await head
             self.workspaceFiles = try await files
             self.workspaceTree = FileTreeBuilder.build(paths: self.workspaceFiles)
+            self.history = (try? await repo.history(path: self.historyFilterPath)) ?? []
 
             // 选中的更改已不存在时清掉详情
             if case .change(let path, let area) = selection {
@@ -638,6 +675,76 @@ final class RepoViewModel: ObservableObject {
             isSyncing = false
             await refresh()
         }
+    }
+
+    // MARK: - 历史
+
+    func setHistoryFilter(_ path: String?) {
+        historyFilterPath = path
+        Task {
+            guard let repo else { return }
+            history = (try? await repo.history(path: path)) ?? []
+        }
+    }
+
+    /// 在历史面板查看某个文件的全部提交。
+    func showFileHistory(_ path: String) {
+        sidebarTab = .changes
+        setHistoryFilter(path)
+    }
+
+    func openHistoryDetail(_ detail: HistoryDetail) {
+        historyDetail = detail
+        historyFiles = []
+        historyDiff = nil
+        historyDiffPath = nil
+        Task {
+            guard let repo else { return }
+            do {
+                switch detail {
+                case .commit(let commit):
+                    historyFiles = try await repo.filesChanged(in: commit.hash)
+                case .compare(let base, let target):
+                    historyFiles = try await repo.filesChanged(from: base, to: target)
+                }
+                // 历史详情里若只改了一个文件，直接展示它的 diff
+                if let first = historyFiles.first, historyFiles.count == 1 {
+                    selectHistoryFile(first)
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func closeHistoryDetail() {
+        historyDetail = nil
+        historyDiff = nil
+        historyDiffPath = nil
+    }
+
+    func selectHistoryFile(_ file: Repository.CommitFileChange) {
+        guard let repo, let detail = historyDetail else { return }
+        historyDiffPath = file.path
+        Task {
+            do {
+                switch detail {
+                case .commit(let commit):
+                    historyDiff = try await repo.diff(in: commit.hash, path: file.path)
+                case .compare(let base, let target):
+                    historyDiff = try await repo.diff(from: base, to: target, path: file.path)
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// 在文件列表中定位并打开。
+    func revealInFiles(_ path: String) {
+        sidebarTab = .files
+        selection = .file(path: path)
+        revealFileRequest = path
     }
 
     // MARK: - 拖拽打开
