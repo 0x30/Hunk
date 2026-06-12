@@ -38,7 +38,14 @@ struct FilesView: View {
                     node: row.node,
                     depth: row.depth,
                     isExpanded: expanded.contains(row.node.path),
-                    toggle: { toggle(row.node) }
+                    toggle: { toggle(row.node) },
+                    select: {
+                        // onTapGesture 会吞掉 List 的选中事件，手动同步选中态
+                        localSelection = row.node.path
+                        if !row.node.isDirectory {
+                            vm.selection = .file(path: row.node.path)
+                        }
+                    }
                 )
                 .tag(row.node.path)
             }
@@ -127,6 +134,7 @@ private struct FileTreeRow: View {
     let depth: Int
     let isExpanded: Bool
     let toggle: () -> Void
+    let select: () -> Void
 
     private var change: FileChange? {
         vm.changes.first { $0.path == node.path }
@@ -168,11 +176,10 @@ private struct FileTreeRow: View {
         .padding(.leading, CGFloat(depth) * 14)
         .contentShape(Rectangle())
         .onTapGesture {
-            // 单击：目录切换展开，文件打开（List 选中由 tag 机制处理）
+            // 单击：选中 + 目录切换展开 / 文件打开
+            select()
             if node.isDirectory {
                 toggle()
-            } else {
-                vm.selection = .file(path: node.path)
             }
         }
         .contextMenu {

@@ -10,8 +10,6 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             if showConflictBar {
                 ConflictBar()
                 Divider()
@@ -44,62 +42,6 @@ struct EditorView: View {
         }
     }
 
-    private var hasChanges: Bool {
-        vm.changes.contains { $0.path == path }
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            FileIconView(fileName: (path as NSString).lastPathComponent)
-            Text(path)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            if vm.editorDirty {
-                Circle()
-                    .fill(.orange)
-                    .frame(width: 7, height: 7)
-                    .help(tr("未保存的修改", "Unsaved changes"))
-            }
-
-            Spacer()
-
-            if vm.editingChangedFile {
-                Button {
-                    vm.editingChangedFile = false
-                    Task { await vm.loadDetail() }
-                } label: {
-                    Label(tr("查看差异", "View Diff"), systemImage: "plus.forwardslash.minus")
-                }
-                .controlSize(.small)
-            } else if hasChanges, case .file = vm.selection {
-                Button {
-                    vm.sidebarTab = .changes
-                    if let change = vm.changes.first(where: { $0.path == path }) {
-                        let area: ChangeArea = change.isConflicted
-                            ? .conflicted
-                            : (change.unstaged != nil ? .unstaged : .staged)
-                        vm.selection = .change(path: path, area: area)
-                    }
-                } label: {
-                    Label(tr("查看差异", "View Diff"), systemImage: "plus.forwardslash.minus")
-                }
-                .controlSize(.small)
-            }
-
-            Button {
-                Task { await vm.saveEditor() }
-            } label: {
-                Label(tr("保存", "Save"), systemImage: "square.and.arrow.down")
-            }
-            .controlSize(.small)
-            .disabled(!vm.editorDirty)
-            .help("⌘S")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-    }
 }
 
 /// 冲突解决条：极简单行。颜色与编辑器内的冲突块底色对应——
