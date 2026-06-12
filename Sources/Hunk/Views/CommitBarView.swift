@@ -44,7 +44,9 @@ struct CommitBarView: View {
                 .focused($messageFocused)
                 .padding(.leading, 4)
                 .padding(.trailing, 24)
-                .padding(.vertical, 1)
+                // 顶部内边距与镜像/占位符对齐，否则空内容时光标贴顶
+                .padding(.top, 6)
+                .padding(.bottom, 2)
                 .frame(height: fieldHeight)
 
             if vm.commitMessage.isEmpty {
