@@ -6,15 +6,12 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $vm.sidebarTab) {
-                Image(systemName: "plus.forwardslash.minus")
-                    .help(tr("源代码管理", "Source Control"))
-                    .tag(SidebarTab.changes)
-                Image(systemName: "folder")
-                    .help(tr("文件", "Files"))
+                Label(tr("文件", "Files"), systemImage: "folder")
                     .tag(SidebarTab.files)
-                Image(systemName: "arrow.triangle.branch")
-                    .help(tr("分支与贮藏", "Branches & Stashes"))
-                    .tag(SidebarTab.branches)
+                    .help(tr("文件 (⌘1)", "Files (⌘1)"))
+                Label(tr("源代码管理", "Source Control"), systemImage: "plus.forwardslash.minus")
+                    .tag(SidebarTab.changes)
+                    .help(tr("源代码管理 (⌘2)", "Source Control (⌘2)"))
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -24,24 +21,24 @@ struct SidebarView: View {
             Divider()
 
             switch vm.sidebarTab {
+            case .files:
+                FilesView()
             case .changes:
                 ChangesListView()
                 Divider()
                 CommitBarView()
-            case .files:
-                FilesView()
-            case .branches:
-                BranchesView()
             }
         }
     }
 }
 
-/// 工具栏：分支切换菜单。
+// MARK: - 工具栏：分支切换（胶囊样式）
+
 struct BranchMenu: View {
     @EnvironmentObject var vm: RepoViewModel
     @State private var showNewBranch = false
     @State private var newBranchName = ""
+    @State private var hovering = false
 
     var body: some View {
         Menu {
@@ -62,9 +59,27 @@ struct BranchMenu: View {
                 showNewBranch = true
             }
         } label: {
-            Label(vm.currentBranch, systemImage: "arrow.triangle.branch")
-                .labelStyle(.titleAndIcon)
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 11, weight: .medium))
+                Text(vm.currentBranch)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(Color.primary.opacity(hovering ? 0.1 : 0.06))
+            )
+            .contentShape(Capsule())
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .onHover { hovering = $0 }
         .help(tr("切换分支", "Switch branch"))
         .sheet(isPresented: $showNewBranch) {
             VStack(spacing: 16) {
@@ -94,54 +109,82 @@ struct BranchMenu: View {
     }
 }
 
-/// 工具栏：远端同步（抓取 / 拉取 / 推送 + ahead/behind 指示）。
+// MARK: - 工具栏：远端同步（胶囊分组）
+
 struct SyncControls: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        HStack(spacing: 2) {
-            Button {
-                vm.fetch()
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-            }
-            .help(tr("抓取", "Fetch") + upstreamSuffix)
+        HStack(spacing: 4) {
+            HStack(spacing: 0) {
+                PillIconButton(
+                    systemImage: "arrow.triangle.2.circlepath",
+                    help: tr("抓取", "Fetch") + upstreamSuffix
+                ) { vm.fetch() }
 
-            // 注意：label 的视图层级必须保持恒定（计数用空串而不是条件渲染），
-            // 否则 NSToolbar 重建该项后会吞掉紧接着的第一次点击。
-            Button {
-                vm.pull()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.down")
-                    Text(vm.sync.behind > 0 ? "\(vm.sync.behind)" : "")
-                        .font(.caption.monospacedDigit())
-                }
-            }
-            .help(tr("拉取", "Pull") + upstreamSuffix)
+                separator
 
-            Button {
-                vm.push()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.up")
-                    Text(vm.sync.ahead > 0 ? "\(vm.sync.ahead)" : "")
-                        .font(.caption.monospacedDigit())
-                }
+                PillIconButton(
+                    systemImage: "arrow.down",
+                    count: vm.sync.behind,
+                    help: tr("拉取", "Pull") + upstreamSuffix
+                ) { vm.pull() }
+
+                separator
+
+                PillIconButton(
+                    systemImage: "arrow.up",
+                    count: vm.sync.ahead,
+                    help: vm.sync.upstream == nil
+                        ? tr("推送（将发布分支）", "Push (will publish branch)")
+                        : tr("推送", "Push") + upstreamSuffix
+                ) { vm.push() }
             }
-            .help(vm.sync.upstream == nil
-                  ? tr("推送（将发布分支）", "Push (will publish branch)")
-                  : tr("推送", "Push") + upstreamSuffix)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .disabled(vm.isSyncing)
 
             ProgressView()
                 .controlSize(.small)
-                .padding(.leading, 4)
                 .opacity(vm.isSyncing ? 1 : 0)
         }
-        .disabled(vm.isSyncing)
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 1, height: 12)
     }
 
     private var upstreamSuffix: String {
         vm.sync.upstream.map { " (\($0))" } ?? ""
+    }
+}
+
+/// 胶囊组里的单个图标按钮：计数文本始终在视图树中（空串），避免重建丢点击。
+private struct PillIconButton: View {
+    let systemImage: String
+    var count: Int = 0
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .medium))
+                Text(count > 0 ? "\(count)" : "")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(hovering ? Color.primary.opacity(0.08) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
     }
 }
