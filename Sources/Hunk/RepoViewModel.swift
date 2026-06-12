@@ -146,6 +146,11 @@ final class RepoViewModel: ObservableObject {
     /// 结束当前会话（终端聚焦时 ⌘W）；最后一个会话关闭后收起面板。
     func closeActiveTerminal() {
         guard let session = activeTerminal else { return }
+        closeTerminal(session)
+    }
+
+    /// 结束指定会话（标签上的 × 按钮）。
+    func closeTerminal(_ session: TerminalSession) {
         session.terminate()
         removeTerminal(session)
     }

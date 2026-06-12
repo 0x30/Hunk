@@ -6,6 +6,8 @@ import SwiftTerm
 /// 单个 shell 会话：持有终端视图与进程，面板隐藏/切换标签时只是移出层级，会话不中断。
 final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDelegate {
     let id = UUID()
+    /// 标签显示用的 shell 名（zsh / bash…）
+    let shellName = ((ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh") as NSString).lastPathComponent
     /// shell 退出（用户输入 exit）时回调
     var onExit: ((TerminalSession) -> Void)?
     /// 终端获得/失去键盘焦点（用于 ⌘N/⌘W 路由到终端语义）
@@ -96,65 +98,49 @@ struct TerminalPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(tr("终端", "Terminal"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                // 会话标签
-                ForEach(Array(vm.terminals.enumerated()), id: \.element.id) { index, session in
-                    Button {
-                        vm.activeTerminalID = session.id
-                    } label: {
-                        Text("\(index + 1)")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(session.id == vm.activeTerminalID ? Color.primary : .secondary)
-                            .frame(width: 18, height: 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(session.id == vm.activeTerminalID ? Color.primary.opacity(0.12) : .clear)
+            // 会话标签栏：与编辑器文件 tab 同样式
+            HStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(vm.terminals.enumerated()), id: \.element.id) { index, session in
+                            TerminalTabItem(
+                                session: session,
+                                index: index,
+                                isActive: session.id == vm.activeTerminal?.id
                             )
+                        }
                     }
-                    .buttonStyle(.borderless)
                 }
 
-                Spacer()
+                Spacer(minLength: 8)
 
                 Button {
                     vm.newTerminal()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 32)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help(tr("新建终端（终端聚焦时 ⌘N）", "New Terminal (⌘N while focused)"))
-
-                Button {
-                    vm.closeActiveTerminal()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help(tr("结束当前会话（终端聚焦时 ⌘W）", "Kill Session (⌘W while focused)"))
 
                 Button {
                     vm.toggleTerminal()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 32)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help(tr("收起面板（⌘J）", "Hide Panel (⌘J)"))
             }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
+            .padding(.trailing, 6)
+            .frame(height: 32)
+            .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
 
@@ -168,6 +154,62 @@ struct TerminalPanel: View {
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+/// 单个会话标签：样式对齐编辑器文件 tab（悬停出关闭、选中态顶部高亮条）。
+private struct TerminalTabItem: View {
+    @EnvironmentObject var vm: RepoViewModel
+    let session: TerminalSession
+    let index: Int
+    let isActive: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10))
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+
+            Text("\(session.shellName) \(index + 1)")
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .foregroundStyle(isActive ? .primary : .secondary)
+
+            // 悬停出现结束按钮
+            ZStack {
+                if hovering {
+                    Button {
+                        vm.closeTerminal(session)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(tr("结束会话（聚焦时 ⌘W）", "Kill Session (⌘W while focused)"))
+                }
+            }
+            .frame(width: 14, height: 14)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(isActive ? Color(nsColor: .textBackgroundColor) : .clear)
+        .overlay(alignment: .top) {
+            if isActive {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.5))
+                .frame(width: 1, height: 16)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { vm.activeTerminalID = session.id }
+        .onHover { hovering = $0 }
     }
 }
 
