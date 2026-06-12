@@ -76,13 +76,16 @@ final class RepoViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isSyncing = false
     @Published var pendingDiscard: FileChange?
+    @Published var pendingFolderDrop: URL?
 
     private(set) var repo: Repository?
     private let defaults = UserDefaults.standard
 
-    init() {
-        if let last = defaults.string(forKey: "lastRepo"),
-           FileManager.default.fileExists(atPath: last) {
+    init(initialPath: String? = nil) {
+        if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
+            Task { await open(URL(fileURLWithPath: initialPath)) }
+        } else if let last = defaults.string(forKey: "lastRepo"),
+                  FileManager.default.fileExists(atPath: last) {
             Task { await open(URL(fileURLWithPath: last)) }
         }
     }
@@ -634,6 +637,28 @@ final class RepoViewModel: ObservableObject {
             }
             isSyncing = false
             await refresh()
+        }
+    }
+
+    // MARK: - 拖拽打开
+
+    /// 拖入文件：仓库内的直接打开；拖入文件夹：弹出「当前/新窗口」选择。
+    func handleDrop(url: URL) {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+        if isDirectory.boolValue {
+            pendingFolderDrop = url
+            return
+        }
+        if let root = repoRoot, url.path.hasPrefix(root.path + "/") {
+            let relative = String(url.path.dropFirst(root.path.count + 1))
+            sidebarTab = .files
+            selection = .file(path: relative)
+        } else {
+            errorMessage = tr(
+                "该文件不在当前仓库内。拖入它所在的文件夹可以打开对应仓库。",
+                "This file is outside the current repository. Drop its folder to open that repository."
+            )
         }
     }
 

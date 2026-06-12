@@ -3,6 +3,7 @@ import HunkCore
 
 struct ContentView: View {
     @EnvironmentObject var vm: RepoViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
@@ -10,6 +11,37 @@ struct ContentView: View {
                 WelcomeView()
             } else {
                 MainSplitView()
+            }
+        }
+        // 拖入文件直接打开，拖入文件夹询问在哪个窗口打开
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first else { return false }
+            vm.handleDrop(url: url)
+            return true
+        }
+        .confirmationDialog(
+            tr("打开文件夹「\(vm.pendingFolderDrop?.lastPathComponent ?? "")」",
+               "Open folder “\(vm.pendingFolderDrop?.lastPathComponent ?? "")”"),
+            isPresented: Binding(
+                get: { vm.pendingFolderDrop != nil },
+                set: { if !$0 { vm.pendingFolderDrop = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("在当前窗口打开", "Open in This Window")) {
+                if let url = vm.pendingFolderDrop {
+                    vm.pendingFolderDrop = nil
+                    Task { await vm.open(url) }
+                }
+            }
+            Button(tr("在新窗口打开", "Open in New Window")) {
+                if let url = vm.pendingFolderDrop {
+                    vm.pendingFolderDrop = nil
+                    openWindow(value: url.path)
+                }
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.pendingFolderDrop = nil
             }
         }
         .alert(
@@ -51,21 +83,6 @@ struct MainSplitView: View {
             ToolbarItemGroup(placement: .navigation) {
                 BranchMenu()
                 SyncControls()
-            }
-            ToolbarItemGroup {
-                Button {
-                    Task { await vm.refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help(tr("刷新 (⌘R)", "Refresh (⌘R)"))
-
-                Button {
-                    vm.openRepoPanel()
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                }
-                .help(tr("打开仓库 (⌘O)", "Open Repository (⌘O)"))
             }
         }
     }

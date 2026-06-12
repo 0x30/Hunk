@@ -12,78 +12,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct HunkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var vm = RepoViewModel()
     @StateObject private var settings = SettingsStore.shared
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(vm)
+        // 每个窗口一个独立仓库（拖入文件夹可选择「在新窗口打开」）
+        WindowGroup(for: String.self) { $repoPath in
+            WindowRoot(initialPath: repoPath)
                 .environmentObject(settings)
                 .id(settings.language)  // 切换语言时整树重建
-                .frame(minWidth: 900, minHeight: 560)
         }
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button(tr("打开仓库…", "Open Repository…")) {
-                    vm.openRepoPanel()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
-            CommandGroup(replacing: .saveItem) {
-                Button(tr("保存", "Save")) {
-                    Task { await vm.saveEditor() }
-                }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!vm.editorDirty)
-
-                Button(tr("关闭标签页", "Close Tab")) {
-                    vm.closeActiveTab()
-                }
-                .keyboardShortcut("w", modifiers: .command)
-            }
-            CommandGroup(after: .toolbar) {
-                Button(tr("文件", "Files")) {
-                    vm.sidebarTab = .files
-                }
-                .keyboardShortcut("1", modifiers: .command)
-
-                Button(tr("源代码管理", "Source Control")) {
-                    vm.sidebarTab = .changes
-                }
-                .keyboardShortcut("2", modifiers: .command)
-
-                Divider()
-
-                Button(tr("下一个标签页", "Next Tab")) {
-                    vm.activateNeighborTab(offset: 1)
-                }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
-
-                Button(tr("上一个标签页", "Previous Tab")) {
-                    vm.activateNeighborTab(offset: -1)
-                }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
-
-                Divider()
-
-                Button(tr("刷新", "Refresh")) {
-                    Task { await vm.refresh() }
-                }
-                .keyboardShortcut("r", modifiers: .command)
-
-                Button(tr("提交", "Commit")) {
-                    vm.commit()
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-        }
+        .commands { AppCommands() }
 
         Settings {
             SettingsView()
-                .environmentObject(vm)
                 .environmentObject(settings)
                 .id(settings.language)
+        }
+    }
+}
+
+/// 窗口根：每个窗口持有自己的 RepoViewModel。
+private struct WindowRoot: View {
+    @StateObject private var vm: RepoViewModel
+
+    init(initialPath: String?) {
+        let path = (initialPath?.isEmpty ?? true) ? nil : initialPath
+        _vm = StateObject(wrappedValue: RepoViewModel(initialPath: path))
+    }
+
+    var body: some View {
+        ContentView()
+            .environmentObject(vm)
+            .frame(minWidth: 900, minHeight: 560)
+            .focusedSceneObject(vm)
+    }
+}
+
+/// 菜单命令：作用于当前聚焦窗口的视图模型。
+private struct AppCommands: Commands {
+    @FocusedObject private var vm: RepoViewModel?
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button(tr("打开仓库…", "Open Repository…")) {
+                vm?.openRepoPanel()
+            }
+            .keyboardShortcut("o", modifiers: .command)
+            .disabled(vm == nil)
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button(tr("保存", "Save")) {
+                if let vm { Task { await vm.saveEditor() } }
+            }
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(vm?.editorDirty != true)
+
+            Button(tr("关闭标签页", "Close Tab")) {
+                vm?.closeActiveTab()
+            }
+            .keyboardShortcut("w", modifiers: .command)
+            .disabled(vm == nil)
+        }
+        CommandGroup(after: .toolbar) {
+            Button(tr("文件", "Files")) {
+                vm?.sidebarTab = .files
+            }
+            .keyboardShortcut("1", modifiers: .command)
+            .disabled(vm == nil)
+
+            Button(tr("源代码管理", "Source Control")) {
+                vm?.sidebarTab = .changes
+            }
+            .keyboardShortcut("2", modifiers: .command)
+            .disabled(vm == nil)
+
+            Divider()
+
+            Button(tr("下一个标签页", "Next Tab")) {
+                vm?.activateNeighborTab(offset: 1)
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+            .disabled(vm == nil)
+
+            Button(tr("上一个标签页", "Previous Tab")) {
+                vm?.activateNeighborTab(offset: -1)
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+            .disabled(vm == nil)
+
+            Divider()
+
+            Button(tr("刷新", "Refresh")) {
+                if let vm { Task { await vm.refresh() } }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(vm == nil)
+
+            Button(tr("提交", "Commit")) {
+                vm?.commit()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(vm == nil)
         }
     }
 }
