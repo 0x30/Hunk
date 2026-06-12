@@ -250,6 +250,15 @@ public final class Repository: @unchecked Sendable {
         /// 分支 / 标签装饰（HEAD -> main、origin/main…）
         public let refs: [String]
         public var id: String { hash }
+
+        public init(hash: String, shortHash: String, author: String, subject: String, date: Date, refs: [String]) {
+            self.hash = hash
+            self.shortHash = shortHash
+            self.author = author
+            self.subject = subject
+            self.date = date
+            self.refs = refs
+        }
     }
 
     /// 历史中的一行：提交行或纯图形延续行（"|/" 之类）。
@@ -395,6 +404,65 @@ public final class Repository: @unchecked Sendable {
             date: date,
             isUncommitted: hash.allSatisfy { $0 == "0" }
         )
+    }
+
+    /// 整个文件的逐行 blame（blame 视图用）。
+    public struct BlameLine: Hashable, Sendable {
+        public let line: Int
+        public let hash: String
+        public let author: String
+        public let summary: String
+        public let date: Date?
+        public let isUncommitted: Bool
+        public let text: String
+    }
+
+    public func blameFile(path: String) async throws -> [BlameLine] {
+        let result = try await git.run(["blame", "--porcelain", "--", path], allowedExitCodes: [0, 128])
+        guard result.exitCode == 0 else { return [] }
+
+        struct Meta {
+            var author = ""
+            var summary = ""
+            var date: Date?
+        }
+        var metas: [String: Meta] = [:]
+        var lines: [BlameLine] = []
+        var currentHash = ""
+        var currentLine = 0
+
+        for raw in result.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if line.hasPrefix("\t") {
+                // 内容行
+                let meta = metas[currentHash] ?? Meta()
+                lines.append(BlameLine(
+                    line: currentLine,
+                    hash: currentHash,
+                    author: meta.author,
+                    summary: meta.summary,
+                    date: meta.date,
+                    isUncommitted: currentHash.allSatisfy { $0 == "0" },
+                    text: String(line.dropFirst())
+                ))
+            } else if line.count > 40,
+                      line.prefix(40).allSatisfy(\.isHexDigit),
+                      line.dropFirst(40).hasPrefix(" ") {
+                // 头行：<hash> <orig> <final> [<num>]
+                let parts = line.split(separator: " ")
+                currentHash = String(parts[0])
+                currentLine = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+                if metas[currentHash] == nil { metas[currentHash] = Meta() }
+            } else if line.hasPrefix("author ") {
+                metas[currentHash]?.author = String(line.dropFirst("author ".count))
+            } else if line.hasPrefix("author-time ") {
+                metas[currentHash]?.date = Double(line.dropFirst("author-time ".count))
+                    .map { Date(timeIntervalSince1970: $0) }
+            } else if line.hasPrefix("summary ") {
+                metas[currentHash]?.summary = String(line.dropFirst("summary ".count))
+            }
+        }
+        return lines
     }
 
     // MARK: - 文件列表
