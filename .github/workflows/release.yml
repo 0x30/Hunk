@@ -1,0 +1,44 @@
+# main 分支每次推送：跑测试 → 打包 Hunk.app → 自动发布 GitHub Release
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26  # 需要 Xcode 26 SDK（ToolbarSpacer 等 API）
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 运行测试
+        run: swift test
+
+      - name: 构建并打包
+        env:
+          HUNK_VERSION: 0.1.${{ github.run_number }}
+          HUNK_BUILD: ${{ github.run_number }}
+        run: |
+          ./Scripts/make-app.sh release
+          ditto -c -k --sequesterRsrc --keepParent dist/Hunk.app dist/Hunk.zip
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Hunk 0.1.${{ github.run_number }}
+          body: |
+            自动构建自 `${{ github.sha }}`
+
+            ${{ github.event.head_commit.message }}
+
+            > 下载 Hunk.zip，解压后拖入「应用程序」。首次打开如被拦截：
+            > 右键 → 打开，或在「系统设置 → 隐私与安全性」中允许。
+          files: dist/Hunk.zip

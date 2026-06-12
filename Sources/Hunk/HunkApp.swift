@@ -58,6 +58,11 @@ private struct AppCommands: Commands {
     @FocusedObject private var vm: RepoViewModel?
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button(tr("检查更新…", "Check for Updates…")) {
+                Task { await UpdateChecker.shared.check(userInitiated: true) }
+            }
+        }
         CommandGroup(replacing: .newItem) {
             Button(tr("新建文件", "New File")) {
                 vm?.newUntitledFile()

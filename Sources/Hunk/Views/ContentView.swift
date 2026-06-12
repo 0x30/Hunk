@@ -4,6 +4,7 @@ import HunkCore
 struct ContentView: View {
     @EnvironmentObject var vm: RepoViewModel
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         Group {
@@ -106,6 +107,38 @@ struct ContentView: View {
         .task {
             // 文件图标默认走 open-vsx：首启自动安装 Material Icon Theme
             IconThemeStore.shared.bootstrap()
+            // 静默检查新版本（开发构建跳过）
+            UpdateChecker.shared.checkAutomatically()
+        }
+        .alert(
+            tr("发现新版本", "Update Available"),
+            isPresented: Binding(
+                get: { updater.available != nil },
+                set: { if !$0 { updater.available = nil } }
+            )
+        ) {
+            Button(tr("前往下载", "Download")) {
+                if let release = updater.available { updater.openDownloadPage(release) }
+            }
+            Button(tr("跳过此版本", "Skip This Version")) {
+                if let release = updater.available { updater.skip(release) }
+            }
+            Button(tr("稍后", "Later"), role: .cancel) {
+                updater.available = nil
+            }
+        } message: {
+            Text(tr("「\(updater.available?.name ?? "")」已在 GitHub 发布。", "“\(updater.available?.name ?? "")” is available on GitHub."))
+        }
+        .alert(
+            tr("检查更新", "Check for Updates"),
+            isPresented: Binding(
+                get: { updater.checkResultMessage != nil },
+                set: { if !$0 { updater.checkResultMessage = nil } }
+            )
+        ) {
+            Button(tr("好", "OK"), role: .cancel) { updater.checkResultMessage = nil }
+        } message: {
+            Text(updater.checkResultMessage ?? "")
         }
     }
 }
