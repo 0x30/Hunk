@@ -9,7 +9,9 @@ struct PlainTextEditor: NSViewRepresentable {
     let fileName: String
     var conflicts: [ConflictBlock] = []
     @Binding var scrollToLine: Int?
+    var blameText: String?
     var onEdit: () -> Void
+    var onCursorLineChange: (Int) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -40,6 +42,18 @@ struct PlainTextEditor: NSViewRepresentable {
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true
         context.coordinator.ruler = ruler
+
+        // 光标行尾的 blame 注解
+        let blameLabel = NSTextField(labelWithString: "")
+        blameLabel.font = .systemFont(ofSize: 11)
+        blameLabel.textColor = .tertiaryLabelColor
+        blameLabel.backgroundColor = .clear
+        blameLabel.isBezeled = false
+        blameLabel.isEditable = false
+        blameLabel.isSelectable = false
+        blameLabel.isHidden = true
+        textView.addSubview(blameLabel)
+        context.coordinator.blameLabel = blameLabel
 
         context.coordinator.textView = textView
         return scrollView
@@ -75,6 +89,8 @@ struct PlainTextEditor: NSViewRepresentable {
                 self.scrollToLine = nil
             }
         }
+
+        coordinator.updateBlame(text: blameText)
     }
 
     // MARK: - Coordinator
@@ -83,8 +99,11 @@ struct PlainTextEditor: NSViewRepresentable {
         var parent: PlainTextEditor
         weak var textView: NSTextView?
         weak var ruler: LineNumberRulerView?
+        weak var blameLabel: NSTextField?
         var lastConflicts: [ConflictBlock] = []
         var lastThemeName: String?
+        private var lastBlameText: String?
+        private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
 
         init(parent: PlainTextEditor) {
@@ -97,6 +116,53 @@ struct PlainTextEditor: NSViewRepresentable {
             parent.onEdit()
             ruler?.invalidateLineIndex()
             scheduleHighlight()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView, let ruler else { return }
+            let caret = textView.selectedRange().location
+            let line = ruler.lineNumber(forCharacterPublic: caret)
+            if line != lastCursorLine {
+                lastCursorLine = line
+                blameLabel?.isHidden = true  // 移动后先隐藏，等新结果
+                parent.onCursorLineChange(line)
+            }
+            positionBlameLabel()
+        }
+
+        func updateBlame(text: String?) {
+            guard text != lastBlameText else { return }
+            lastBlameText = text
+            guard let blameLabel else { return }
+            if let text, !text.isEmpty {
+                blameLabel.stringValue = text
+                blameLabel.sizeToFit()
+                blameLabel.isHidden = false
+                positionBlameLabel()
+            } else {
+                blameLabel.isHidden = true
+            }
+        }
+
+        private func positionBlameLabel() {
+            guard let textView, let blameLabel, !blameLabel.isHidden,
+                  let layoutManager = textView.layoutManager
+            else { return }
+            let nsString = textView.string as NSString
+            guard nsString.length > 0 else {
+                blameLabel.isHidden = true
+                return
+            }
+            let caret = min(textView.selectedRange().location, nsString.length - 1)
+            let glyph = layoutManager.glyphIndexForCharacter(at: caret)
+            guard glyph < layoutManager.numberOfGlyphs || layoutManager.numberOfGlyphs > 0 else { return }
+            let safeGlyph = min(glyph, max(0, layoutManager.numberOfGlyphs - 1))
+            let fragment = layoutManager.lineFragmentUsedRect(forGlyphAt: safeGlyph, effectiveRange: nil)
+            let inset = textView.textContainerInset
+            blameLabel.setFrameOrigin(NSPoint(
+                x: fragment.maxX + inset.width + 28,
+                y: fragment.minY + inset.height + (fragment.height - blameLabel.frame.height) / 2
+            ))
         }
 
         private func scheduleHighlight() {
@@ -282,6 +348,12 @@ final class LineNumberRulerView: NSRulerView {
 
         let digits = max(3, String(starts.count).count)
         ruleThickness = CGFloat(digits) * 8 + 14
+    }
+
+    /// 字符偏移所在行号（1 基），供光标 blame 使用。
+    func lineNumber(forCharacterPublic location: Int) -> Int {
+        rebuildLineIndexIfNeeded()
+        return lineNumber(forCharacter: location)
     }
 
     /// 字符偏移所在行号（1 基）。

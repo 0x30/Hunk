@@ -21,9 +21,13 @@ struct EditorView: View {
                 fileName: (path as NSString).lastPathComponent,
                 conflicts: vm.conflictBlocks,
                 scrollToLine: $vm.scrollToLine,
+                blameText: vm.blameText,
                 onEdit: {
                     vm.editorDirty = true
                     vm.reparseConflicts()
+                },
+                onCursorLineChange: { line in
+                    vm.requestBlame(line: line)
                 }
             )
         }
@@ -98,8 +102,8 @@ struct EditorView: View {
     }
 }
 
-/// 冲突解决面板：双卡片直观展示两个版本的内容，
-/// 颜色与编辑器内的冲突块底色一一对应（绿 = 你的，蓝 = 对方的）。
+/// 冲突解决条：极简单行。颜色与编辑器内的冲突块底色对应——
+/// 绿点 = 当前更改（你本地的，上半块），蓝点 = 传入更改（对方的，下半块）。
 struct ConflictBar: View {
     @EnvironmentObject var vm: RepoViewModel
 
@@ -109,130 +113,90 @@ struct ConflictBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                if vm.conflictBlocks.isEmpty {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(tr("所有冲突已处理，可以标记为已解决", "All conflicts handled — ready to mark as resolved"))
-                        .font(.callout)
-                } else {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(tr("冲突 \(vm.conflictIndex + 1) / \(vm.conflictBlocks.count)", "Conflict \(vm.conflictIndex + 1) / \(vm.conflictBlocks.count)"))
-                        .font(.callout.monospacedDigit().weight(.medium))
+        HStack(spacing: 12) {
+            if vm.conflictBlocks.isEmpty {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.system(size: 12))
+                Text(tr("冲突已全部处理", "All conflicts handled"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 12))
+                Text("\(vm.conflictIndex + 1)/\(vm.conflictBlocks.count)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
 
-                    HStack(spacing: 2) {
-                        Button {
-                            vm.gotoConflict(offset: -1)
-                        } label: {
-                            Image(systemName: "chevron.up")
-                        }
-                        .help(tr("上一个冲突", "Previous conflict"))
-                        Button {
-                            vm.gotoConflict(offset: 1)
-                        } label: {
-                            Image(systemName: "chevron.down")
-                        }
-                        .help(tr("下一个冲突", "Next conflict"))
+                HStack(spacing: 0) {
+                    Button { vm.gotoConflict(offset: -1) } label: {
+                        Image(systemName: "chevron.up")
                     }
-                    .controlSize(.small)
-
-                    Button(tr("保留两者", "Keep Both")) {
-                        vm.resolveCurrentConflict(.both)
+                    .help(tr("上一个冲突", "Previous conflict"))
+                    Button { vm.gotoConflict(offset: 1) } label: {
+                        Image(systemName: "chevron.down")
                     }
-                    .controlSize(.small)
-                    .help(tr("两个版本都保留：先你的，后对方的", "Keep both: yours first, then theirs"))
+                    .help(tr("下一个冲突", "Next conflict"))
                 }
-
-                Spacer()
-
-                Button {
-                    vm.markConflictResolved()
-                } label: {
-                    Label(tr("标记为已解决", "Mark as Resolved"), systemImage: "checkmark")
-                }
+                .buttonStyle(.borderless)
                 .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-                .tint(vm.conflictBlocks.isEmpty ? .green : .orange)
-                .help(vm.conflictBlocks.isEmpty
-                      ? tr("保存并暂存此文件", "Save and stage this file")
-                      : tr("仍有未处理的冲突，确认要标记吗？", "Conflicts remain — mark anyway?"))
+
+                Divider().frame(height: 12)
+
+                dotButton(.green, tr("采用当前", "Take Current"),
+                          help: tr("保留你本地的版本（绿色块）", "Keep your local version (green block)")
+                              + labelSuffix(block?.currentLabel)) {
+                    vm.resolveCurrentConflict(.current)
+                }
+                dotButton(.blue, tr("采用传入", "Take Incoming"),
+                          help: tr("保留合并进来的版本（蓝色块）", "Keep the merged-in version (blue block)")
+                              + labelSuffix(block?.incomingLabel)) {
+                    vm.resolveCurrentConflict(.incoming)
+                }
+                Button(tr("保留两者", "Keep Both")) {
+                    vm.resolveCurrentConflict(.both)
+                }
+                .buttonStyle(.borderless)
+                .font(.callout)
+                .help(tr("两个版本都保留：先你的，后对方的", "Keep both: yours first, then theirs"))
             }
 
-            if let block {
-                HStack(alignment: .top, spacing: 8) {
-                    versionCard(
-                        color: .green,
-                        title: tr("当前更改", "Current Change"),
-                        subtitle: tr("你本地的版本", "Your local version")
-                            + (block.currentLabel.isEmpty ? "" : " · \(shortLabel(block.currentLabel))"),
-                        lines: block.currentLines,
-                        actionTitle: tr("采用这个", "Take This"),
-                        resolution: .current
-                    )
-                    versionCard(
-                        color: .blue,
-                        title: tr("传入更改", "Incoming Change"),
-                        subtitle: tr("合并进来的版本", "The merged-in version")
-                            + (block.incomingLabel.isEmpty ? "" : " · \(shortLabel(block.incomingLabel))"),
-                        lines: block.incomingLines,
-                        actionTitle: tr("采用这个", "Take This"),
-                        resolution: .incoming
-                    )
-                }
+            Spacer()
+
+            Button {
+                vm.markConflictResolved()
+            } label: {
+                Label(tr("标记为已解决", "Mark as Resolved"), systemImage: "checkmark")
+                    .font(.callout)
             }
+            .controlSize(.small)
+            .tint(.green)
+            .help(vm.conflictBlocks.isEmpty
+                  ? tr("保存并暂存此文件", "Save and stage this file")
+                  : tr("仍有未处理的冲突", "Conflicts remain"))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 5)
         .background(.bar)
     }
 
-    /// 长 hash 标签截短，分支名原样保留。
-    private func shortLabel(_ label: String) -> String {
-        let trimmed = label.trimmingCharacters(in: .whitespaces)
-        if trimmed.count > 12, trimmed.allSatisfy(\.isHexDigit) {
-            return String(trimmed.prefix(8))
+    private func labelSuffix(_ label: String?) -> String {
+        guard var label, !label.isEmpty else { return "" }
+        if label.count > 12, label.allSatisfy(\.isHexDigit) {
+            label = String(label.prefix(8))
         }
-        return trimmed
+        return " · \(label)"
     }
 
-    private func versionCard(
-        color: Color,
-        title: String,
-        subtitle: String,
-        lines: [String],
-        actionTitle: String,
-        resolution: ConflictBlock.Resolution
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 7, height: 7)
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                Button(actionTitle) {
-                    vm.resolveCurrentConflict(resolution)
-                }
-                .controlSize(.small)
-                .tint(color)
+    private func dotButton(_ color: Color, _ title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(title).font(.callout)
             }
-            Text(lines.isEmpty
-                 ? tr("（此侧为空 — 该版本删除了这些行）", "(empty — this version deleted these lines)")
-                 : lines.prefix(4).joined(separator: "\n") + (lines.count > 4 ? "\n…" : ""))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(lines.isEmpty ? .secondary : .primary)
-                .lineLimit(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 7).fill(color.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(color.opacity(0.35), lineWidth: 1))
+        .buttonStyle(.borderless)
+        .help(help)
     }
 }
