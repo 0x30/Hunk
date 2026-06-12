@@ -9,11 +9,12 @@ struct DiffDetailView: View {
     @EnvironmentObject var settings: SettingsStore
     let path: String
 
-    // 拖拽 / 范围选择状态
+    // 编辑器式行选择状态：锚点 + 光标（行序号），选区 = 两者之间
     @State private var rowFrames: [String: CGRect] = [:]
-    @State private var dragAnchorKey: String?
-    @State private var dragBaseSelection: Set<Int>?
-    @State private var lastTappedLineID: Int?
+    @State private var anchorRow: Int?
+    @State private var cursorRow: Int?
+    @State private var dragging = false
+    @FocusState private var diffFocused: Bool
     // GitHub 式「展开未更改区域」
     @State private var expandedGaps: Set<Int> = []
 
@@ -42,6 +43,8 @@ struct DiffDetailView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .onChange(of: vm.diff) { _, _ in
             expandedGaps = []
+            anchorRow = nil
+            cursorRow = nil
         }
         .confirmationDialog(
             tr("撤销此块的更改？", "Discard this hunk?"),
@@ -180,7 +183,7 @@ struct DiffDetailView: View {
 
             Spacer()
 
-            Text(tr("提示：按住拖拽可像选文本一样连选，⇧+点击范围选择", "Tip: drag to select like text; ⇧-click for range"))
+            Text(tr("拖拽/⇧↑↓ 扩选 · ⌘点击多选 · ⌘A 全选 · ⎋ 清除", "Drag/⇧↑↓ extend · ⌘-click multi · ⌘A all · ⎋ clear"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -200,36 +203,74 @@ struct DiffDetailView: View {
                 placeholder(symbol: "equal.circle", text: tr("没有内容差异（可能是权限或模式变更）", "No content changes (possibly mode change)"))
             } else {
                 let gapTable = gaps(for: diff)
-                ScrollView([.vertical]) {
-                    LazyVStack(spacing: 0, pinnedViews: []) {
-                        ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { hunkIndex, hunk in
-                            if let gap = gapTable[hunkIndex] {
-                                gapView(gap)
+                let order = rowOrder
+                let indexByKey = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element.key, $0.offset) })
+                let range = visualRange
+                ScrollViewReader { proxy in
+                    ScrollView([.vertical]) {
+                        LazyVStack(spacing: 0, pinnedViews: []) {
+                            ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { hunkIndex, hunk in
+                                if let gap = gapTable[hunkIndex] {
+                                    gapView(gap)
+                                }
+                                HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging, isUntracked: isUntracked)
+                                if settings.splitDiff {
+                                    ForEach(hunk.splitRows) { row in
+                                        let key = "s-\(hunkIndex)-\(row.id)"
+                                        SplitDiffRow(
+                                            row: row, filePath: path, selectable: supportsLineStaging,
+                                            inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
+                                            onLineTap: handleLineTap
+                                        )
+                                        .background(rowFrameReader(key))
+                                        .id(key)
+                                    }
+                                } else {
+                                    ForEach(hunk.lines) { line in
+                                        let key = "u-\(line.id)"
+                                        UnifiedDiffRow(
+                                            line: line, filePath: path, selectable: supportsLineStaging,
+                                            inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
+                                            onLineTap: handleLineTap
+                                        )
+                                        .background(rowFrameReader(key))
+                                        .id(key)
+                                    }
+                                }
                             }
-                            HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging, isUntracked: isUntracked)
-                            if settings.splitDiff {
-                                ForEach(hunk.splitRows) { row in
-                                    SplitDiffRow(row: row, filePath: path, selectable: supportsLineStaging, onLineTap: handleLineTap)
-                                        .background(rowFrameReader("s-\(hunkIndex)-\(row.id)"))
-                                }
-                            } else {
-                                ForEach(hunk.lines) { line in
-                                    UnifiedDiffRow(line: line, filePath: path, selectable: supportsLineStaging, onLineTap: handleLineTap)
-                                        .background(rowFrameReader("u-\(line.id)"))
-                                }
+                            if let trailing = gapTable[diff.hunks.count] {
+                                gapView(trailing)
                             }
                         }
-                        if let trailing = gapTable[diff.hunks.count] {
-                            gapView(trailing)
-                        }
+                        .coordinateSpace(name: "diffRows")
+                        .onPreferenceChange(RowFramesKey.self) { rowFrames = $0 }
+                        // 在内容任意位置拖拽 = 像选文本一样连选行（macOS 点击拖拽不与滚动冲突）
+                        .simultaneousGesture(supportsLineStaging ? selectionDrag : nil)
+                        // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
+                        .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
+                        .padding(.bottom, 20)
                     }
-                    .coordinateSpace(name: "diffRows")
-                    .onPreferenceChange(RowFramesKey.self) { rowFrames = $0 }
-                    // 在内容任意位置拖拽 = 像选文本一样连选行（macOS 点击拖拽不与滚动冲突）
-                    .simultaneousGesture(supportsLineStaging ? selectionDrag : nil)
-                    // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
-                    .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
-                    .padding(.bottom, 20)
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($diffFocused)
+                    .onKeyPress(keys: [.upArrow, .downArrow], phases: .down) { press in
+                        moveCursor(press.key == .downArrow ? 1 : -1,
+                                   extend: press.modifiers.contains(.shift),
+                                   proxy: proxy)
+                        return .handled
+                    }
+                    .onKeyPress(keys: [KeyEquivalent("a")], phases: .down) { press in
+                        guard press.modifiers.contains(.command), supportsLineStaging else { return .ignored }
+                        vm.selectedLineIDs = Set(diff.changedLineIDs)
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        guard !vm.selectedLineIDs.isEmpty else { return .ignored }
+                        vm.selectedLineIDs = []
+                        anchorRow = nil
+                        cursorRow = nil
+                        return .handled
+                    }
                 }
             }
         } else {
@@ -340,43 +381,81 @@ struct DiffDetailView: View {
         return rows
     }
 
-    /// 内容区任意位置的拖拽选择（像选文本一样）。
+    /// 当前可视选区（锚点行…光标行）。
+    private var visualRange: ClosedRange<Int>? {
+        guard let anchor = anchorRow, let cursor = cursorRow else { return nil }
+        return min(anchor, cursor)...max(anchor, cursor)
+    }
+
+    /// 选区 = 锚点到光标之间所有行的变更行。
+    private func applyRangeSelection() {
+        guard let range = visualRange else { return }
+        let order = rowOrder
+        guard range.lowerBound >= 0, range.upperBound < order.count else { return }
+        vm.selectedLineIDs = Set(order[range].flatMap(\.lineIDs))
+    }
+
+    /// 键盘 ↑↓ 移动光标行；⇧ 扩选（编辑器语义）。
+    private func moveCursor(_ delta: Int, extend: Bool, proxy: ScrollViewProxy) {
+        let order = rowOrder
+        guard !order.isEmpty else { return }
+        let current = cursorRow ?? anchorRow ?? 0
+        let next = max(0, min(order.count - 1, current + delta))
+        cursorRow = next
+        if !extend || anchorRow == nil {
+            anchorRow = next
+        }
+        applyRangeSelection()
+        proxy.scrollTo(order[next].key, anchor: nil)
+    }
+
+    /// 内容区任意位置的拖拽选择（像选文本一样，替换选区）。
     /// simultaneousGesture + 5pt 启动距离，不影响行点击与按钮。
     private var selectionDrag: some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .named("diffRows"))
             .onChanged { value in
-                if dragBaseSelection == nil {
-                    dragBaseSelection = vm.selectedLineIDs
-                    dragAnchorKey = rowKey(atY: value.startLocation.y)
+                if !dragging {
+                    dragging = true
+                    anchorRow = rowIndex(atY: value.startLocation.y)
                 }
-                guard let anchor = dragAnchorKey,
-                      let current = rowKey(atY: value.location.y),
-                      let base = dragBaseSelection
+                guard anchorRow != nil,
+                      let current = rowIndex(atY: value.location.y)
                 else { return }
-                vm.selectedLineIDs = base.union(lineIDs(from: anchor, to: current))
+                cursorRow = current
+                applyRangeSelection()
             }
             .onEnded { _ in
-                if let anchor = dragAnchorKey,
-                   let row = rowOrder.first(where: { $0.key == anchor }),
-                   let first = row.lineIDs.first {
-                    lastTappedLineID = first
-                }
-                dragAnchorKey = nil
-                dragBaseSelection = nil
+                dragging = false
             }
     }
 
-    /// 行点击：普通点击切换单行，⇧+点击从上次点过的行连选到当前行。
+    /// 行点击（编辑器语义）：
+    /// 普通点击 = 选中该行（替换选区）；⇧+点击 = 锚点扩选；⌘+点击 = 切换该行。
     private func handleLineTap(_ id: Int) {
-        if NSEvent.modifierFlags.contains(.shift),
-           let anchor = lastTappedLineID,
-           let anchorKey = rowKeyContaining(anchor),
-           let currentKey = rowKeyContaining(id) {
-            vm.selectedLineIDs.formUnion(lineIDs(from: anchorKey, to: currentKey))
-        } else {
+        diffFocused = true
+        guard let key = rowKeyContaining(id),
+              let index = rowOrder.firstIndex(where: { $0.key == key })
+        else { return }
+
+        let modifiers = NSEvent.modifierFlags
+        if modifiers.contains(.shift) {
+            cursorRow = index
+            if anchorRow == nil { anchorRow = index }
+            applyRangeSelection()
+        } else if modifiers.contains(.command) {
             vm.toggleLine(id)
+            anchorRow = index
+            cursorRow = index
+        } else {
+            anchorRow = index
+            cursorRow = index
+            vm.selectedLineIDs = Set(rowOrder[index].lineIDs)
         }
-        lastTappedLineID = id
+    }
+
+    private func rowIndex(atY y: CGFloat) -> Int? {
+        guard let key = rowKey(atY: y) else { return nil }
+        return rowOrder.firstIndex { $0.key == key }
     }
 
     private func rowKey(atY y: CGFloat) -> String? {
@@ -385,14 +464,6 @@ struct DiffDetailView: View {
 
     private func rowKeyContaining(_ lineID: Int) -> String? {
         rowOrder.first { $0.lineIDs.contains(lineID) }?.key
-    }
-
-    private func lineIDs(from keyA: String, to keyB: String) -> Set<Int> {
-        let order = rowOrder
-        guard let a = order.firstIndex(where: { $0.key == keyA }),
-              let b = order.firstIndex(where: { $0.key == keyB })
-        else { return [] }
-        return Set(order[min(a, b)...max(a, b)].flatMap(\.lineIDs))
     }
 }
 
@@ -485,6 +556,7 @@ private struct UnifiedDiffRow: View {
     let line: DiffLine
     let filePath: String
     let selectable: Bool
+    var inSelectionRange = false
     var onLineTap: ((Int) -> Void)?
 
     private var isSelected: Bool { vm.selectedLineIDs.contains(line.id) }
@@ -498,6 +570,11 @@ private struct UnifiedDiffRow: View {
                         Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                             .font(.system(size: 11))
                             .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                // 勾选框保留切换语义（不改变锚点选区）
+                                vm.toggleLine(line.id)
+                            }
                     } else {
                         Color.clear
                     }
@@ -522,6 +599,7 @@ private struct UnifiedDiffRow: View {
         }
         .font(.system(size: settings.editorFontSize - 1, design: .monospaced))
         .padding(.vertical, 1)
+        .background(inSelectionRange ? Color.accentColor.opacity(0.08) : .clear)
         .background(background)
         .overlay(alignment: .leading) {
             if isSelected {
@@ -570,6 +648,7 @@ private struct SplitDiffRow: View {
     let row: SplitRow
     let filePath: String
     let selectable: Bool
+    var inSelectionRange = false
     var onLineTap: ((Int) -> Void)?
 
     var body: some View {
@@ -579,6 +658,7 @@ private struct SplitDiffRow: View {
             cell(for: row.right, side: .right)
         }
         .font(.system(size: settings.editorFontSize - 1, design: .monospaced))
+        .background(inSelectionRange ? Color.accentColor.opacity(0.08) : .clear)
     }
 
     private enum Side { case left, right }
