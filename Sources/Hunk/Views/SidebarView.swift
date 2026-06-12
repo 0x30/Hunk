@@ -132,6 +132,7 @@ struct BranchMenu: View {
         Button {
             showPopover.toggle()
         } label: {
+            // popover 挂在 label 上：挂在工具栏 Button 外层会因锚点解析失败而弹不出
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 13, weight: .medium))
@@ -149,12 +150,12 @@ struct BranchMenu: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+                BranchPopover(isPresented: $showPopover)
+                    .environmentObject(vm)
+            }
         }
         .help(tr("分支：切换 / 新建", "Branches: switch / create"))
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            BranchPopover(isPresented: $showPopover)
-                .environmentObject(vm)
-        }
     }
 }
 
