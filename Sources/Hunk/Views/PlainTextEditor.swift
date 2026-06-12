@@ -21,6 +21,12 @@ struct PlainTextEditor: NSViewRepresentable {
         let scrollView = NSTextView.scrollableTextView()
         let textView = scrollView.documentView as! NSTextView
 
+        // 不让系统按安全区自动加 inset（避免标尺画进顶部栏下方），
+        // 底部留白由 updateOverscroll 维护
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.postsFrameChangedNotifications = true
+
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -56,20 +62,36 @@ struct PlainTextEditor: NSViewRepresentable {
         context.coordinator.blameLabel = blameLabel
 
         context.coordinator.textView = textView
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.scrollViewFrameChanged),
+            name: NSView.frameDidChangeNotification,
+            object: scrollView
+        )
+        context.coordinator.updateOverscroll()
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
+        coordinator.updateOverscroll()
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
         if textView.string != text {
+            let isNewDocument = coordinator.lastFileName != fileName
+            coordinator.lastFileName = fileName
             let selected = textView.selectedRange()
             textView.string = text
             let length = (text as NSString).length
-            textView.setSelectedRange(NSRange(location: min(selected.location, length), length: 0))
+            textView.setSelectedRange(NSRange(location: isNewDocument ? 0 : min(selected.location, length), length: 0))
             coordinator.highlightNow()
+            if isNewDocument {
+                // 新文档从顶部开始（底部 overscroll inset 会把初始位置带偏）
+                DispatchQueue.main.async {
+                    textView.scroll(NSPoint(x: 0, y: -scrollView.contentInsets.top))
+                }
+            }
         }
 
         let font = SettingsStore.shared.editorNSFont
@@ -102,6 +124,7 @@ struct PlainTextEditor: NSViewRepresentable {
         weak var blameLabel: NSTextField?
         var lastConflicts: [ConflictBlock] = []
         var lastThemeName: String?
+        var lastFileName: String?
         private var lastBlameText: String?
         private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
@@ -116,6 +139,19 @@ struct PlainTextEditor: NSViewRepresentable {
             parent.onEdit()
             ruler?.invalidateLineIndex()
             scheduleHighlight()
+        }
+
+        /// 底部留一屏空白，最后一行可以滚动到视野上方。
+        @objc func scrollViewFrameChanged() {
+            updateOverscroll()
+        }
+
+        func updateOverscroll() {
+            guard let scrollView = textView?.enclosingScrollView else { return }
+            let bottom = max(0, scrollView.frame.height - 72)
+            if abs(scrollView.contentInsets.bottom - bottom) > 1 {
+                scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+            }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -374,12 +410,10 @@ final class LineNumberRulerView: NSRulerView {
 
         rebuildLineIndexIfNeeded()
 
-        let background = ThemeStore.shared.editorBackground ?? NSColor.textBackgroundColor
+        // 底色与编辑器完全一致，不画分隔线，避免出现「边」
+        let background = textView.backgroundColor
         background.setFill()
         bounds.fill()
-
-        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
-        NSRect(x: bounds.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
 
         let visibleRect = textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: container)
