@@ -77,14 +77,13 @@ struct PanelHeader: View {
 }
 
 /// 文件 / 源代码管理导航（点击已选中的会收起侧边栏）。
-/// 胶囊容器常驻保证两种状态几何一致：侧边栏在场时胶囊透明（只见图标），
-/// 收起后恢复胶囊背景——位置与间距永不跳变。
+/// 单个 ToolbarItem 内的固定布局：系统会自动包一层玻璃胶囊，
+/// 两种侧边栏状态下几何与外观都恒定，无需自绘背景。
 struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        let capsuleVisible = !vm.sidebarVisible
-        HStack(spacing: 6) {
+        HStack(spacing: 14) {
             navButton(
                 tab: .files,
                 systemImage: "folder",
@@ -97,17 +96,6 @@ struct SidebarNavButtons: View {
                 help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
             )
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .background(
-            Capsule()
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(capsuleVisible ? 1 : 0))
-                .shadow(color: .black.opacity(capsuleVisible ? 0.18 : 0), radius: 1.5, y: 0.5)
-        )
-        .overlay(
-            Capsule().strokeBorder(.separator.opacity(capsuleVisible ? 0.45 : 0), lineWidth: 0.5)
-        )
-        .animation(.easeOut(duration: 0.15), value: capsuleVisible)
     }
 
     private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
