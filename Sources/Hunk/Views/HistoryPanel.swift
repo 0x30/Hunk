@@ -68,6 +68,7 @@ struct HistoryPanel: View {
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)  // 透出侧边栏磨砂材质
             .environment(\.defaultMinListRowHeight, 14)
         }
         .frame(height: 230)

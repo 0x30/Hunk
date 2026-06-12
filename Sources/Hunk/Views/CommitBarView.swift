@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 源代码管理底部的提交栏。
+/// 源代码管理顶部的提交栏：单行输入框随内容自动增高（最多 5 行），
+/// 发送式提交按钮；无背景色，透出侧边栏磨砂材质。
 struct CommitBarView: View {
     @EnvironmentObject var vm: RepoViewModel
     @FocusState private var messageFocused: Bool
@@ -11,60 +12,48 @@ struct CommitBarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $vm.commitMessage)
-                    .font(.system(size: 12.5))
-                    .focused($messageFocused)
-                    .frame(height: 52)
-                    .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(Color(nsColor: .textBackgroundColor))
+        HStack(alignment: .bottom, spacing: 6) {
+            TextField(
+                tr("提交信息（⌘⏎ 提交）", "Commit message (⌘⏎)"),
+                text: $vm.commitMessage,
+                axis: .vertical
+            )
+            .textFieldStyle(.plain)
+            .lineLimit(1...5)
+            .font(.system(size: 12.5))
+            .focused($messageFocused)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(
+                        messageFocused ? AnyShapeStyle(Color.accentColor.opacity(0.55)) : AnyShapeStyle(.separator.opacity(0.5)),
+                        lineWidth: 1
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .strokeBorder(
-                                messageFocused ? AnyShapeStyle(Color.accentColor.opacity(0.6)) : AnyShapeStyle(.separator.opacity(0.6)),
-                                lineWidth: 1
-                            )
-                    )
-
-                if vm.commitMessage.isEmpty {
-                    Text(tr("提交信息（⌘⏎ 提交）", "Commit message (⌘⏎ to commit)"))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(.tertiary)
-                        .padding(.top, 7)
-                        .padding(.leading, 9)
-                        .allowsHitTesting(false)
-                }
+            )
+            .onSubmit {
+                if canCommit { vm.commit() }
             }
 
             Button {
                 vm.commit()
             } label: {
-                // label 层级保持恒定，避免重建后丢失点击
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                    Text(tr("提交", "Commit"))
-                        .font(.system(size: 12.5, weight: .medium))
-                    Text(vm.stagedChanges.isEmpty ? "" : "\(vm.stagedChanges.count)")
-                        .font(.system(size: 11).monospacedDigit())
-                        .opacity(0.75)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 24)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 21))
+                    .foregroundStyle(canCommit ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
             .disabled(!canCommit)
+            .padding(.bottom, 2)
             .help(vm.stagedChanges.isEmpty
                   ? tr("没有已暂存的更改", "No staged changes")
-                  : tr("提交已暂存的更改", "Commit staged changes"))
+                  : tr("提交 \(vm.stagedChanges.count) 个已暂存的文件 (⌘⏎)", "Commit \(vm.stagedChanges.count) staged files (⌘⏎)"))
         }
-        .padding(10)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
