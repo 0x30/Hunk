@@ -18,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let url = urls.first else { return }
         CLIOpenRouter.deliver(url.path)
     }
+
+    /// 所有窗口都关闭后自动退出应用
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
 }
 
 /// 命令行打开请求的路由：冷启动暂存，热运行广播；窗口原子领取防止多窗重复处理。
