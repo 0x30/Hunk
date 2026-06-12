@@ -46,7 +46,7 @@ private struct EditorTabItem: View {
     let isActive: Bool
     @State private var hovering = false
 
-    private var fileName: String { (path as NSString).lastPathComponent }
+    private var fileName: String { vm.displayName(for: path) }
     private var isDirty: Bool { vm.isTabDirty(path) }
 
     var body: some View {
@@ -102,12 +102,14 @@ private struct EditorTabItem: View {
             Button(tr("关闭其他", "Close Others")) { vm.closeOtherTabs(keeping: path) }
             Button(tr("关闭已保存", "Close Saved")) { vm.closeSavedTabs() }
             Button(tr("关闭右侧", "Close to the Right")) { vm.closeTabsToTheRight(of: path) }
-            Divider()
-            Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
-            Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
-            Divider()
-            Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
-            Button(tr("复制路径", "Copy Path")) { vm.copyPath(path) }
+            if !vm.isUntitled(path) {
+                Divider()
+                Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
+                Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
+                Divider()
+                Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
+                Button(tr("复制路径", "Copy Path")) { vm.copyPath(path) }
+            }
         }
     }
 }
@@ -133,8 +135,8 @@ struct EditorArea: View {
             }
         }
         .confirmationDialog(
-            tr("「\((vm.pendingCloseTab as NSString?)?.lastPathComponent ?? "")」有未保存的修改",
-               "“\((vm.pendingCloseTab as NSString?)?.lastPathComponent ?? "")” has unsaved changes"),
+            tr("「\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")」有未保存的修改",
+               "“\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")” has unsaved changes"),
             isPresented: Binding(
                 get: { vm.pendingCloseTab != nil },
                 set: { if !$0 { vm.pendingCloseTab = nil } }

@@ -104,16 +104,52 @@ final class RepoViewModel: ObservableObject {
     struct NewFilePrompt: Identifiable {
         /// 相对仓库根的目录，"" 表示根目录
         let directory: String
-        var id: String { directory }
+        /// 非空时表示在给「未命名」缓冲命名落盘
+        var untitledPath: String? = nil
+        /// 保存后是否关闭标签（关闭未保存的未命名 tab 时走这里）
+        var closeAfterSave = false
+        var id: String { directory + (untitledPath ?? "") }
     }
 
     @Published var newFilePrompt: NewFilePrompt?
     @Published var newFileName = ""
 
+    static let untitledPrefix = "untitled://"
+    private var untitledCounter = 0
+
+    func isUntitled(_ path: String) -> Bool {
+        path.hasPrefix(Self.untitledPrefix)
+    }
+
+    /// 标签显示名（未命名缓冲显示「未命名 N」）。
+    func displayName(for path: String) -> String {
+        guard isUntitled(path) else {
+            return (path as NSString).lastPathComponent
+        }
+        let number = path.dropFirst(Self.untitledPrefix.count)
+        return number == "1" ? tr("未命名", "Untitled") : tr("未命名 \(number)", "Untitled \(number)")
+    }
+
+    /// ⌘N：立即新建一个未命名标签（仅内存），保存/关闭时才询问文件名。
+    func newUntitledFile() {
+        guard repoRoot != nil else { return }
+        stashActiveBuffer()
+        untitledCounter += 1
+        let path = Self.untitledPrefix + "\(untitledCounter)"
+        buffers[path] = EditorBuffer(text: "", dirty: false)
+        selection = .file(path: path)
+    }
+
     func promptNewFile(in directory: String? = nil) {
         guard repoRoot != nil else { return }
         newFileName = ""
         newFilePrompt = NewFilePrompt(directory: directory ?? "")
+    }
+
+    /// 给未命名缓冲命名（保存 / 保存并关闭时调用）。
+    func promptSaveUntitled(_ path: String, closeAfterSave: Bool) {
+        newFileName = ""
+        newFilePrompt = NewFilePrompt(directory: "", untitledPath: path, closeAfterSave: closeAfterSave)
     }
 
     func confirmNewFile() {
@@ -127,19 +163,50 @@ final class RepoViewModel: ObservableObject {
             errorMessage = tr("「\(relativePath)」已存在", "“\(relativePath)” already exists")
             return
         }
+
+        // 未命名缓冲：写入其内容；普通新建：写入空文件
+        let content: String
+        if let untitled = prompt.untitledPath {
+            content = untitled == editorPath ? editorText : (buffers[untitled]?.text ?? "")
+        } else {
+            content = ""
+        }
+
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try "".write(to: url, atomically: true, encoding: .utf8)
+            try content.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             errorMessage = error.localizedDescription
             return
         }
+
+        if let untitled = prompt.untitledPath {
+            // 未命名 tab 原位替换为真实路径
+            buffers[relativePath] = EditorBuffer(text: content, dirty: false)
+            buffers[untitled] = nil
+            if let index = openTabs.firstIndex(of: untitled) {
+                openTabs[index] = relativePath
+            }
+            if editorPath == untitled {
+                editorPath = relativePath
+                editorDirty = false
+            }
+            if case .file(let selected) = selection, selected == untitled {
+                selection = .file(path: relativePath)
+            }
+            if prompt.closeAfterSave {
+                performCloseTab(relativePath)
+            }
+        }
+
         Task {
             await refresh()
-            revealInFiles(relativePath)
+            if prompt.untitledPath == nil || !prompt.closeAfterSave {
+                revealInFiles(relativePath)
+            }
         }
     }
 
@@ -388,6 +455,9 @@ final class RepoViewModel: ObservableObject {
         if let buffer = buffers[path] {
             editorText = buffer.text
             editorDirty = buffer.dirty
+        } else if isUntitled(path) {
+            editorText = ""
+            editorDirty = false
         } else {
             let url = repo.fileURL(for: path)
             do {
@@ -441,6 +511,11 @@ final class RepoViewModel: ObservableObject {
     }
 
     func saveAndCloseTab(_ path: String) {
+        // 未命名缓冲：先命名落盘，再关闭
+        if isUntitled(path) {
+            promptSaveUntitled(path, closeAfterSave: true)
+            return
+        }
         Task {
             if let buffer = buffers[path], buffer.dirty, let repo {
                 do {
@@ -506,6 +581,11 @@ final class RepoViewModel: ObservableObject {
     }
 
     func saveEditor() async {
+        // 未命名缓冲：⌘S 时询问文件名
+        if let path = editorPath, isUntitled(path) {
+            promptSaveUntitled(path, closeAfterSave: false)
+            return
+        }
         guard let repo, let path = editorPath, editorDirty else { return }
         do {
             try editorText.write(to: repo.fileURL(for: path), atomically: true, encoding: .utf8)
@@ -520,7 +600,7 @@ final class RepoViewModel: ObservableObject {
 
     /// 切换当前文件的 blame 视图。
     func toggleBlameView() {
-        guard let path = editorPath else { return }
+        guard let path = editorPath, !isUntitled(path) else { return }
         if blameViewPath == path {
             blameViewPath = nil
             return
@@ -537,7 +617,7 @@ final class RepoViewModel: ObservableObject {
 
     func requestBlame(line: Int) {
         blameTask?.cancel()
-        guard let repo, let path = editorPath else { return }
+        guard let repo, let path = editorPath, !isUntitled(path) else { return }
         if editorDirty {
             blameText = tr("未保存的更改", "Unsaved changes")
             return
