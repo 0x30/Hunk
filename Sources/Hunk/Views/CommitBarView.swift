@@ -41,12 +41,13 @@ struct CommitBarView: View {
                 Button {
                     vm.commit()
                 } label: {
-                    Label(
-                        vm.stagedChanges.isEmpty
-                            ? tr("提交", "Commit")
-                            : tr("提交 (\(vm.stagedChanges.count))", "Commit (\(vm.stagedChanges.count))"),
-                        systemImage: "checkmark.circle"
-                    )
+                    // label 层级保持恒定，避免重建后丢失点击（同 SyncControls）
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle")
+                        Text(tr("提交", "Commit"))
+                        Text(vm.stagedChanges.isEmpty ? "" : "(\(vm.stagedChanges.count))")
+                            .monospacedDigit()
+                    }
                     .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)

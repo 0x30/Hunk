@@ -107,15 +107,15 @@ struct SyncControls: View {
             }
             .help(tr("抓取", "Fetch") + upstreamSuffix)
 
+            // 注意：label 的视图层级必须保持恒定（计数用空串而不是条件渲染），
+            // 否则 NSToolbar 重建该项后会吞掉紧接着的第一次点击。
             Button {
                 vm.pull()
             } label: {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.down")
-                    if vm.sync.behind > 0 {
-                        Text("\(vm.sync.behind)")
-                            .font(.caption.monospacedDigit())
-                    }
+                    Text(vm.sync.behind > 0 ? "\(vm.sync.behind)" : "")
+                        .font(.caption.monospacedDigit())
                 }
             }
             .help(tr("拉取", "Pull") + upstreamSuffix)
@@ -125,21 +125,18 @@ struct SyncControls: View {
             } label: {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.up")
-                    if vm.sync.ahead > 0 {
-                        Text("\(vm.sync.ahead)")
-                            .font(.caption.monospacedDigit())
-                    }
+                    Text(vm.sync.ahead > 0 ? "\(vm.sync.ahead)" : "")
+                        .font(.caption.monospacedDigit())
                 }
             }
             .help(vm.sync.upstream == nil
                   ? tr("推送（将发布分支）", "Push (will publish branch)")
                   : tr("推送", "Push") + upstreamSuffix)
 
-            if vm.isSyncing {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.leading, 4)
-            }
+            ProgressView()
+                .controlSize(.small)
+                .padding(.leading, 4)
+                .opacity(vm.isSyncing ? 1 : 0)
         }
         .disabled(vm.isSyncing)
     }
