@@ -314,12 +314,13 @@ struct SyncControls: View {
             .disabled(vm.isSyncing)
         }
 
-        if vm.sync.ahead > 0 {
+        // 有待推送，或分支还没有上游（首推会自动 push -u 发布分支）时显示
+        if vm.sync.ahead > 0 || vm.sync.upstream == nil {
             Button { vm.push() } label: {
                 syncLabel("arrow.up", count: vm.sync.ahead)
             }
             .help(vm.sync.upstream == nil
-                  ? tr("推送（将发布分支）", "Push (will publish branch)")
+                  ? tr("推送并发布分支（push -u origin）", "Push & publish branch (push -u origin)")
                   : tr("推送", "Push") + upstreamSuffix)
             .disabled(vm.isSyncing)
         }
