@@ -21,6 +21,7 @@ struct FilesView: View {
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 24)
         .overlay {
             if vm.workspaceTree.isEmpty {
                 Text(tr("空仓库", "Empty repository"))

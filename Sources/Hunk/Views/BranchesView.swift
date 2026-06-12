@@ -38,6 +38,7 @@ struct BranchesView: View {
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 24)
     }
 }
 

@@ -25,7 +25,10 @@ struct CommitBarView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(.separator, lineWidth: 1)
+                            .strokeBorder(
+                                messageFocused ? AnyShapeStyle(Color.accentColor.opacity(0.7)) : AnyShapeStyle(.separator),
+                                lineWidth: 1
+                            )
                     )
 
                 if vm.commitMessage.isEmpty {

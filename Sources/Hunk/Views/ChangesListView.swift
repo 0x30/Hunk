@@ -63,6 +63,7 @@ struct ChangesListView: View {
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 24)
         .overlay {
             if vm.changes.isEmpty {
                 VStack(spacing: 8) {
@@ -130,12 +131,14 @@ struct ChangesListView: View {
             let lookup = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
             ForEach(Self.flattenTree(FileTreeBuilder.build(paths: changes.map(\.path)))) { item in
                 if item.node.isDirectory {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         FileIconView(fileName: item.node.name, isDirectory: true, expanded: true)
                         Text(item.displayName)
+                            .font(.callout)
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 1)
                     .padding(.leading, CGFloat(item.depth) * 14)
                 } else if let change = lookup[item.node.path] {
                     ChangeRow(change: change, area: area, showDirectory: false)
@@ -192,17 +195,22 @@ struct ChangesListView: View {
             if let systemImage {
                 Image(systemName: systemImage)
                     .foregroundStyle(.orange)
-                    .font(.caption)
+                    .font(.system(size: 10))
             }
             Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
             Text("\(count)")
-                .font(.caption2.monospacedDigit())
-                .padding(.horizontal, 5)
+                .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4.5)
                 .padding(.vertical, 1)
-                .background(Capsule().fill(.quaternary))
+                .background(Capsule().fill(.quaternary.opacity(0.6)))
             Spacer()
             actions()
+                .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 1)
     }
 }
 
@@ -220,34 +228,38 @@ struct ChangeRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             FileIconView(fileName: change.fileName)
 
             Text(change.fileName)
                 .lineLimit(1)
                 .strikethrough(kind == .deleted)
+                .foregroundStyle(kind == .deleted ? .secondary : .primary)
 
             if showDirectory, !change.directory.isEmpty {
                 Text(change.directory)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
 
             Spacer(minLength: 4)
 
-            if hovering {
+            // 徽标与悬停操作共用同一块区域，避免悬停时布局跳动
+            ZStack(alignment: .trailing) {
+                if let kind {
+                    Text(kind.badge)
+                        .font(.caption.weight(.semibold).monospaced())
+                        .foregroundStyle(kind.color)
+                        .help(kind.localizedName)
+                        .opacity(hovering ? 0 : 1)
+                }
                 hoverActions
-            }
-
-            if let kind {
-                Text(kind.badge)
-                    .font(.caption.weight(.semibold).monospaced())
-                    .foregroundStyle(kind.color)
-                    .help(kind.localizedName)
+                    .opacity(hovering ? 1 : 0)
             }
         }
+        .padding(.vertical, 1)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { contextMenu }
