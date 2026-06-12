@@ -87,6 +87,12 @@ private struct AppCommands: Commands {
             .disabled(vm == nil)
         }
         CommandGroup(after: .textEditing) {
+            Button(tr("全局搜索…", "Search in Repository…")) {
+                vm?.showGlobalSearch = true
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(vm?.repoRoot == nil)
+
             Button(tr("查找", "Find")) {
                 // 触发编辑器的查找条（NSTextView usesFindBar）
                 let item = NSMenuItem()

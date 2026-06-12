@@ -76,6 +76,11 @@ struct ContentView: View {
                 QuickOpenView()
             }
         }
+        .overlay {
+            if vm.showGlobalSearch {
+                GlobalSearchView()
+            }
+        }
         // 分支面板：窗口内浮层（贴近工具栏分支胶囊的位置）
         .overlay(alignment: .topLeading) {
             if vm.showBranchPanel {

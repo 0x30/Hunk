@@ -465,6 +465,40 @@ public final class Repository: @unchecked Sendable {
         return lines
     }
 
+    // MARK: - 全局搜索
+
+    public struct GrepHit: Identifiable, Hashable, Sendable {
+        public let path: String
+        public let line: Int
+        public let text: String
+        public var id: String { "\(path):\(line)" }
+    }
+
+    /// 全仓库内容搜索（git grep，含未跟踪文件，忽略二进制与大小写）。
+    public func grep(_ query: String, limit: Int = 400) async throws -> [GrepHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return [] }
+        let result = try await git.run(
+            ["grep", "-n", "-I", "--untracked", "--ignore-case",
+             "--max-count=50", "-e", trimmed, "--", "."],
+            allowedExitCodes: [0, 1]  // 1 = 无匹配
+        )
+        guard result.exitCode == 0 else { return [] }
+
+        var hits: [GrepHit] = []
+        for raw in result.stdout.split(separator: "\n").prefix(limit) {
+            let line = String(raw)
+            guard let firstColon = line.firstIndex(of: ":"),
+                  let secondColon = line[line.index(after: firstColon)...].firstIndex(of: ":")
+            else { continue }
+            let path = String(line[..<firstColon])
+            guard let number = Int(line[line.index(after: firstColon)..<secondColon]) else { continue }
+            let text = String(line[line.index(after: secondColon)...])
+            hits.append(GrepHit(path: path, line: number, text: text))
+        }
+        return hits
+    }
+
     // MARK: - 文件列表
 
     /// 工作区文件（已跟踪 + 未跟踪未忽略），供文件树展示。

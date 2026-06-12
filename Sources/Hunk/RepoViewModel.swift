@@ -97,6 +97,18 @@ final class RepoViewModel: ObservableObject {
     @Published var pendingFolderDrop: URL?
     @Published var showQuickOpen = false
     @Published var showBranchPanel = false
+    @Published var showGlobalSearch = false
+
+    /// 打开全局搜索结果：跳到对应文件并滚动选中该行。
+    func openSearchResult(_ hit: Repository.GrepHit) {
+        showGlobalSearch = false
+        revealInFiles(hit.path)
+        Task {
+            // 等编辑器装载新文件后再滚动定位
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            scrollToLine = hit.line - 1
+        }
+    }
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。
     @Published var revealFileRequest: String?
 
