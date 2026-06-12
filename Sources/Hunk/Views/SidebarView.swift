@@ -83,7 +83,7 @@ struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 8) {
             navButton(
                 tab: .files,
                 systemImage: "folder",
