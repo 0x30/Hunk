@@ -135,12 +135,20 @@ public final class Repository: @unchecked Sendable {
         try FileManager.default.removeItem(at: fileURL(for: path))
     }
 
-    /// 应用行级暂存补丁。
-    public func applyPatch(_ patch: String, reverse: Bool) async throws {
-        var args = ["apply", "--cached", "--whitespace=nowarn"]
+    /// 应用行级补丁。`cached` 为 true 时作用于暂存区（行级暂存），
+    /// 为 false 时作用于工作区（hunk 级撤销）。
+    public func applyPatch(_ patch: String, reverse: Bool, cached: Bool = true) async throws {
+        var args = ["apply", "--whitespace=nowarn"]
+        if cached { args.append("--cached") }
         if reverse { args.append("--reverse") }
         args.append("-")
         try await git.run(args, stdin: Data(patch.utf8))
+    }
+
+    /// 暂存区里某个文件的内容（diff 折叠展开需要新侧全文）。
+    public func indexContent(of path: String) async throws -> String? {
+        let result = try await git.run(["show", ":0:\(path)"], allowedExitCodes: [0, 128])
+        return result.exitCode == 0 ? result.stdout : nil
     }
 
     // MARK: - 提交
@@ -229,6 +237,48 @@ public final class Repository: @unchecked Sendable {
         } else {
             try await git.run(["push"])
         }
+    }
+
+    // MARK: - Blame
+
+    public struct BlameInfo: Sendable {
+        public let author: String
+        public let summary: String
+        public let date: Date?
+        public let isUncommitted: Bool
+    }
+
+    /// 单行 blame（编辑器光标行内注解）。未跟踪文件或失败返回 nil。
+    public func blame(path: String, line: Int) async throws -> BlameInfo? {
+        guard line > 0 else { return nil }
+        let result = try await git.run(
+            ["blame", "--porcelain", "-L", "\(line),\(line)", "--", path],
+            allowedExitCodes: [0, 128]
+        )
+        guard result.exitCode == 0 else { return nil }
+        let lines = result.stdout.split(separator: "\n").map(String.init)
+        guard let first = lines.first,
+              let hash = first.split(separator: " ").first.map(String.init)
+        else { return nil }
+
+        var author = ""
+        var summary = ""
+        var date: Date?
+        for entry in lines.dropFirst() {
+            if entry.hasPrefix("author ") {
+                author = String(entry.dropFirst("author ".count))
+            } else if entry.hasPrefix("author-time ") {
+                date = Double(entry.dropFirst("author-time ".count)).map { Date(timeIntervalSince1970: $0) }
+            } else if entry.hasPrefix("summary ") {
+                summary = String(entry.dropFirst("summary ".count))
+            }
+        }
+        return BlameInfo(
+            author: author,
+            summary: summary,
+            date: date,
+            isUncommitted: hash.allSatisfy { $0 == "0" }
+        )
     }
 
     // MARK: - 文件列表
