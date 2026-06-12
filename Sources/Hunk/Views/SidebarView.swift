@@ -119,9 +119,6 @@ struct SidebarNavButtons: View {
             .foregroundStyle(selected ? Color.accentColor : Color.secondary)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(
-                Capsule().fill(selected ? Color.accentColor.opacity(0.16) : .clear)
-            )
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
