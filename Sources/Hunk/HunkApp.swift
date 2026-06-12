@@ -6,6 +6,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // SPM 可执行程序没有 app bundle，需要手动升级为常规前台应用
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+
+        // 立即加载持久化的颜色/图标主题（ThemeStore 是惰性单例，
+        // 不主动触碰的话要等首次打开编辑器才会应用全局外观）
+        _ = ThemeStore.shared
+        _ = IconThemeStore.shared
     }
 }
 
