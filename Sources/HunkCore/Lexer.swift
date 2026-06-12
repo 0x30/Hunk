@@ -51,6 +51,9 @@ public struct LanguageDef: Sendable {
 public enum Lexer {
 
     public static func tokenize(_ text: String, language: LanguageDef) -> [Token] {
+        if language.name == "Markdown" {
+            return tokenizeMarkdown(text)
+        }
         var tokens: [Token] = []
         let chars = Array(text.utf16)
         let scalars = Array(text)  // 按 Character 扫描，utf16 偏移单独累计
@@ -165,6 +168,59 @@ public enum Lexer {
             utf16Offset += utf16Length(c)
             i += 1
         }
+        return tokens
+    }
+
+    // MARK: - Markdown（按行 + 行内标记）
+
+    private static func tokenizeMarkdown(_ text: String) -> [Token] {
+        var tokens: [Token] = []
+        let nsString = text as NSString
+        var location = 0
+        var inFence = false
+
+        while location < nsString.length {
+            let lineRange = nsString.lineRange(for: NSRange(location: location, length: 0))
+            var contentLength = lineRange.length
+            if contentLength > 0, nsString.character(at: NSMaxRange(lineRange) - 1) == 0x0A {
+                contentLength -= 1
+            }
+            let contentRange = NSRange(location: lineRange.location, length: contentLength)
+            let line = nsString.substring(with: contentRange)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                inFence.toggle()
+                tokens.append(Token(range: contentRange, type: .string))
+            } else if inFence {
+                tokens.append(Token(range: contentRange, type: .string))
+            } else if trimmed.hasPrefix("#") {
+                tokens.append(Token(range: contentRange, type: .keyword))
+            } else if trimmed.hasPrefix(">") {
+                tokens.append(Token(range: contentRange, type: .comment))
+            } else {
+                tokens += markdownInlineTokens(line, offset: contentRange.location)
+            }
+            location = NSMaxRange(lineRange)
+        }
+        return tokens
+    }
+
+    private static func markdownInlineTokens(_ line: String, offset: Int) -> [Token] {
+        var tokens: [Token] = []
+
+        func append(_ pattern: some RegexComponent, _ type: TokenType) {
+            for match in line.matches(of: pattern) {
+                let nsRange = NSRange(match.range, in: line)
+                tokens.append(Token(range: NSRange(location: offset + nsRange.location, length: nsRange.length), type: type))
+            }
+        }
+
+        append(#/`[^`]+`/#, .string)                  // 行内代码
+        append(#/\*\*[^*]+\*\*/#, .type)              // 加粗
+        append(#/\[[^\]]+\]\([^)]+\)/#, .number)      // 链接
+        append(#/^\s*(?:[-*+]|\d+\.)\s/#, .keyword)   // 列表标记
+        append(#/^\s*(?:-{3,}|={3,})\s*$/#, .comment) // 分隔线 / Setext 下划线
         return tokens
     }
 
@@ -431,6 +487,17 @@ public enum Lexer {
             lineComments: ["//"]
         )
         map["less"] = map["scss"]
+
+        let markdown = LanguageDef(
+            name: "Markdown",
+            keywords: [],
+            lineComments: [],
+            blockCommentStart: nil, blockCommentEnd: nil,
+            stringDelimiters: []
+        )
+        map["md"] = markdown
+        map["markdown"] = markdown
+        map["rst"] = markdown
 
         map["sql"] = LanguageDef(
             name: "SQL",
