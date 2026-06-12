@@ -28,6 +28,7 @@ struct EditorView: View {
                     vm.requestBlame(line: line)
                 }
             )
+            .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {

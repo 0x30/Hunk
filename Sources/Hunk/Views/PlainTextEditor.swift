@@ -26,6 +26,15 @@ struct PlainTextEditor: NSViewRepresentable {
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets()
         scrollView.postsFrameChangedNotifications = true
+        scrollView.verticalScrollElasticity = .allowed
+
+        // 点击底部留白区域时，光标落到文末（否则 inset 区域点击无响应）
+        let blankClick = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.blankAreaClicked(_:))
+        )
+        blankClick.delegate = context.coordinator
+        scrollView.contentView.addGestureRecognizer(blankClick)
 
         textView.isRichText = false
         textView.allowsUndo = true
@@ -117,7 +126,7 @@ struct PlainTextEditor: NSViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSGestureRecognizerDelegate {
         var parent: PlainTextEditor
         weak var textView: NSTextView?
         weak var ruler: LineNumberRulerView?
@@ -141,17 +150,30 @@ struct PlainTextEditor: NSViewRepresentable {
             scheduleHighlight()
         }
 
-        /// 底部留一屏空白，最后一行可以滚动到视野上方。
+        /// 底部留约半屏空白，末行可以滚到视野中上部。
         @objc func scrollViewFrameChanged() {
             updateOverscroll()
         }
 
         func updateOverscroll() {
             guard let scrollView = textView?.enclosingScrollView else { return }
-            let bottom = max(0, scrollView.frame.height - 72)
+            let bottom = max(0, scrollView.frame.height * 0.6)
             if abs(scrollView.contentInsets.bottom - bottom) > 1 {
                 scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
             }
+        }
+
+        /// 只在点击落到文档下方的留白区域时才接管手势。
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: NSGestureRecognizer) -> Bool {
+            guard let textView else { return false }
+            let point = gestureRecognizer.location(in: textView)
+            return point.y > textView.bounds.maxY
+        }
+
+        @objc func blankAreaClicked(_ gesture: NSClickGestureRecognizer) {
+            guard let textView else { return }
+            textView.window?.makeFirstResponder(textView)
+            textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
