@@ -73,15 +73,31 @@ private struct AppCommands: Commands {
             .keyboardShortcut("w", modifiers: .command)
             .disabled(vm == nil)
         }
+        CommandGroup(replacing: .printItem) {
+            Button(tr("快速打开…", "Quick Open…")) {
+                vm?.showQuickOpen = true
+            }
+            .keyboardShortcut("p", modifiers: .command)
+            .disabled(vm == nil)
+        }
+        CommandGroup(after: .textEditing) {
+            Button(tr("查找", "Find")) {
+                // 触发编辑器的查找条（NSTextView usesFindBar）
+                let item = NSMenuItem()
+                item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+                NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: item)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+        }
         CommandGroup(after: .toolbar) {
             Button(tr("文件", "Files")) {
-                vm?.sidebarTab = .files
+                vm?.toggleSidebarTab(.files)
             }
             .keyboardShortcut("1", modifiers: .command)
             .disabled(vm == nil)
 
             Button(tr("源代码管理", "Source Control")) {
-                vm?.sidebarTab = .changes
+                vm?.toggleSidebarTab(.changes)
             }
             .keyboardShortcut("2", modifiers: .command)
             .disabled(vm == nil)
