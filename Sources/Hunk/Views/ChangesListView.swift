@@ -213,6 +213,7 @@ struct ChangesListView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 1)
+        .padding(.trailing, 8)  // 操作按钮与侧边栏右缘留距
     }
 }
 
