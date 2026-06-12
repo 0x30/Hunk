@@ -14,6 +14,8 @@ struct DiffDetailView: View {
     @State private var dragAnchorKey: String?
     @State private var dragBaseSelection: Set<Int>?
     @State private var tapAnchorKey: String?
+    // GitHub 式「展开未更改区域」
+    @State private var expandedGaps: Set<Int> = []
 
     private var change: FileChange? {
         vm.changes.first { $0.path == path }
@@ -31,20 +33,40 @@ struct DiffDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if supportsLineStaging, !vm.selectedLineIDs.isEmpty {
+                selectionBar
+            }
             Divider()
             content
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onChange(of: vm.diff) { _, _ in
+            expandedGaps = []
+        }
+        .confirmationDialog(
+            tr("撤销此块的更改？", "Discard this hunk?"),
+            isPresented: Binding(
+                get: { vm.pendingDiscardHunk != nil },
+                set: { if !$0 { vm.pendingDiscardHunk = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("撤销更改", "Discard Changes"), role: .destructive) {
+                vm.confirmDiscardHunk()
+            }
+        } message: {
+            Text(tr("该块的工作区修改将被恢复，此操作不可撤销。", "Worktree changes in this hunk will be reverted. This cannot be undone."))
+        }
     }
 
     // MARK: - 头部
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             FileIconView(fileName: (path as NSString).lastPathComponent)
             VStack(alignment: .leading, spacing: 1) {
                 Text((path as NSString).lastPathComponent)
-                    .fontWeight(.medium)
+                    .font(.system(size: 13, weight: .medium))
                 HStack(spacing: 6) {
                     if let old = vm.diff?.oldPath, vm.diff?.isRename == true {
                         Text("\(old) →")
@@ -53,7 +75,7 @@ struct DiffDetailView: View {
                     }
                     Text(path)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -61,74 +83,110 @@ struct DiffDetailView: View {
 
             if let diff = vm.diff, !diff.isBinary {
                 HStack(spacing: 4) {
-                    Text("+\(diff.additions)")
-                        .foregroundStyle(.green)
-                    Text("-\(diff.deletions)")
-                        .foregroundStyle(.red)
+                    statChip("+\(diff.additions)", color: .green)
+                    statChip("-\(diff.deletions)", color: .red)
                 }
-                .font(.caption.monospacedDigit().weight(.medium))
             }
 
             Spacer()
 
-            if supportsLineStaging, !vm.selectedLineIDs.isEmpty {
-                Button {
-                    if vm.diffArea == .staged {
-                        vm.unstageSelectedLines()
-                    } else {
-                        vm.stageSelectedLines()
+            HStack(spacing: 2) {
+                if vm.diffArea == .staged {
+                    headerIconButton("minus.circle", help: tr("取消暂存文件", "Unstage File")) {
+                        vm.unstageFile(path)
                     }
-                } label: {
-                    Label(
-                        vm.diffArea == .staged
-                            ? tr("取消暂存选中行 (\(vm.selectedLineIDs.count))", "Unstage Selected Lines (\(vm.selectedLineIDs.count))")
-                            : tr("暂存选中行 (\(vm.selectedLineIDs.count))", "Stage Selected Lines (\(vm.selectedLineIDs.count))"),
-                        systemImage: vm.diffArea == .staged ? "minus.square" : "plus.square"
-                    )
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
-
-            if vm.diffArea == .staged {
-                Button {
-                    vm.unstageFile(path)
-                } label: {
-                    Label(tr("取消暂存文件", "Unstage File"), systemImage: "minus.circle")
-                }
-                .controlSize(.small)
-            } else {
-                Button {
-                    vm.stageFile(path)
-                } label: {
-                    Label(tr("暂存文件", "Stage File"), systemImage: "plus.circle")
-                }
-                .controlSize(.small)
-
-                if change?.unstaged != .deleted {
-                    Button {
-                        vm.editingChangedFile = true
-                        vm.openEditor(path: path)
-                    } label: {
-                        Image(systemName: "pencil")
+                } else {
+                    headerIconButton("plus.circle", help: tr("暂存文件", "Stage File")) {
+                        vm.stageFile(path)
                     }
-                    .controlSize(.small)
-                    .help(tr("编辑文件", "Edit File"))
+                    if change?.unstaged != .deleted {
+                        headerIconButton("pencil", help: tr("编辑文件", "Edit File")) {
+                            vm.editingChangedFile = true
+                            vm.openEditor(path: path)
+                        }
+                    }
                 }
-            }
 
-            Picker("", selection: $settings.splitDiff) {
-                Text(tr("统一", "Unified")).tag(false)
-                Text(tr("分栏", "Split")).tag(true)
+                Divider()
+                    .frame(height: 14)
+                    .padding(.horizontal, 5)
+
+                Picker("", selection: $settings.splitDiff) {
+                    Image(systemName: "square.fill.text.grid.1x2")
+                        .tag(false)
+                        .help(tr("统一视图", "Unified view"))
+                    Image(systemName: "rectangle.split.2x1")
+                        .tag(true)
+                        .help(tr("左右分栏", "Side-by-side"))
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help(tr("diff 布局", "Diff layout"))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(.bar)
+    }
+
+    private func statChip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption.monospacedDigit().weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.12)))
+    }
+
+    private func headerIconButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+    }
+
+    /// 选中行后出现的操作条。
+    private var selectionBar: some View {
+        HStack(spacing: 12) {
+            Label(
+                tr("已选 \(vm.selectedLineIDs.count) 行", "\(vm.selectedLineIDs.count) lines selected"),
+                systemImage: "checkmark.square.fill"
+            )
+            .font(.callout)
+            .foregroundStyle(Color.accentColor)
+
+            Button {
+                if vm.diffArea == .staged {
+                    vm.unstageSelectedLines()
+                } else {
+                    vm.stageSelectedLines()
+                }
+            } label: {
+                Text(vm.diffArea == .staged ? tr("取消暂存这些行", "Unstage These Lines") : tr("暂存这些行", "Stage These Lines"))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+
+            Button(tr("清除选择", "Clear Selection")) {
+                vm.selectedLineIDs = []
+            }
+            .buttonStyle(.plain)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Text(tr("提示：行号区可拖拽连选，⇧+点击范围选择", "Tip: drag in the gutter to select; ⇧-click for range"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.08))
     }
 
     // MARK: - 内容
@@ -141,10 +199,14 @@ struct DiffDetailView: View {
             } else if diff.hunks.isEmpty {
                 placeholder(symbol: "equal.circle", text: tr("没有内容差异（可能是权限或模式变更）", "No content changes (possibly mode change)"))
             } else {
+                let gapTable = gaps(for: diff)
                 ScrollView([.vertical]) {
                     LazyVStack(spacing: 0, pinnedViews: []) {
                         ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { hunkIndex, hunk in
-                            HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging)
+                            if let gap = gapTable[hunkIndex] {
+                                gapView(gap)
+                            }
+                            HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging, isUntracked: isUntracked)
                             if settings.splitDiff {
                                 ForEach(hunk.splitRows) { row in
                                     SplitDiffRow(row: row, filePath: path, selectable: supportsLineStaging)
@@ -156,6 +218,9 @@ struct DiffDetailView: View {
                                         .background(rowFrameReader("u-\(line.id)"))
                                 }
                             }
+                        }
+                        if let trailing = gapTable[diff.hunks.count] {
+                            gapView(trailing)
                         }
                     }
                     .coordinateSpace(name: "diffRows")
@@ -172,6 +237,67 @@ struct DiffDetailView: View {
             }
         } else {
             placeholder(symbol: "equal.circle", text: tr("没有差异", "No differences"))
+        }
+    }
+
+    // MARK: - 展开未更改区域（GitHub 式）
+
+    /// 两个 hunk 之间（以及文件首尾）被 diff 省略的未更改区域。
+    private struct Gap: Identifiable {
+        let id: Int
+        /// 新侧被隐藏的行号范围（1 基）。
+        let newRange: ClosedRange<Int>
+        /// 旧行号 = 新行号 + oldOffset。
+        let oldOffset: Int
+    }
+
+    /// key：hunk 下标（该 hunk 之前的间隙）；`hunks.count` 表示文件末尾的间隙。
+    private func gaps(for diff: FileDiff) -> [Int: Gap] {
+        guard let lines = vm.diffNewSideLines, !diff.isNew else { return [:] }
+        var result: [Int: Gap] = [:]
+        var previousEndNew = 0
+        var trailingOffset = 0
+        for (index, hunk) in diff.hunks.enumerated() {
+            let start = previousEndNew + 1
+            let end = hunk.newStart - 1
+            if start <= end {
+                result[index] = Gap(id: index, newRange: start...end, oldOffset: hunk.oldStart - hunk.newStart)
+            }
+            previousEndNew = hunk.newStart + hunk.newCount - 1
+            trailingOffset = (hunk.oldStart + hunk.oldCount) - (hunk.newStart + hunk.newCount)
+        }
+        if previousEndNew + 1 <= lines.count {
+            result[diff.hunks.count] = Gap(
+                id: diff.hunks.count,
+                newRange: (previousEndNew + 1)...lines.count,
+                oldOffset: trailingOffset
+            )
+        }
+        return result
+    }
+
+    @ViewBuilder
+    private func gapView(_ gap: Gap) -> some View {
+        if expandedGaps.contains(gap.id) {
+            let lines = vm.diffNewSideLines ?? []
+            ForEach(Array(gap.newRange), id: \.self) { number in
+                let line = DiffLine(
+                    id: -(gap.id * 1_000_000 + number),  // 负数，与真实行 id 隔离
+                    kind: .context,
+                    text: number - 1 < lines.count ? lines[number - 1] : "",
+                    oldNumber: number + gap.oldOffset,
+                    newNumber: number
+                )
+                if settings.splitDiff {
+                    SplitDiffRow(row: SplitRow(id: line.id, left: line, right: line), filePath: path, selectable: false)
+                } else {
+                    UnifiedDiffRow(line: line, filePath: path, selectable: supportsLineStaging)
+                }
+            }
+        } else {
+            ExpanderRow(count: gap.newRange.count) {
+                expandedGaps.insert(gap.id)
+            }
         }
     }
 
@@ -296,15 +422,27 @@ private struct HunkHeaderRow: View {
     @EnvironmentObject var vm: RepoViewModel
     let hunk: DiffHunk
     let supportsStaging: Bool
+    var isUntracked = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Text("@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@ \(hunk.sectionHeading)")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
             if supportsStaging {
+                if vm.diffArea == .unstaged, !isUntracked {
+                    Button {
+                        vm.requestDiscardHunk(hunk)
+                    } label: {
+                        Text(tr("撤销此块", "Discard Hunk"))
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red.opacity(0.85))
+                    .help(tr("把这一块的工作区修改恢复成暂存区内容", "Revert this hunk's worktree changes"))
+                }
                 Button {
                     vm.stageHunk(hunk)
                 } label: {
@@ -318,6 +456,31 @@ private struct HunkHeaderRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// 折叠的未更改区域占位行，点击展开。
+private struct ExpanderRow: View {
+    let count: Int
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.and.down.text.horizontal")
+                    .font(.system(size: 9))
+                Text(tr("展开 \(count) 行未更改的内容", "Expand \(count) unchanged lines"))
+                    .font(.caption)
+            }
+            .foregroundStyle(hovering ? Color.accentColor : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(hovering ? 1 : 0.55))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
