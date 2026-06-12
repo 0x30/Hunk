@@ -18,24 +18,27 @@ struct PlainTextEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        // 自建滚动结构以使用 OverscrollTextView：
+        // 文本视图自身把高度撑到「文本 + 0.6 屏」，底部留白属于文本视图，
+        // 点击留白光标自然落到文末、指针保持 I-beam，无需任何手势转发。
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = true
 
-        // 不让系统按安全区自动加 inset（避免标尺画进顶部栏下方），
-        // 底部留白由 updateOverscroll 维护
+        let textView = OverscrollTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        scrollView.documentView = textView
+
+        // 不让系统按安全区自动加 inset（避免标尺画进顶部栏下方）
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets()
         scrollView.postsFrameChangedNotifications = true
-        scrollView.verticalScrollElasticity = .allowed
-
-        // 点击底部留白区域时，光标落到文末（否则 inset 区域点击无响应）
-        let blankClick = NSClickGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.blankAreaClicked(_:))
-        )
-        blankClick.delegate = context.coordinator
-        blankClick.delaysPrimaryMouseButtonEvents = false  // 不要拖延正常的文本点击
-        scrollView.contentView.addGestureRecognizer(blankClick)
 
         textView.isRichText = false
         textView.allowsUndo = true
@@ -127,7 +130,7 @@ struct PlainTextEditor: NSViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, NSTextViewDelegate, NSGestureRecognizerDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: PlainTextEditor
         weak var textView: NSTextView?
         weak var ruler: LineNumberRulerView?
@@ -157,24 +160,13 @@ struct PlainTextEditor: NSViewRepresentable {
         }
 
         func updateOverscroll() {
-            guard let scrollView = textView?.enclosingScrollView else { return }
-            let bottom = max(0, scrollView.frame.height * 0.6)
-            if abs(scrollView.contentInsets.bottom - bottom) > 1 {
-                scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+            guard let textView = textView as? OverscrollTextView,
+                  let scrollView = textView.enclosingScrollView else { return }
+            let target = max(0, scrollView.contentSize.height * 0.6)
+            if abs(textView.overscroll - target) > 1 {
+                textView.overscroll = target
+                textView.setFrameSize(textView.frame.size)  // 走重写逻辑刷新高度
             }
-        }
-
-        /// 只在点击落到文档下方的留白区域时才接管手势。
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: NSGestureRecognizer) -> Bool {
-            guard let textView else { return false }
-            let point = gestureRecognizer.location(in: textView)
-            return point.y > textView.bounds.maxY
-        }
-
-        @objc func blankAreaClicked(_ gesture: NSClickGestureRecognizer) {
-            guard let textView else { return }
-            textView.window?.makeFirstResponder(textView)
-            textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         }
 
         /// 编辑器是否持有键盘焦点——blame 注解只在用户聚焦编辑后才出现
@@ -360,6 +352,30 @@ struct PlainTextEditor: NSViewRepresentable {
             }
             return result
         }
+    }
+}
+
+// MARK: - 底部留白文本视图
+
+/// 高度始终为「文本实际高度 + overscroll」（且不小于视口），
+/// 让底部留白属于文本视图本身：I-beam 指针、点击落焦文末都是原生行为。
+final class OverscrollTextView: NSTextView {
+    var overscroll: CGFloat = 0
+    private var resizing = false
+
+    override func setFrameSize(_ newSize: NSSize) {
+        guard !resizing, overscroll > 0,
+              let layoutManager, let textContainer
+        else {
+            super.setFrameSize(newSize)
+            return
+        }
+        resizing = true
+        defer { resizing = false }
+        layoutManager.ensureLayout(for: textContainer)
+        let used = layoutManager.usedRect(for: textContainer).height + textContainerInset.height * 2
+        let minHeight = enclosingScrollView?.contentSize.height ?? 0
+        super.setFrameSize(NSSize(width: newSize.width, height: max(used + overscroll, minHeight)))
     }
 }
 
