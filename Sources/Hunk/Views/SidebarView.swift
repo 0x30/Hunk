@@ -112,13 +112,13 @@ struct SidebarNavButtons: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                 Text(badge > 0 ? "\(min(badge, 99))" : "")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
             }
             .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .frame(height: 24)  // 与系统工具栏胶囊（分支 / 同步）等高
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
