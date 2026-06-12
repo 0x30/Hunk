@@ -94,7 +94,15 @@ final class ThemeStore: ObservableObject {
     }
 
     private func publish(_ theme: ActiveTheme?) {
-        let apply = { self.active = theme }
+        let apply = {
+            self.active = theme
+            // 整个应用的外观跟随主题明暗，避免深色编辑器配浅色窗口的割裂感
+            if let theme {
+                NSApp.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+            } else {
+                NSApp.appearance = nil  // 跟随系统
+            }
+        }
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
