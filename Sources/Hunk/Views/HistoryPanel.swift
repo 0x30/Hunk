@@ -66,15 +66,15 @@ struct HistoryPanel: View {
                     }
 
                     Button { vm.fetch() } label: {
-                        syncIcon("arrow.triangle.2.circlepath", count: 0)
+                        syncIcon("arrow.triangle.2.circlepath", count: 0, loading: vm.syncingAction == "fetch")
                     }
                     .buttonStyle(.borderless)
                     .help(tr("抓取", "Fetch") + upstreamSuffix)
                     .disabled(vm.isSyncing)
 
-                    if vm.sync.behind > 0 {
+                    if vm.sync.behind > 0 || vm.syncingAction == "pull" {
                         Button { vm.pull() } label: {
-                            syncIcon("arrow.down", count: vm.sync.behind)
+                            syncIcon("arrow.down", count: vm.sync.behind, loading: vm.syncingAction == "pull")
                         }
                         .buttonStyle(.borderless)
                         .help(tr("拉取", "Pull") + upstreamSuffix)
@@ -82,9 +82,9 @@ struct HistoryPanel: View {
                     }
 
                     // 有待推送，或分支还没有上游（首推自动 push -u 发布分支）
-                    if vm.sync.ahead > 0 || vm.sync.upstream == nil {
+                    if vm.sync.ahead > 0 || vm.sync.upstream == nil || vm.syncingAction == "push" {
                         Button { vm.push() } label: {
-                            syncIcon("arrow.up", count: vm.sync.ahead)
+                            syncIcon("arrow.up", count: vm.sync.ahead, loading: vm.syncingAction == "push")
                         }
                         .buttonStyle(.borderless)
                         .help(vm.sync.upstream == nil
@@ -108,10 +108,15 @@ struct HistoryPanel: View {
         .frame(maxHeight: (!collapsed && vm.changesPanelCollapsed) ? .infinity : nil)
     }
 
-    private func syncIcon(_ systemImage: String, count: Int) -> some View {
+    private func syncIcon(_ systemImage: String, count: Int, loading: Bool = false) -> some View {
         HStack(spacing: 2) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .medium))
+            if loading {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .medium))
+            }
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 9, weight: .semibold).monospacedDigit())

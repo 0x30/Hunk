@@ -828,13 +828,17 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 远端同步
 
-    func fetch() { syncAction { try await $0.fetch() } }
-    func pull() { syncAction { try await $0.pull() } }
-    func push() { syncAction { try await $0.push() } }
+    /// 正在执行的同步动作（"fetch" / "pull" / "push"），驱动对应图标的 loading
+    @Published var syncingAction: String?
 
-    private func syncAction(_ action: @escaping (Repository) async throws -> Void) {
+    func fetch() { syncAction("fetch") { try await $0.fetch() } }
+    func pull() { syncAction("pull") { try await $0.pull() } }
+    func push() { syncAction("push") { try await $0.push() } }
+
+    private func syncAction(_ name: String, _ action: @escaping (Repository) async throws -> Void) {
         guard let repo, !isSyncing else { return }
         isSyncing = true
+        syncingAction = name
         Task {
             do {
                 try await action(repo)
@@ -842,6 +846,7 @@ final class RepoViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
             isSyncing = false
+            syncingAction = nil
             await refresh()
         }
     }
