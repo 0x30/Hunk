@@ -81,10 +81,10 @@ struct ContentView: View {
                 GlobalSearchView()
             }
         }
-        // 分支面板：窗口内浮层（贴近工具栏分支胶囊的位置）
-        .overlay(alignment: .topLeading) {
+        // 分支面板：窗口内居中浮层
+        .overlay(alignment: .top) {
             if vm.showBranchPanel {
-                ZStack(alignment: .topLeading) {
+                ZStack(alignment: .top) {
                     Color.clear
                         .contentShape(Rectangle())
                         .ignoresSafeArea()
@@ -93,10 +93,10 @@ struct ContentView: View {
                     BranchPopover(isPresented: $vm.showBranchPanel)
                         .background(RoundedRectangle(cornerRadius: 10).fill(.regularMaterial))
                         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
-                        .shadow(color: .black.opacity(0.25), radius: 20, y: 8)
-                        .padding(.leading, 14)
-                        .padding(.top, 6)
+                        .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
+                        .padding(.top, 90)
                 }
+                .onExitCommand { vm.showBranchPanel = false }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

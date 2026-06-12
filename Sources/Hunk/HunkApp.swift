@@ -74,10 +74,14 @@ private struct AppCommands: Commands {
             .disabled(vm?.editorDirty != true)
 
             Button(tr("关闭标签页", "Close Tab")) {
-                vm?.closeActiveTab()
+                if let vm {
+                    vm.closeActiveTab()
+                } else {
+                    // 设置等无 vm 的窗口：⌘W 直接关窗
+                    NSApp.keyWindow?.performClose(nil)
+                }
             }
             .keyboardShortcut("w", modifiers: .command)
-            .disabled(vm == nil)
         }
         CommandGroup(replacing: .printItem) {
             Button(tr("快速打开…", "Quick Open…")) {

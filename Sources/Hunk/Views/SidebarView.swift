@@ -161,6 +161,7 @@ struct BranchPopover: View {
     @Binding var isPresented: Bool
     @State private var query = ""
     @State private var newBranchName = ""
+    @FocusState private var searchFocused: Bool
 
     private var filtered: [Branch] {
         vm.branches.filter {
@@ -175,6 +176,11 @@ struct BranchPopover: View {
                     .foregroundStyle(.secondary)
                 TextField(tr("查找分支", "Find branch"), text: $query)
                     .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    .onKeyPress(.escape) {
+                        isPresented = false
+                        return .handled
+                    }
             }
             .padding(10)
 
@@ -237,6 +243,10 @@ struct BranchPopover: View {
                 TextField(tr("新建分支并切换…", "New branch & switch…"), text: $newBranchName)
                     .textFieldStyle(.plain)
                     .onSubmit { create() }
+                    .onKeyPress(.escape) {
+                        isPresented = false
+                        return .handled
+                    }
                 if !newBranchName.trimmingCharacters(in: .whitespaces).isEmpty {
                     Button(tr("创建", "Create")) { create() }
                         .controlSize(.small)
@@ -245,6 +255,8 @@ struct BranchPopover: View {
             .padding(10)
         }
         .frame(width: 300)
+        .onAppear { searchFocused = true }
+        .onExitCommand { isPresented = false }
     }
 
     private func create() {

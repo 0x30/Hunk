@@ -37,6 +37,10 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 740, height: 500)
+        // ESC 关闭设置窗口（⌘W 由全局命令兜底处理）
+        .onExitCommand {
+            NSApp.keyWindow?.performClose(nil)
+        }
     }
 }
 
