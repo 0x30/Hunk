@@ -80,56 +80,35 @@ struct SidebarNavButtons: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            segment(
-                tab: .files,
-                systemImage: "folder",
-                help: tr("文件 (⌘1)", "Files (⌘1)")
-            )
-            // Xcode 式分段分隔线
-            Rectangle()
-                .fill(.separator.opacity(0.6))
-                .frame(width: 1, height: 12)
-            segment(
-                tab: .changes,
-                systemImage: "plus.forwardslash.minus",
-                badge: vm.changes.count,
-                help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
-            )
-        }
-        .padding(3)
-        // 与系统工具栏胶囊一致的实底悬浮感（侧边栏浅底上也清晰可辨）
-        .background(
-            Capsule()
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+        // 纯系统工具栏按钮（与同步组同款，不加任何自定义底色）：
+        // 侧边栏在场时系统按侧边栏区渲染为独立按钮，
+        // 收起后并入主区由系统自动包进胶囊——与 Xcode 行为一致
+        navButton(
+            tab: .files,
+            systemImage: "folder",
+            help: tr("文件 (⌘1)", "Files (⌘1)")
         )
-        .overlay(
-            Capsule().strokeBorder(.separator.opacity(0.45), lineWidth: 0.5)
+        navButton(
+            tab: .changes,
+            systemImage: "plus.forwardslash.minus",
+            badge: vm.changes.count,
+            help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
         )
     }
 
-    private func segment(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
+    private func navButton(tab: SidebarTab, systemImage: String, badge: Int = 0, help: String) -> some View {
         let selected = vm.sidebarVisible && vm.sidebarTab == tab
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: 2) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                 Text(badge > 0 ? "\(min(badge, 99))" : "")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
             }
-            // Xcode 式：选中段 = 实心强调色填充 + 白色图标
-            .foregroundStyle(selected ? Color.white : Color.secondary)
-            .padding(.horizontal, 10)
-            .frame(height: 24)  // 与系统工具栏胶囊（分支 / 同步）等高
-            .background(
-                Capsule().fill(selected ? Color.accentColor : .clear)
-            )
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
         .help(help)
     }
 }
