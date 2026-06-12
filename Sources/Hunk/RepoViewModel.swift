@@ -207,15 +207,20 @@ final class RepoViewModel: ObservableObject {
             async let head = repo.headSummary()
             async let files = repo.listFiles()
 
-            self.changes = try await status
-            self.branches = try await branches
-            self.stashes = try await stashes
-            self.currentBranch = try await branch
-            self.sync = try await sync
-            self.headSummary = try await head
-            self.workspaceFiles = try await files
-            self.workspaceTree = FileTreeBuilder.build(paths: self.workspaceFiles)
-            self.history = (try? await repo.history(path: self.historyFilterPath)) ?? []
+            // 只在值真正变化时赋值：避免每次激活刷新都触发整树重绘
+            // （工具栏项重建会吞掉紧随其后的第一次点击）
+            assignIfChanged(try await status, to: \.changes)
+            assignIfChanged(try await branches, to: \.branches)
+            assignIfChanged(try await stashes, to: \.stashes)
+            assignIfChanged(try await branch, to: \.currentBranch)
+            assignIfChanged(try await sync, to: \.sync)
+            assignIfChanged(try await head, to: \.headSummary)
+            let newFiles = try await files
+            if newFiles != self.workspaceFiles {
+                self.workspaceFiles = newFiles
+                self.workspaceTree = FileTreeBuilder.build(paths: newFiles)
+            }
+            assignIfChanged((try? await repo.history(path: self.historyFilterPath)) ?? [], to: \.history)
 
             // 选中的更改已不存在时清掉详情
             if case .change(let path, let area) = selection {
@@ -231,6 +236,12 @@ final class RepoViewModel: ObservableObject {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func assignIfChanged<T: Equatable>(_ value: T, to keyPath: ReferenceWritableKeyPath<RepoViewModel, T>) {
+        if self[keyPath: keyPath] != value {
+            self[keyPath: keyPath] = value
         }
     }
 
