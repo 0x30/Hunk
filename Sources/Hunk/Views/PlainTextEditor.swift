@@ -372,7 +372,8 @@ final class OverscrollTextView: NSTextView {
         }
         resizing = true
         defer { resizing = false }
-        layoutManager.ensureLayout(for: textContainer)
+        // 不强制全量排版（大文件会把主线程卡死数秒）：
+        // 用渐进布局当前已知的高度，TextKit 后台排版推进时会再次回调本方法，高度自然收敛
         let used = layoutManager.usedRect(for: textContainer).height + textContainerInset.height * 2
         let minHeight = enclosingScrollView?.contentSize.height ?? 0
         super.setFrameSize(NSSize(width: newSize.width, height: max(used + overscroll, minHeight)))
@@ -420,13 +421,20 @@ final class LineNumberRulerView: NSRulerView {
     private func rebuildLineIndexIfNeeded() {
         guard !lineIndexValid, let textView else { return }
         let nsString = textView.string as NSString
+        let length = nsString.length
         var starts: [Int] = [0]
+        starts.reserveCapacity(max(16, length / 40))
+        // 分块拷出 unichar 单遍扫描：比逐行 range(of:) 快一个数量级，大文件编辑不卡
+        let chunkSize = 64 * 1024
+        var buffer = [unichar](repeating: 0, count: chunkSize)
         var location = 0
-        while location < nsString.length {
-            let newline = nsString.range(of: "\n", options: [], range: NSRange(location: location, length: nsString.length - location))
-            if newline.location == NSNotFound { break }
-            starts.append(newline.location + 1)
-            location = newline.location + 1
+        while location < length {
+            let count = min(chunkSize, length - location)
+            nsString.getCharacters(&buffer, range: NSRange(location: location, length: count))
+            for i in 0..<count where buffer[i] == 0x0A {  // \n
+                starts.append(location + i + 1)
+            }
+            location += count
         }
         lineStarts = starts
         lineIndexValid = true
