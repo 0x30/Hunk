@@ -28,9 +28,9 @@ extendedKeyUsage = critical,codeSigning
 basicConstraints = critical,CA:false
 EOF
 
-openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
+/usr/bin/openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
     -days 3650 -nodes -config "$TMP/conf" >/dev/null 2>&1
-openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
+/usr/bin/openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
     -out "$TMP/cert.p12" -passout pass:hunk >/dev/null 2>&1
 
 security import "$TMP/cert.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
