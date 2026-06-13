@@ -78,5 +78,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign - "$APP" 2>/dev/null || true
-echo "✅ $APP"
+# 签名：优先用稳定身份（HUNK_SIGN_ID 或本机的「Hunk Dev」自签证书，
+# 见 Scripts/make-dev-cert.sh），否则退回 ad-hoc（每次构建身份都变，TCC 权限会重问）
+SIGN_ID="${HUNK_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hunk Dev"; then
+    SIGN_ID="Hunk Dev"
+fi
+codesign --force --sign "${SIGN_ID:--}" "$APP" 2>/dev/null || true
+echo "✅ $APP（签名：${SIGN_ID:-ad-hoc}）"
