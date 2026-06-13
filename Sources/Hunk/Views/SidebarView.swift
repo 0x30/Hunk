@@ -253,6 +253,26 @@ struct BranchPopover: View {
                 }
             }
             .padding(10)
+
+            Divider()
+
+            // 清理已合并进当前分支的本地分支（main/master/develop 受保护）
+            Button {
+                isPresented = false
+                vm.promptCleanupMergedBranches()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                    Text(tr("删除已合并的分支…", "Delete Merged Branches…"))
+                        .font(.system(size: 12))
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .frame(width: 300)
         .onAppear { searchFocused = true }
@@ -282,6 +302,15 @@ private struct BranchPopoverRow: View {
                     .font(.system(size: 13))
                     .lineLimit(1)
                 Spacer()
+                // 已合并进当前分支的标记
+                if branch.isMerged {
+                    Text(tr("已合并", "merged"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)

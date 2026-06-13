@@ -910,6 +910,58 @@ final class RepoViewModel: ObservableObject {
         perform { try await self.repo?.createBranch(trimmed) }
     }
 
+    // MARK: 清理已合并分支
+
+    /// 待确认删除的已合并分支列表（非 nil 时弹确认框）
+    @Published var mergedBranchesToDelete: [String]?
+
+    /// 查找已合并的本地分支并弹出确认。
+    func promptCleanupMergedBranches() {
+        guard let repo else { return }
+        Task {
+            do {
+                let merged = try await repo.mergedBranches()
+                if merged.isEmpty {
+                    notice = tr("没有可删除的分支：本地不存在已合并进当前分支的其他分支。",
+                                "Nothing to delete: no local branches are fully merged into the current branch.")
+                } else {
+                    mergedBranchesToDelete = merged
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// 执行删除（逐个删，失败的跳过并汇总）。
+    func confirmCleanupMergedBranches() {
+        guard let repo, let branches = mergedBranchesToDelete else { return }
+        mergedBranchesToDelete = nil
+        Task {
+            var deleted: [String] = []
+            var failed: [String] = []
+            for name in branches {
+                do {
+                    try await repo.deleteBranch(name)
+                    deleted.append(name)
+                } catch {
+                    failed.append(name)
+                }
+            }
+            await refresh()
+            var lines: [String] = []
+            if !deleted.isEmpty {
+                lines.append(tr("已删除 \(deleted.count) 个分支：\(deleted.joined(separator: "、"))",
+                                "Deleted \(deleted.count) branch(es): \(deleted.joined(separator: ", "))"))
+            }
+            if !failed.isEmpty {
+                lines.append(tr("删除失败：\(failed.joined(separator: "、"))",
+                                "Failed: \(failed.joined(separator: ", "))"))
+            }
+            notice = lines.joined(separator: "\n")
+        }
+    }
+
     // MARK: - 远端同步
 
     /// 正在执行的同步动作（"fetch" / "pull" / "push"），驱动对应图标的 loading

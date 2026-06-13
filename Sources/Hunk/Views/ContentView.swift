@@ -200,6 +200,25 @@ struct MainSplitView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // 删除已合并分支的确认框
+        .confirmationDialog(
+            tr("删除 \(vm.mergedBranchesToDelete?.count ?? 0) 个已合并的分支？",
+               "Delete \(vm.mergedBranchesToDelete?.count ?? 0) merged branch(es)?"),
+            isPresented: Binding(
+                get: { vm.mergedBranchesToDelete != nil },
+                set: { if !$0 { vm.mergedBranchesToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("删除", "Delete"), role: .destructive) {
+                vm.confirmCleanupMergedBranches()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.mergedBranchesToDelete = nil
+            }
+        } message: {
+            Text((vm.mergedBranchesToDelete ?? []).joined(separator: "\n"))
+        }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())
