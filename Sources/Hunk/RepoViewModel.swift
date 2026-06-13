@@ -412,8 +412,14 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 刷新
 
+    /// refresh 防重入：窗口频繁激活/连续触发时合并，避免并发刷新风暴
+    /// （每个 refresh 会起 7 个 git 子进程 + 重建文件树/graph，并发会拖垮主线程渲染）
+    private var isRefreshing = false
+
     func refresh() async {
-        guard let repo else { return }
+        guard let repo, !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         do {
             async let status = repo.status()
             async let branches = repo.branches()
