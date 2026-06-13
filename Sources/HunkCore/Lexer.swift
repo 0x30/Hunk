@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TokenType: Hashable, Sendable {
+public enum TokenType: Hashable, Sendable, CaseIterable {
     case keyword
     case string
     case comment

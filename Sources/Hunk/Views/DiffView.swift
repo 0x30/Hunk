@@ -796,24 +796,16 @@ struct DiffLineText: View {
     @EnvironmentObject var settings: SettingsStore
     let text: String
     let filePath: String
+    /// 后台算好的高亮；nil 时先显示纯文本（measure 阶段不 tokenize，不卡）
+    @State private var highlighted: AttributedString?
 
     var body: some View {
-        Text(highlighted)
-    }
-
-    private var highlighted: AttributedString {
         let display = text.isEmpty ? " " : text
-        var attributed = AttributedString(display)
-        guard let language = Lexer.language(forFileName: (filePath as NSString).lastPathComponent) else {
-            return attributed
-        }
-        for token in Lexer.tokenize(display, language: language) {
-            guard let stringRange = Range(token.range, in: display),
-                  let lower = AttributedString.Index(stringRange.lowerBound, within: attributed),
-                  let upper = AttributedString.Index(stringRange.upperBound, within: attributed)
-            else { continue }
-            attributed[lower..<upper].foregroundColor = settings.tokenColor(for: token.type)
-        }
-        return attributed
+        Text(highlighted ?? AttributedString(display))
+            // 只有可见行才会出现并触发；滚出视图自动取消。text/主题变则重算
+            .task(id: "\(text)\u{1}\(settings.themeID)") {
+                highlighted = await DiffHighlighter.highlight(
+                    text: text, filePath: filePath, settings: settings)
+            }
     }
 }
