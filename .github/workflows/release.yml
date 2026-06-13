@@ -53,10 +53,13 @@ jobs:
 
       - name: 构建并打包
         env:
-          HUNK_VERSION: 0.1.${{ github.run_number }}
+          # 营销版本与本地统一用 git 提交数（0.1.<提交数>）；
+          # 构建号用 run_number（纯数字，供 UpdateChecker 比较，与 build-N 标签同源）
           HUNK_BUILD: ${{ github.run_number }}
         run: |
-          ./Scripts/make-app.sh release
+          MARKETING="0.1.$(git rev-list --count HEAD)"
+          echo "HUNK_MARKETING=$MARKETING" >> "$GITHUB_ENV"
+          HUNK_VERSION="$MARKETING" ./Scripts/make-app.sh release
           ditto -c -k --sequesterRsrc --keepParent dist/Hunk.app dist/Hunk.zip
 
       - name: 生成发布说明（汇总上次 Release 以来的提交）
@@ -86,6 +89,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Hunk 0.1.${{ github.run_number }}
+          name: Hunk ${{ env.HUNK_MARKETING }} (build ${{ github.run_number }})
           body_path: release-notes.md
           files: dist/Hunk.zip
