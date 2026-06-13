@@ -188,14 +188,18 @@ struct MainSplitView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 460)
         } detail: {
             // 终端是详情区底部的固定高度面板（VS Code 式，⌘J 切换）：
-            // 高度只由拖拽分隔条改变，开关面板/切换文件不影响
-            VStack(spacing: 0) {
-                DetailView()
-                    .frame(maxHeight: .infinity)
-                if vm.showTerminal {
-                    TerminalResizeDivider()
-                    TerminalPanel()
-                        .frame(height: vm.terminalHeight)
+            // 高度只由拖拽分隔条改变，开关面板/切换文件不影响。
+            // 用 GeometryReader 把终端高度钳到「可用高度 - 详情区下限」，
+            // 避免窗口被缩小到比终端还矮时约束无解、Auto Layout 反复重入卡死。
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    DetailView()
+                        .frame(maxHeight: .infinity)
+                    if vm.showTerminal {
+                        TerminalResizeDivider()
+                        TerminalPanel()
+                            .frame(height: min(vm.terminalHeight, max(120, geo.size.height - 160)))
+                    }
                 }
             }
         }
