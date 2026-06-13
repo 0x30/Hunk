@@ -491,6 +491,9 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 详情加载
 
+    /// 已为哪个路径因「diff 为空」自动刷新过，防止合法空 diff（chmod/重命名）反复刷新
+    private var emptyDiffRefreshedPath: String?
+
     func loadDetail() async {
         guard let repo else { return }
         selectedLineIDs = []
@@ -514,6 +517,19 @@ final class RepoViewModel: ObservableObject {
                 } else {
                     diff = try await repo.diff(for: path, staged: area == .staged)
                 }
+                // 列表标记为有变化、diff 实际却为空（非二进制/删除/新建）→
+                // 多半是文件已被外部命令提交/暂存/丢弃，自动刷新一次让状态对齐。
+                // 每个路径最多自动刷新一次，避免 chmod/重命名等合法空 diff 反复刷新。
+                let looksEmpty: Bool = {
+                    guard let d = diff else { return true }
+                    return d.hunks.isEmpty && !d.isBinary && !d.isDeleted && !d.isNew
+                }()
+                if change != nil, looksEmpty, emptyDiffRefreshedPath != path {
+                    emptyDiffRefreshedPath = path
+                    await refresh()
+                    return
+                }
+                emptyDiffRefreshedPath = nil
                 await loadDiffContext(path: path, area: area)
             } catch {
                 diff = nil
