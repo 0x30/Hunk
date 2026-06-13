@@ -16,6 +16,18 @@ final class FileTreeTests: XCTestCase {
         XCTAssertTrue(rows[0].node.isDirectory)
     }
 
+    /// 折叠目录后跳过其子树，目录行本身保留。
+    func testFlattenSkipsCollapsedSubtrees() {
+        let nodes = FileTreeBuilder.build(paths: [
+            "a/b/c/file1.txt",
+            "a/b/c/file2.txt",
+            "top.txt",
+        ])
+        let rows = FileTreeBuilder.flattenMergingChains(nodes, collapsed: ["a/b/c"])
+
+        XCTAssertEqual(rows.map(\.displayName), ["a/b/c", "top.txt"])
+    }
+
     /// 多子项的目录不合并链。
     func testFlattenKeepsBranchingDirectories() {
         let nodes = FileTreeBuilder.build(paths: [

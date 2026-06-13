@@ -35,8 +35,13 @@ public struct FlatTreeRow: Identifiable {
 }
 
 public enum FileTreeBuilder {
-    /// 全展开拍平（与 VS Code 一致），并把只有一个子目录的链合并为一行（a/b/c）。
-    public static func flattenMergingChains(_ nodes: [FileNode], depth: Int = 0) -> [FlatTreeRow] {
+    /// 拍平为行列表（默认全展开，与 VS Code 一致），并把只有一个子目录的链合并为一行（a/b/c）。
+    /// `collapsed` 中的目录路径只输出目录行本身，跳过其子树。
+    public static func flattenMergingChains(
+        _ nodes: [FileNode],
+        depth: Int = 0,
+        collapsed: Set<String> = []
+    ) -> [FlatTreeRow] {
         var result: [FlatTreeRow] = []
         for node in nodes {
             if node.isDirectory {
@@ -50,7 +55,9 @@ public enum FileTreeBuilder {
                     name += "/" + only.name
                 }
                 result.append(FlatTreeRow(node: merged, depth: depth, displayName: name))
-                result += flattenMergingChains(merged.children ?? [], depth: depth + 1)
+                if !collapsed.contains(merged.path) {
+                    result += flattenMergingChains(merged.children ?? [], depth: depth + 1, collapsed: collapsed)
+                }
             } else {
                 result.append(FlatTreeRow(node: node, depth: depth, displayName: node.name))
             }

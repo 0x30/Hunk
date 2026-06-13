@@ -316,6 +316,8 @@ struct HistoryDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
     /// 文件列表树状/扁平（默认树状，跨会话记忆）
     @AppStorage("historyFilesAsTree") private var filesAsTree = true
+    /// 已折叠的目录路径（每次打开新详情时重置）
+    @State private var collapsedDirs: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -407,18 +409,11 @@ struct HistoryDetailView: View {
             if filesAsTree {
                 let lookup = Dictionary(uniqueKeysWithValues: vm.historyFiles.map { ($0.path, $0) })
                 ForEach(FileTreeBuilder.flattenMergingChains(
-                    FileTreeBuilder.build(paths: vm.historyFiles.map(\.path))
+                    FileTreeBuilder.build(paths: vm.historyFiles.map(\.path)),
+                    collapsed: collapsedDirs
                 )) { item in
                     if item.node.isDirectory {
-                        HStack(spacing: 6) {
-                            FileIconView(fileName: item.node.name, isDirectory: true, expanded: true)
-                            Text(item.displayName)
-                                .font(.system(size: 12))
-                                .lineLimit(1)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 1)
-                        .padding(.leading, CGFloat(item.depth) * 12)
+                        directoryRow(item)
                     } else if let file = lookup[item.node.path] {
                         fileRow(file, showDirectory: false)
                             .padding(.leading, CGFloat(item.depth) * 12)
@@ -432,6 +427,37 @@ struct HistoryDetailView: View {
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 26)
+        // 切换提交/比较对象时重置折叠状态
+        .onChange(of: vm.historyDetail) { _, _ in
+            collapsedDirs = []
+        }
+    }
+
+    /// 目录行：点击折叠/展开整个子树。
+    private func directoryRow(_ item: FlatTreeRow) -> some View {
+        let collapsed = collapsedDirs.contains(item.node.path)
+        return HStack(spacing: 4) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(collapsed ? .zero : .degrees(90))
+            FileIconView(fileName: item.node.name, isDirectory: true, expanded: !collapsed)
+            Text(item.displayName)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 1)
+        .padding(.leading, CGFloat(item.depth) * 12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if collapsed {
+                collapsedDirs.remove(item.node.path)
+            } else {
+                collapsedDirs.insert(item.node.path)
+            }
+        }
     }
 
     @ViewBuilder
