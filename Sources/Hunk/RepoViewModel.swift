@@ -51,12 +51,15 @@ final class RepoViewModel: ObservableObject {
             sidebarVisible = true
         }
     }
+    /// 当前的详情加载任务，切换选择时取消上一个，避免快速切换堆积 loadDetail
+    private var loadDetailTask: Task<Void, Never>?
     @Published var selection: SidebarSelection? {
         didSet {
             guard selection != oldValue else { return }
             editingChangedFile = false
             if selection != nil { historyDetail = nil }
-            Task { await loadDetail() }
+            loadDetailTask?.cancel()
+            loadDetailTask = Task { await loadDetail() }
         }
     }
 
@@ -376,6 +379,7 @@ final class RepoViewModel: ObservableObject {
     }
 
     func open(_ url: URL) async {
+        Diagnostics.log("open repo \(url.path)")
         do {
             let repository = try await Repository.discover(at: url)
             repo = repository
@@ -419,7 +423,8 @@ final class RepoViewModel: ObservableObject {
     func refresh() async {
         guard let repo, !isRefreshing else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        Diagnostics.log("refresh 开始（变更 \(changes.count)）")
+        defer { isRefreshing = false; Diagnostics.log("refresh 结束") }
         do {
             async let status = repo.status()
             async let branches = repo.branches()
@@ -496,6 +501,7 @@ final class RepoViewModel: ObservableObject {
 
     func loadDetail() async {
         guard let repo else { return }
+        Diagnostics.log("loadDetail \(selection.map { "\($0)" } ?? "nil")")
         selectedLineIDs = []
         switch selection {
         case nil:

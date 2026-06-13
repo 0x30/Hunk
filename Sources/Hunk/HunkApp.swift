@@ -29,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in CLIOpenRouter.consumeChannelFile() }
         }
 
+        // 诊断日志（实时落盘，崩溃后可复盘）+ 内存看门狗（异常暴涨时清缓存/主动退出，
+        // 避免拖垮整个系统的 OOM 连锁）。日志在 ~/Library/Logs/Hunk/session.log
+        Diagnostics.start()
+        MemoryGuard.start()
+
         // AppKit 接管「文件 → 最近打开」（两行：项目名 + 灰色路径）。
         // SwiftUI 建好菜单的时机晚于此处，故在窗口出现、应用激活、菜单栏追踪时都确保接管一次（幂等）。
         for name: NSNotification.Name in [
@@ -241,6 +246,9 @@ private struct AppCommands: Commands {
                 vm?.notice = CLIInstaller.install()
             }
             .disabled(vm == nil)
+            Button(tr("在访达中显示诊断日志", "Reveal Diagnostic Log")) {
+                NSWorkspace.shared.activateFileViewerSelecting([Diagnostics.logURL])
+            }
         }
         CommandGroup(replacing: .newItem) {
             // 终端聚焦时 ⌘N/⌘W 切换为终端语义（VS Code 式）
