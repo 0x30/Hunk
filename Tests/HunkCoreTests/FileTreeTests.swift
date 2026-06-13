@@ -28,7 +28,7 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(rows.map(\.displayName), ["a/b/c", "top.txt"])
     }
 
-    /// 多子项的目录不合并链。
+    /// 有直接文件变化的目录正常成行，子目录嵌套其下。
     func testFlattenKeepsBranchingDirectories() {
         let nodes = FileTreeBuilder.build(paths: [
             "src/a.swift",
@@ -39,5 +39,18 @@ final class FileTreeTests: XCTestCase {
         // src 下既有目录又有文件：目录在前
         XCTAssertEqual(rows.map(\.displayName), ["src", "sub", "b.swift", "a.swift"])
         XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 1])
+    }
+
+    /// 没有直接文件变化的中间层不成行：src 只含 core/views 两个子目录时,
+    /// 行直接是 "src/core" 与 "src/views"，没有单独的 src 层。
+    func testFlattenDropsIntermediateDirsWithoutDirectFiles() {
+        let nodes = FileTreeBuilder.build(paths: [
+            "src/core/util.txt",
+            "src/views/page.txt",
+        ])
+        let rows = FileTreeBuilder.flattenMergingChains(nodes)
+
+        XCTAssertEqual(rows.map(\.displayName), ["src/core", "util.txt", "src/views", "page.txt"])
+        XCTAssertEqual(rows.map(\.depth), [0, 1, 0, 1])
     }
 }

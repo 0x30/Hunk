@@ -35,28 +35,30 @@ public struct FlatTreeRow: Identifiable {
 }
 
 public enum FileTreeBuilder {
-    /// 拍平为行列表（默认全展开，与 VS Code 一致），并把只有一个子目录的链合并为一行（a/b/c）。
+    /// 拍平为行列表（默认全展开）。
+    /// 没有直接文件变化的中间层目录不单独成行，名字并入子目录显示
+    /// （/a/b/c/d/f.json 只变动一个文件时，目录行直接是 "a/b/c/d"）。
     /// `collapsed` 中的目录路径只输出目录行本身，跳过其子树。
     public static func flattenMergingChains(
         _ nodes: [FileNode],
         depth: Int = 0,
-        collapsed: Set<String> = []
+        collapsed: Set<String> = [],
+        prefix: String = ""
     ) -> [FlatTreeRow] {
         var result: [FlatTreeRow] = []
         for node in nodes {
             if node.isDirectory {
-                var merged = node
-                var name = node.name
-                while let children = merged.children,
-                      children.count == 1,
-                      let only = children.first,
-                      only.isDirectory {
-                    merged = only
-                    name += "/" + only.name
-                }
-                result.append(FlatTreeRow(node: merged, depth: depth, displayName: name))
-                if !collapsed.contains(merged.path) {
-                    result += flattenMergingChains(merged.children ?? [], depth: depth + 1, collapsed: collapsed)
+                let children = node.children ?? []
+                let hasDirectFiles = children.contains { !$0.isDirectory }
+                let name = prefix.isEmpty ? node.name : prefix + "/" + node.name
+                if !hasDirectFiles && !children.isEmpty {
+                    // 本层没有直接文件变化：不成行，名字并入子目录
+                    result += flattenMergingChains(children, depth: depth, collapsed: collapsed, prefix: name)
+                } else {
+                    result.append(FlatTreeRow(node: node, depth: depth, displayName: name))
+                    if !collapsed.contains(node.path) {
+                        result += flattenMergingChains(children, depth: depth + 1, collapsed: collapsed)
+                    }
                 }
             } else {
                 result.append(FlatTreeRow(node: node, depth: depth, displayName: node.name))

@@ -6,6 +6,8 @@ import HunkCore
 struct ChangesListView: View {
     @EnvironmentObject var vm: RepoViewModel
     @EnvironmentObject var settings: SettingsStore
+    /// 已折叠的目录（按分区记，键为 "区|路径"，同一目录在已暂存/更改里互不影响）
+    @State private var collapsedDirs: Set<String> = []
 
     var body: some View {
         List(selection: $vm.selection) {
@@ -119,17 +121,16 @@ struct ChangesListView: View {
     private func changeRows(_ changes: [FileChange], area: ChangeArea) -> some View {
         if settings.changesAsTree {
             let lookup = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-            ForEach(FileTreeBuilder.flattenMergingChains(FileTreeBuilder.build(paths: changes.map(\.path)))) { item in
+            let collapsedInArea = Set(collapsedDirs.compactMap { key -> String? in
+                let prefix = "\(area)|"
+                return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
+            })
+            ForEach(FileTreeBuilder.flattenMergingChains(
+                FileTreeBuilder.build(paths: changes.map(\.path)),
+                collapsed: collapsedInArea
+            )) { item in
                 if item.node.isDirectory {
-                    HStack(spacing: 6) {
-                        FileIconView(fileName: item.node.name, isDirectory: true, expanded: true)
-                        Text(item.displayName)
-                            .font(.callout)
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 1)
-                    .padding(.leading, CGFloat(item.depth) * 14)
+                    directoryRow(item, area: area)
                 } else if let change = lookup[item.node.path] {
                     ChangeRow(change: change, area: area, showDirectory: false)
                         .padding(.leading, CGFloat(item.depth) * 14)
@@ -142,6 +143,37 @@ struct ChangesListView: View {
                     .tag(SidebarSelection.change(path: change.path, area: area))
             }
         }
+    }
+
+    /// 目录行：点击折叠/展开该分区下的整个子树。
+    /// 注意：在带 selection 的 List 里 onTapGesture 会被选中机制吞掉，必须用 .borderless 按钮。
+    private func directoryRow(_ item: FlatTreeRow, area: ChangeArea) -> some View {
+        let key = "\(area)|\(item.node.path)"
+        let collapsed = collapsedDirs.contains(key)
+        return Button {
+            if collapsed {
+                collapsedDirs.remove(key)
+            } else {
+                collapsedDirs.insert(key)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(collapsed ? .zero : .degrees(90))
+                FileIconView(fileName: item.node.name, isDirectory: true, expanded: !collapsed)
+                Text(item.displayName)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .padding(.leading, CGFloat(item.depth) * 14)
     }
 
     private func sectionHeader<Actions: View>(
