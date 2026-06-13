@@ -378,6 +378,20 @@ final class OverscrollTextView: NSTextView {
         let minHeight = enclosingScrollView?.contentSize.height ?? 0
         super.setFrameSize(NSSize(width: newSize.width, height: max(used + overscroll, minHeight)))
     }
+
+    /// 粘贴从访达复制的文件时插入其绝对路径（而非系统默认的文件名）；
+    /// 多个文件按行分隔。普通文本粘贴走原生行为。
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
+           !urls.isEmpty {
+            let paths = urls.map(\.path).joined(separator: "\n")
+            insertText(paths, replacementRange: selectedRange())
+            return
+        }
+        super.paste(sender)
+    }
 }
 
 // MARK: - 行号 gutter
