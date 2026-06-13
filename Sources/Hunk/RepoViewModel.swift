@@ -33,6 +33,11 @@ final class RepoViewModel: ObservableObject {
 
     @Published var sidebarTab: SidebarTab = .files
     @Published var sidebarVisible = true
+
+    /// 文件树展开的目录路径（提到视图模型，切换侧边栏标签后保活，不再丢失/重新全展开）
+    @Published var fileTreeExpanded: Set<String> = []
+    /// 文件树是否已做过首层展开（避免每次回到文件标签又全展开）
+    @Published var fileTreeDidInitialExpand = false
     /// 源代码管理两个模块的折叠状态（点击头部切换）
     @Published var changesPanelCollapsed = false
     @Published var historyPanelCollapsed = false
@@ -378,6 +383,9 @@ final class RepoViewModel: ObservableObject {
             selection = nil
             diff = nil
             editorPath = nil
+            // 换仓库重置文件树展开状态，让新仓库重新做首层展开
+            fileTreeExpanded = []
+            fileTreeDidInitialExpand = false
             defaults.set(repository.root.path, forKey: "lastRepo")
             var recents = defaults.stringArray(forKey: "recentRepos") ?? []
             recents.removeAll { $0 == repository.root.path }

@@ -5,9 +5,7 @@ import HunkCore
 /// 键盘：↑↓ 移动选择，← 折叠目录/跳到父目录，→ 展开目录/进入第一个子项，⏎ 切换目录展开。
 struct FilesView: View {
     @EnvironmentObject var vm: RepoViewModel
-    @State private var expanded: Set<String> = []
     @State private var localSelection: String?
-    @State private var didInitialExpand = false
     /// 启动宽限期：窗口状态恢复会触发 selection 变化，期间不自动打开文件
     @State private var suppressAutoOpen = true
     @FocusState private var focused: Bool
@@ -26,7 +24,7 @@ struct FilesView: View {
         var result: [Row] = []
         for node in nodes {
             result.append(Row(node: node, depth: depth))
-            if node.isDirectory, expanded.contains(node.path) {
+            if node.isDirectory, vm.fileTreeExpanded.contains(node.path) {
                 result += flatten(node.children ?? [], depth: depth + 1)
             }
         }
@@ -40,7 +38,7 @@ struct FilesView: View {
                     FileTreeRow(
                         node: row.node,
                         depth: row.depth,
-                        isExpanded: expanded.contains(row.node.path),
+                        isExpanded: vm.fileTreeExpanded.contains(row.node.path),
                         toggle: { toggle(row.node) },
                         select: {
                             // onTapGesture 会吞掉 List 的选中事件，手动同步选中态
@@ -59,7 +57,7 @@ struct FilesView: View {
                 // 展开祖先目录并定位文件
                 var ancestor = (request as NSString).deletingLastPathComponent
                 while !ancestor.isEmpty {
-                    expanded.insert(ancestor)
+                    vm.fileTreeExpanded.insert(ancestor)
                     ancestor = (ancestor as NSString).deletingLastPathComponent
                 }
                 localSelection = request
@@ -115,17 +113,17 @@ struct FilesView: View {
 
     /// 树数据首次就绪时展开第一层目录。
     private func initialExpandIfNeeded() {
-        guard !didInitialExpand, !vm.workspaceTree.isEmpty else { return }
-        didInitialExpand = true
-        expanded.formUnion(vm.workspaceTree.filter(\.isDirectory).map(\.path))
+        guard !vm.fileTreeDidInitialExpand, !vm.workspaceTree.isEmpty else { return }
+        vm.fileTreeDidInitialExpand = true
+        vm.fileTreeExpanded.formUnion(vm.workspaceTree.filter(\.isDirectory).map(\.path))
     }
 
     private func toggle(_ node: FileNode) {
         guard node.isDirectory else { return }
-        if expanded.contains(node.path) {
-            expanded.remove(node.path)
+        if vm.fileTreeExpanded.contains(node.path) {
+            vm.fileTreeExpanded.remove(node.path)
         } else {
-            expanded.insert(node.path)
+            vm.fileTreeExpanded.insert(node.path)
         }
     }
 
@@ -136,8 +134,8 @@ struct FilesView: View {
 
     private func handleLeft() -> KeyPress.Result {
         guard let row = selectedRow else { return .ignored }
-        if row.node.isDirectory, expanded.contains(row.node.path) {
-            expanded.remove(row.node.path)
+        if row.node.isDirectory, vm.fileTreeExpanded.contains(row.node.path) {
+            vm.fileTreeExpanded.remove(row.node.path)
             return .handled
         }
         // 跳到父目录
@@ -151,8 +149,8 @@ struct FilesView: View {
 
     private func handleRight() -> KeyPress.Result {
         guard let row = selectedRow, row.node.isDirectory else { return .ignored }
-        if !expanded.contains(row.node.path) {
-            expanded.insert(row.node.path)
+        if !vm.fileTreeExpanded.contains(row.node.path) {
+            vm.fileTreeExpanded.insert(row.node.path)
         } else if let firstChild = row.node.children?.first {
             localSelection = firstChild.path
         }
