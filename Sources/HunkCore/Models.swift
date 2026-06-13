@@ -63,10 +63,13 @@ public struct FileChange: Identifiable, Hashable, Sendable {
 public struct Branch: Identifiable, Hashable, Sendable {
     public let name: String
     public let isCurrent: Bool
+    /// 是否已合并进当前分支（HEAD 可达）
+    public let isMerged: Bool
 
-    public init(name: String, isCurrent: Bool) {
+    public init(name: String, isCurrent: Bool, isMerged: Bool = false) {
         self.name = name
         self.isCurrent = isCurrent
+        self.isMerged = isMerged
     }
 
     public var id: String { name }

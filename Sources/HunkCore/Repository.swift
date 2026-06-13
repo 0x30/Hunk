@@ -163,13 +163,16 @@ public final class Repository: @unchecked Sendable {
 
     public func branches() async throws -> [Branch] {
         let result = try await git.run(["for-each-ref", "refs/heads", "--format=%(HEAD)%(refname:short)"])
+        // 已合并进 HEAD 的分支集合，用于在列表里标记「已合并」
+        let mergedResult = try await git.run(["branch", "--format=%(refname:short)", "--merged"])
+        let merged = Set(mergedResult.stdout.split(separator: "\n").map(String.init))
         return result.stdout
             .split(separator: "\n")
             .map(String.init)
             .compactMap { line in
                 guard let first = line.first else { return nil }
                 let name = String(line.dropFirst())
-                return Branch(name: name, isCurrent: first == "*")
+                return Branch(name: name, isCurrent: first == "*", isMerged: merged.contains(name))
             }
     }
 
@@ -183,6 +186,22 @@ public final class Repository: @unchecked Sendable {
         } else {
             try await git.run(["branch", name])
         }
+    }
+
+    /// 已合并进当前分支的本地分支（不含当前分支与 main/master/develop 主干）。
+    public func mergedBranches() async throws -> [String] {
+        let result = try await git.run(["branch", "--format=%(refname:short)", "--merged"])
+        let protected: Set<String> = ["main", "master", "develop"]
+        let current = try await currentBranch()
+        return result.stdout
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.isEmpty && $0 != current && !protected.contains($0) }
+    }
+
+    /// 删除本地分支（仅限已合并的，等价 `git branch -d`）。
+    public func deleteBranch(_ name: String) async throws {
+        try await git.run(["branch", "-d", name])
     }
 
     // MARK: - 贮藏
