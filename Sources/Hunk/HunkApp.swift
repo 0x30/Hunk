@@ -252,6 +252,36 @@ private struct AppCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: .command)
             .disabled(vm == nil)
+
+            // 最近打开：任何时候都能快速切到最近的仓库（不必回到欢迎页）
+            Menu(tr("最近打开", "Open Recent")) {
+                let recents = (UserDefaults.standard.stringArray(forKey: "recentRepos") ?? [])
+                    .filter { FileManager.default.fileExists(atPath: $0) }
+                if recents.isEmpty {
+                    Text(tr("暂无最近记录", "No Recent Items"))
+                } else {
+                    ForEach(recents, id: \.self) { path in
+                        let name = (path as NSString).lastPathComponent
+                        // 父目录（home 缩成 ~），同名仓库靠路径区分
+                        let parent = ((path as NSString).deletingLastPathComponent as NSString)
+                            .abbreviatingWithTildeInPath
+                        Button {
+                            let url = URL(fileURLWithPath: path)
+                            if let vm {
+                                Task { await vm.open(url) }
+                            } else {
+                                openWindow(value: path)
+                            }
+                        } label: {
+                            Text(verbatim: "\(name) — \(parent)")
+                        }
+                    }
+                    Divider()
+                    Button(tr("清除菜单", "Clear Menu")) {
+                        UserDefaults.standard.removeObject(forKey: "recentRepos")
+                    }
+                }
+            }
         }
         CommandGroup(replacing: .saveItem) {
             Button(tr("保存", "Save")) {
