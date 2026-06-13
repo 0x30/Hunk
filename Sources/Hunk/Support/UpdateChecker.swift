@@ -33,6 +33,25 @@ final class UpdateChecker: ObservableObject {
         Task { await check(userInitiated: false) }
     }
 
+    /// 检查更新可能的失败原因（携带可读消息）。
+    enum CheckError: Error {
+        case rateLimited
+        case noRelease
+        case badStatus(Int)
+
+        var message: String {
+            switch self {
+            case .rateLimited:
+                return tr("GitHub 接口访问过于频繁（未登录每小时仅 60 次），请稍后再试。",
+                          "GitHub API rate limit reached (60/hour when unauthenticated). Try again later.")
+            case .noRelease:
+                return tr("仓库还没有发布任何版本。", "No releases have been published yet.")
+            case .badStatus(let code):
+                return tr("GitHub 返回了异常状态码 \(code)。", "GitHub returned unexpected status \(code).")
+            }
+        }
+    }
+
     func check(userInitiated: Bool) async {
         struct GitHubRelease: Decodable {
             let tag_name: String
@@ -44,13 +63,21 @@ final class UpdateChecker: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                throw URLError(.badServerResponse)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            switch status {
+            case 200:
+                break
+            case 403, 429:
+                throw CheckError.rateLimited  // 限流（未认证 60/小时）
+            case 404:
+                throw CheckError.noRelease     // 还没发布过 Release
+            default:
+                throw CheckError.badStatus(status)
             }
             let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
             guard let latest = Int(release.tag_name.replacingOccurrences(of: "build-", with: "")),
                   let pageURL = URL(string: release.html_url)
-            else { throw URLError(.cannotParseResponse) }
+            else { throw CheckError.noRelease }
 
             let info = ReleaseInfo(build: latest, name: release.name ?? release.tag_name, url: pageURL)
             let skipped = UserDefaults.standard.integer(forKey: "skippedUpdateBuild")
@@ -69,8 +96,10 @@ final class UpdateChecker: ObservableObject {
             }
         } catch {
             if userInitiated {
+                let detail = (error as? CheckError)?.message
+                    ?? (tr("网络请求失败：", "Network request failed: ") + error.localizedDescription)
                 await MainActor.run {
-                    checkResultMessage = tr("检查更新失败：", "Update check failed: ") + error.localizedDescription
+                    checkResultMessage = detail
                 }
             }
         }
