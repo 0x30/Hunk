@@ -326,13 +326,15 @@ final class RepoViewModel: ObservableObject {
     /// 请求在新窗口打开仓库：由 ContentView 调用 openWindow 兑现
     @Published var openWindowRequest: String?
 
-    init(initialPath: String? = nil) {
+    /// `restoreLast` 为 false 时不恢复上次仓库（⌘⇧N 的空白欢迎窗口）。
+    init(initialPath: String? = nil, restoreLast: Bool = true) {
         let savedHeight = UserDefaults.standard.double(forKey: "terminalHeight")
         terminalHeight = savedHeight > 0 ? CGFloat(savedHeight) : 240
         RepoViewModel.instances.add(self)
         if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
             Task { await open(URL(fileURLWithPath: initialPath)) }
-        } else if let last = defaults.string(forKey: "lastRepo"),
+        } else if restoreLast,
+                  let last = defaults.string(forKey: "lastRepo"),
                   FileManager.default.fileExists(atPath: last) {
             Task { await open(URL(fileURLWithPath: last)) }
         }
@@ -910,10 +912,25 @@ final class RepoViewModel: ObservableObject {
         perform { try await self.repo?.createBranch(trimmed) }
     }
 
-    // MARK: 清理已合并分支
+    /// 把分支与当前 HEAD 做对比（历史详情的比较视图）。
+    func compareBranch(_ branch: Branch) {
+        openHistoryDetail(.compare(base: branch.name, target: "HEAD"))
+    }
 
-    /// 待确认删除的已合并分支列表（非 nil 时弹确认框）
-    @Published var mergedBranchesToDelete: [String]?
+    /// 把指定分支合并进当前分支；冲突文件会出现在「合并更改」区。
+    func mergeBranch(_ branch: Branch) {
+        perform { try await self.repo?.merge(branch: branch.name) }
+    }
+
+    // MARK: 删除分支
+
+    /// 待确认删除的分支列表（非 nil 时弹确认框）
+    @Published var branchesToDelete: [String]?
+
+    /// 删除单个分支（弹确认）。
+    func promptDeleteBranch(_ branch: Branch) {
+        branchesToDelete = [branch.name]
+    }
 
     /// 查找已合并的本地分支并弹出确认。
     func promptCleanupMergedBranches() {
@@ -925,7 +942,7 @@ final class RepoViewModel: ObservableObject {
                     notice = tr("没有可删除的分支：本地不存在已合并进当前分支的其他分支。",
                                 "Nothing to delete: no local branches are fully merged into the current branch.")
                 } else {
-                    mergedBranchesToDelete = merged
+                    branchesToDelete = merged
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -934,9 +951,9 @@ final class RepoViewModel: ObservableObject {
     }
 
     /// 执行删除（逐个删，失败的跳过并汇总）。
-    func confirmCleanupMergedBranches() {
-        guard let repo, let branches = mergedBranchesToDelete else { return }
-        mergedBranchesToDelete = nil
+    func confirmDeleteBranches() {
+        guard let repo, let branches = branchesToDelete else { return }
+        branchesToDelete = nil
         Task {
             var deleted: [String] = []
             var failed: [String] = []
@@ -1089,7 +1106,12 @@ final class RepoViewModel: ObservableObject {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
         if isDirectory.boolValue {
-            pendingFolderDrop = url
+            // 欢迎页（空窗口）拖入文件夹：直接打开，不再询问在哪个窗口
+            if repoRoot == nil {
+                Task { await open(url) }
+            } else {
+                pendingFolderDrop = url
+            }
             return
         }
         if let root = repoRoot, url.path.hasPrefix(root.path + "/") {

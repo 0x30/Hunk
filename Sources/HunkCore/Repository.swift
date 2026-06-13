@@ -204,6 +204,11 @@ public final class Repository: @unchecked Sendable {
         try await git.run(["branch", "-d", name])
     }
 
+    /// 把指定分支合并进当前分支（冲突时正常返回，由状态列表呈现冲突文件）。
+    public func merge(branch: String) async throws {
+        try await git.run(["merge", "--no-edit", branch], allowedExitCodes: [0, 1])
+    }
+
     // MARK: - 贮藏
 
     public func stashes() async throws -> [Stash] {

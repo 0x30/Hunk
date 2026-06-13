@@ -216,16 +216,41 @@ struct BranchPopover: View {
                     if !filtered.isEmpty {
                         Divider()
                             .padding(.vertical, 4)
-                        Text(tr("切换到", "Switch To"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 2)
+                        HStack {
+                            Text(tr("切换到", "Switch To"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            // 一键删除所有已合并的分支（main/master/develop 受保护）
+                            if vm.branches.contains(where: { $0.isMerged && !$0.isCurrent }) {
+                                Button {
+                                    isPresented = false
+                                    vm.promptCleanupMergedBranches()
+                                } label: {
+                                    Image(systemName: "trash.slash")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .help(tr("删除所有已合并的分支", "Delete all merged branches"))
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 2)
 
                         ForEach(filtered) { branch in
                             BranchPopoverRow(branch: branch) {
                                 vm.checkout(branch)
                                 isPresented = false
+                            } onCompare: {
+                                isPresented = false
+                                vm.compareBranch(branch)
+                            } onMerge: {
+                                isPresented = false
+                                vm.mergeBranch(branch)
+                            } onDelete: {
+                                isPresented = false
+                                vm.promptDeleteBranch(branch)
                             }
                         }
                     }
@@ -253,26 +278,6 @@ struct BranchPopover: View {
                 }
             }
             .padding(10)
-
-            Divider()
-
-            // 清理已合并进当前分支的本地分支（main/master/develop 受保护）
-            Button {
-                isPresented = false
-                vm.promptCleanupMergedBranches()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                    Text(tr("删除已合并的分支…", "Delete Merged Branches…"))
-                        .font(.system(size: 12))
-                    Spacer()
-                }
-                .foregroundStyle(.secondary)
-                .padding(10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
         }
         .frame(width: 300)
         .onAppear { searchFocused = true }
@@ -291,25 +296,44 @@ struct BranchPopover: View {
 private struct BranchPopoverRow: View {
     let branch: Branch
     let action: () -> Void
+    let onCompare: () -> Void
+    let onMerge: () -> Void
+    let onDelete: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
+                // 已合并的分支在图标右下角带小对号
                 Image(systemName: "arrow.triangle.branch")
                     .foregroundStyle(.secondary)
+                    .overlay(alignment: .bottomTrailing) {
+                        if branch.isMerged {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 7, weight: .bold))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .green)
+                                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-0.5))
+                                .offset(x: 3, y: 3)
+                        }
+                    }
                 Text(branch.name)
                     .font(.system(size: 13))
                     .lineLimit(1)
                 Spacer()
-                // 已合并进当前分支的标记
-                if branch.isMerged {
-                    Text(tr("已合并", "merged"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                // 悬停浮现操作：对比 / 合并进当前分支 / 删除
+                if hovering {
+                    HStack(spacing: 2) {
+                        RowActionIcon("arrow.left.arrow.right",
+                                      help: tr("与当前分支对比", "Compare with current branch"),
+                                      action: onCompare)
+                        RowActionIcon("arrow.triangle.merge",
+                                      help: tr("合并进当前分支", "Merge into current branch"),
+                                      action: onMerge)
+                        RowActionIcon("trash",
+                                      help: tr("删除分支", "Delete branch"),
+                                      action: onDelete)
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -319,6 +343,31 @@ private struct BranchPopoverRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+}
+
+/// 分支行悬停操作的小图标按钮。
+private struct RowActionIcon: View {
+    let systemName: String
+    let help: String
+    let action: () -> Void
+
+    init(_ systemName: String, help: String, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.help = help
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(help)
     }
 }
 
