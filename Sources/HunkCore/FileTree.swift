@@ -20,7 +20,44 @@ public final class FileNode: Identifiable, Hashable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
+/// 树拍平后的一行（目录或文件），单子目录链已合并为 "a/b/c"。
+public struct FlatTreeRow: Identifiable {
+    public let node: FileNode
+    public let depth: Int
+    public let displayName: String
+    public var id: String { node.id }
+
+    public init(node: FileNode, depth: Int, displayName: String) {
+        self.node = node
+        self.depth = depth
+        self.displayName = displayName
+    }
+}
+
 public enum FileTreeBuilder {
+    /// 全展开拍平（与 VS Code 一致），并把只有一个子目录的链合并为一行（a/b/c）。
+    public static func flattenMergingChains(_ nodes: [FileNode], depth: Int = 0) -> [FlatTreeRow] {
+        var result: [FlatTreeRow] = []
+        for node in nodes {
+            if node.isDirectory {
+                var merged = node
+                var name = node.name
+                while let children = merged.children,
+                      children.count == 1,
+                      let only = children.first,
+                      only.isDirectory {
+                    merged = only
+                    name += "/" + only.name
+                }
+                result.append(FlatTreeRow(node: merged, depth: depth, displayName: name))
+                result += flattenMergingChains(merged.children ?? [], depth: depth + 1)
+            } else {
+                result.append(FlatTreeRow(node: node, depth: depth, displayName: node.name))
+            }
+        }
+        return result
+    }
+
     /// 把路径列表组装成树，目录在前、同级按名称排序。
     public static func build(paths: [String]) -> [FileNode] {
         final class Builder {

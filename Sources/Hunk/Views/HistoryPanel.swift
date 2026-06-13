@@ -314,6 +314,8 @@ private struct HistoryRow: View {
 
 struct HistoryDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
+    /// 文件列表树状/扁平（默认树状，跨会话记忆）
+    @AppStorage("historyFilesAsTree") private var filesAsTree = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -379,6 +381,17 @@ struct HistoryDetailView: View {
             Text(tr("\(vm.historyFiles.count) 个文件", "\(vm.historyFiles.count) files"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // 文件列表树状/扁平切换
+            Button {
+                filesAsTree.toggle()
+            } label: {
+                Image(systemName: filesAsTree ? "list.bullet" : "list.bullet.indent")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(filesAsTree ? tr("平铺显示", "Flat list") : tr("树状显示", "Tree view"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -391,35 +404,64 @@ struct HistoryDetailView: View {
 
     private var fileList: some View {
         List {
-            ForEach(vm.historyFiles) { file in
-                HStack(spacing: 6) {
-                    FileIconView(fileName: (file.path as NSString).lastPathComponent)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text((file.path as NSString).lastPathComponent)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                        Text((file.path as NSString).deletingLastPathComponent)
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+            if filesAsTree {
+                let lookup = Dictionary(uniqueKeysWithValues: vm.historyFiles.map { ($0.path, $0) })
+                ForEach(FileTreeBuilder.flattenMergingChains(
+                    FileTreeBuilder.build(paths: vm.historyFiles.map(\.path))
+                )) { item in
+                    if item.node.isDirectory {
+                        HStack(spacing: 6) {
+                            FileIconView(fileName: item.node.name, isDirectory: true, expanded: true)
+                            Text(item.displayName)
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 1)
+                        .padding(.leading, CGFloat(item.depth) * 12)
+                    } else if let file = lookup[item.node.path] {
+                        fileRow(file, showDirectory: false)
+                            .padding(.leading, CGFloat(item.depth) * 12)
                     }
-                    Spacer()
-                    Text(file.kind.badge)
-                        .font(.caption.weight(.semibold).monospaced())
-                        .foregroundStyle(file.kind.color)
                 }
-                .padding(.vertical, 1)
-                .contentShape(Rectangle())
-                .listRowBackground(
-                    vm.historyDiffPath == file.path ? Color.accentColor.opacity(0.12) : Color.clear
-                )
-                .onTapGesture {
-                    vm.selectHistoryFile(file)
+            } else {
+                ForEach(vm.historyFiles) { file in
+                    fileRow(file, showDirectory: true)
                 }
             }
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 26)
+    }
+
+    @ViewBuilder
+    private func fileRow(_ file: Repository.CommitFileChange, showDirectory: Bool) -> some View {
+        HStack(spacing: 6) {
+            FileIconView(fileName: (file.path as NSString).lastPathComponent)
+            VStack(alignment: .leading, spacing: 0) {
+                Text((file.path as NSString).lastPathComponent)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                if showDirectory {
+                    Text((file.path as NSString).deletingLastPathComponent)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            Spacer()
+            Text(file.kind.badge)
+                .font(.caption.weight(.semibold).monospaced())
+                .foregroundStyle(file.kind.color)
+        }
+        .padding(.vertical, 1)
+        .contentShape(Rectangle())
+        .listRowBackground(
+            vm.historyDiffPath == file.path ? Color.accentColor.opacity(0.12) : Color.clear
+        )
+        .onTapGesture {
+            vm.selectHistoryFile(file)
+        }
     }
 }
