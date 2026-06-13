@@ -799,13 +799,31 @@ struct DiffLineText: View {
     /// 后台算好的高亮；nil 时先显示纯文本（measure 阶段不 tokenize，不卡）
     @State private var highlighted: AttributedString?
 
+    /// 单行显示上限：超过则截断，避免 TextKit 测量超长行（minified）时卡顿。
+    /// 只影响显示，diff/暂存仍用完整 text。
+    private static let maxDisplayLength = 5000
+
+    private var display: String {
+        let raw = text.isEmpty ? " " : text
+        guard raw.count > Self.maxDisplayLength else { return raw }
+        return String(raw.prefix(Self.maxDisplayLength))
+            + tr(" …（本行共 \(raw.count) 字符，已截断显示）",
+                 " …(line is \(raw.count) chars, truncated)")
+    }
+
     var body: some View {
-        let display = text.isEmpty ? " " : text
-        Text(highlighted ?? AttributedString(display))
-            // 只有可见行才会出现并触发；滚出视图自动取消。text/主题变则重算
-            .task(id: "\(text)\u{1}\(settings.themeID)") {
-                highlighted = await DiffHighlighter.highlight(
-                    text: text, filePath: filePath, settings: settings)
+        Group {
+            if let highlighted {
+                Text(highlighted)
+            } else {
+                // 纯文本用 String 重载，不构造巨型 AttributedString
+                Text(verbatim: display)
             }
+        }
+        // 只有可见行才会出现并触发；滚出视图自动取消。text/主题变则重算
+        .task(id: "\(text)\u{1}\(settings.themeID)") {
+            highlighted = await DiffHighlighter.highlight(
+                text: text, filePath: filePath, settings: settings)
+        }
     }
 }
