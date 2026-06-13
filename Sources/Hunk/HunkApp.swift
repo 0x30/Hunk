@@ -201,6 +201,26 @@ private struct AppCommands: Commands {
     @ObservedObject private var settings = SettingsStore.shared
 
     var body: some Commands {
+        // 关于面板：带作者署名（GitHub: 0x30，可点击）
+        CommandGroup(replacing: .appInfo) {
+            Button(tr("关于 Hunk", "About Hunk")) {
+                let credits = NSMutableAttributedString(
+                    string: tr("作者：0x30（GitHub）", "Author: 0x30 (GitHub)"),
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                )
+                if let range = credits.string.range(of: "0x30") {
+                    credits.addAttribute(
+                        .link,
+                        value: "https://github.com/0x30",
+                        range: NSRange(range, in: credits.string)
+                    )
+                }
+                NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+            }
+        }
         CommandGroup(after: .appInfo) {
             Button(tr("检查更新…", "Check for Updates…")) {
                 Task { await UpdateChecker.shared.check(userInitiated: true) }

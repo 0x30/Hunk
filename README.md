@@ -67,3 +67,7 @@ Scripts/make-app.sh    # 组装 dist/Hunk.app
 ```
 
 main 每次推送由 CI 自动构建并发布 Release。
+
+## 作者
+
+[0x30](https://github.com/0x30)
