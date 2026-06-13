@@ -24,6 +24,29 @@ jobs:
       - name: 运行测试
         run: swift test
 
+      - name: 导入签名证书（未配置 Secrets 时跳过，退回 ad-hoc）
+        env:
+          CERT_P12: ${{ secrets.HUNK_CERT_P12 }}
+          CERT_PWD: ${{ secrets.HUNK_CERT_PWD }}
+        run: |
+          if [ -z "$CERT_P12" ]; then
+            echo "未配置 HUNK_CERT_P12，使用 ad-hoc 签名"
+            exit 0
+          fi
+          echo "$CERT_P12" | base64 -d > cert.p12
+          # 独立钥匙串导入身份
+          security create-keychain -p ci ci.keychain
+          security default-keychain -s ci.keychain
+          security unlock-keychain -p ci ci.keychain
+          security import cert.p12 -k ci.keychain -P "$CERT_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci ci.keychain
+          # 自签证书需显式信任为代码签名，find-identity 才视为有效
+          openssl pkcs12 -in cert.p12 -clcerts -nokeys -out cert.pem -passin pass:"$CERT_PWD" -legacy 2>/dev/null \
+            || openssl pkcs12 -in cert.p12 -clcerts -nokeys -out cert.pem -passin pass:"$CERT_PWD"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain cert.pem
+          rm -f cert.p12 cert.pem
+
       - name: 构建并打包
         env:
           HUNK_VERSION: 0.1.${{ github.run_number }}
