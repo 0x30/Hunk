@@ -151,13 +151,21 @@ struct HunkApp: App {
     }
 }
 
+/// ⌘⇧N 空白欢迎窗口的哨兵值前缀（带 UUID 保证每次都开新窗）
+let welcomeWindowSentinel = "hunk://welcome"
+
 /// 窗口根：每个窗口持有自己的 RepoViewModel。
 private struct WindowRoot: View {
     @StateObject private var vm: RepoViewModel
 
     init(initialPath: String?) {
-        let path = (initialPath?.isEmpty ?? true) ? nil : initialPath
-        _vm = StateObject(wrappedValue: RepoViewModel(initialPath: path))
+        if let initialPath, initialPath.hasPrefix(welcomeWindowSentinel) {
+            // 空白欢迎窗口：不恢复上次仓库
+            _vm = StateObject(wrappedValue: RepoViewModel(initialPath: nil, restoreLast: false))
+        } else {
+            let path = (initialPath?.isEmpty ?? true) ? nil : initialPath
+            _vm = StateObject(wrappedValue: RepoViewModel(initialPath: path))
+        }
     }
 
     var body: some View {
@@ -188,6 +196,7 @@ private struct WindowAccessor: NSViewRepresentable {
 /// 菜单命令：作用于当前聚焦窗口的视图模型。
 private struct AppCommands: Commands {
     @FocusedObject private var vm: RepoViewModel?
+    @Environment(\.openWindow) private var openWindow
     // 观察语言设置：切换语言后自定义菜单项即时换文案
     @ObservedObject private var settings = SettingsStore.shared
 
@@ -212,6 +221,11 @@ private struct AppCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(vm?.repoRoot == nil)
+
+            Button(tr("新建窗口", "New Window")) {
+                openWindow(value: "\(welcomeWindowSentinel)/\(UUID().uuidString)")
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
 
             Button(tr("打开仓库…", "Open Repository…")) {
                 vm?.openRepoPanel()
