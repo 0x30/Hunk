@@ -28,6 +28,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notify_register_dispatch(CLIOpenRouter.notifyName, &cliNotifyToken, .main) { _ in
             Task { @MainActor in CLIOpenRouter.consumeChannelFile() }
         }
+
+        // AppKit 接管「文件 → 最近打开」（两行：项目名 + 灰色路径）。
+        // SwiftUI 建好菜单的时机晚于此处，故在窗口出现、应用激活、菜单栏追踪时都确保接管一次（幂等）。
+        for name: NSNotification.Name in [
+            NSWindow.didBecomeKeyNotification,
+            NSApplication.didBecomeActiveNotification,
+            NSMenu.didBeginTrackingNotification,
+        ] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { RecentMenuController.shared.install() }
+            }
+        }
     }
 
     /// `hunk` 命令行 / 访达「打开方式」送来的路径
@@ -253,35 +265,8 @@ private struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: .command)
             .disabled(vm == nil)
 
-            // 最近打开：任何时候都能快速切到最近的仓库（不必回到欢迎页）
-            Menu(tr("最近打开", "Open Recent")) {
-                let recents = (UserDefaults.standard.stringArray(forKey: "recentRepos") ?? [])
-                    .filter { FileManager.default.fileExists(atPath: $0) }
-                if recents.isEmpty {
-                    Text(tr("暂无最近记录", "No Recent Items"))
-                } else {
-                    ForEach(recents, id: \.self) { path in
-                        let name = (path as NSString).lastPathComponent
-                        // 父目录（home 缩成 ~），同名仓库靠路径区分
-                        let parent = ((path as NSString).deletingLastPathComponent as NSString)
-                            .abbreviatingWithTildeInPath
-                        Button {
-                            let url = URL(fileURLWithPath: path)
-                            if let vm {
-                                Task { await vm.open(url) }
-                            } else {
-                                openWindow(value: path)
-                            }
-                        } label: {
-                            Text(verbatim: "\(name) — \(parent)")
-                        }
-                    }
-                    Divider()
-                    Button(tr("清除菜单", "Clear Menu")) {
-                        UserDefaults.standard.removeObject(forKey: "recentRepos")
-                    }
-                }
-            }
+            // 「最近打开」子菜单由 RecentMenuController（AppKit）插入，
+            // 用 attributedTitle 实现两行（项目名 + 灰色路径），此处不再用 SwiftUI Menu
         }
         CommandGroup(replacing: .saveItem) {
             Button(tr("保存", "Save")) {
