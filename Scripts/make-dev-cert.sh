@@ -4,7 +4,8 @@
 # 只需运行一次；之后 make-app.sh 检测到该证书会自动使用。
 set -euo pipefail
 
-NAME="Hunk Dev"
+# 用法：Scripts/make-dev-cert.sh [签名名字]   （默认 Hunk Dev，可用任意字符串如 wenzheng）
+NAME="${1:-Hunk Dev}"
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$NAME"; then
     echo "✅ 证书「$NAME」已存在，无需重复创建"
@@ -43,6 +44,8 @@ sudo security add-trusted-cert -d -r trustRoot -p codeSign \
 KEEP_DIR="$HOME/Library/Application Support/Hunk"
 mkdir -p "$KEEP_DIR"
 cp "$TMP/cert.p12" "$KEEP_DIR/dev-cert.p12"
+# 记录签名名字，make-app.sh 据此自动选用
+printf '%s' "$NAME" > "$KEEP_DIR/sign-identity"
 
 echo "✅ 已创建并信任证书「$NAME」"
 echo "   · 下次 Scripts/make-app.sh 构建会自动用它签名"

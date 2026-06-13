@@ -78,9 +78,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 签名：优先用稳定身份（HUNK_SIGN_ID 或本机的「Hunk Dev」自签证书，
-# 见 Scripts/make-dev-cert.sh），否则退回 ad-hoc（每次构建身份都变，TCC 权限会重问）
+# 签名：优先级 HUNK_SIGN_ID 环境变量 > make-dev-cert.sh 记录的名字 > 「Hunk Dev」>
+# ad-hoc（每次构建身份都变，TCC 权限会重问）
 SIGN_ID="${HUNK_SIGN_ID:-}"
+NAME_FILE="$HOME/Library/Application Support/Hunk/sign-identity"
+if [ -z "$SIGN_ID" ] && [ -f "$NAME_FILE" ]; then
+    SAVED="$(cat "$NAME_FILE")"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SAVED"; then
+        SIGN_ID="$SAVED"
+    fi
+fi
 if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hunk Dev"; then
     SIGN_ID="Hunk Dev"
 fi

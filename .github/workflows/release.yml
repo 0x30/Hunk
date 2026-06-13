@@ -45,6 +45,10 @@ jobs:
             || openssl pkcs12 -in cert.p12 -clcerts -nokeys -out cert.pem -passin pass:"$CERT_PWD"
           sudo security add-trusted-cert -d -r trustRoot -p codeSign \
             -k /Library/Keychains/System.keychain cert.pem
+          # 从证书里取签名名字（CN），传给 make-app.sh（支持任意自定义名字）
+          CN=$(openssl x509 -in cert.pem -noout -subject -nameopt multiline | awk -F'= ' '/commonName/{print $2}')
+          echo "HUNK_SIGN_ID=$CN" >> "$GITHUB_ENV"
+          echo "签名身份：$CN"
           rm -f cert.p12 cert.pem
 
       - name: 构建并打包
