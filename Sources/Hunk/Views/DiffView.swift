@@ -222,7 +222,6 @@ struct DiffDetailView: View {
                                             inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
                                             onLineTap: handleLineTap
                                         )
-                                        .background(rowFrameReader(key))
                                         .id(key)
                                     }
                                 } else {
@@ -233,7 +232,6 @@ struct DiffDetailView: View {
                                             inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
                                             onLineTap: handleLineTap
                                         )
-                                        .background(rowFrameReader(key))
                                         .id(key)
                                     }
                                 }
@@ -242,10 +240,6 @@ struct DiffDetailView: View {
                                 gapView(trailing)
                             }
                         }
-                        .coordinateSpace(name: "diffRows")
-                        .onPreferenceChange(RowFramesKey.self) { rowFrames = $0 }
-                        // 在内容任意位置拖拽 = 像选文本一样连选行（macOS 点击拖拽不与滚动冲突）
-                        .simultaneousGesture(supportsLineStaging ? selectionDrag : nil)
                         // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
                         .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
                         .padding(.bottom, 20)
