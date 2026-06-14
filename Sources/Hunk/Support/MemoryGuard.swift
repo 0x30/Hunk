@@ -10,24 +10,41 @@ enum MemoryGuard {
     /// 软阈值：清缓存、记录（正常 Hunk 约 250MB，看大文件 diff 也就几百 MB）
     private static let softLimitMB: UInt64 = 1500
     /// 硬阈值：已明显失控，记录详情后主动退出，避免连累系统
-    private static let hardLimitMB: UInt64 = 6000
+    private static let hardLimitMB: UInt64 = 2500
 
     private static var timer: Timer?
     private static var warned = false
     /// 上次采样的内存，用于检测快速增长
     private static var lastSampleMB: UInt64 = 0
 
-    /// 当前物理内存占用（字节）。
+    /// 当前内存占用（字节）：取 phys_footprint 与 RSS(resident_size) 的较大值。
+    /// 关键：图形/图层内存（CoreAnimation 图层、IOSurface、GPU 纹理）只体现在 RSS，
+    /// 不计入 phys_footprint。此前只看 phys_footprint，导致渲染层内存暴涨（RSS 已 7GB+
+    /// 而 phys_footprint 仍 80MB）时看门狗完全失效、拦不住。现在用两者最大值。
     static func footprintBytes() -> UInt64 {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(
+        var phys: UInt64 = 0
+        var vmInfo = task_vm_info_data_t()
+        var vmCount = mach_msg_type_number_t(
             MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let kr = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+        let vmKr = withUnsafeMutablePointer(to: &vmInfo) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(vmCount)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &vmCount)
             }
         }
-        return kr == KERN_SUCCESS ? info.phys_footprint : 0
+        if vmKr == KERN_SUCCESS { phys = vmInfo.phys_footprint }
+
+        var resident: UInt64 = 0
+        var basic = mach_task_basic_info()
+        var bCount = mach_msg_type_number_t(
+            MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let bKr = withUnsafeMutablePointer(to: &basic) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(bCount)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &bCount)
+            }
+        }
+        if bKr == KERN_SUCCESS { resident = basic.resident_size }
+
+        return max(phys, resident)
     }
 
     static func start() {
@@ -43,8 +60,20 @@ enum MemoryGuard {
             lastSampleMB = mb
 
             if mb >= hardLimitMB {
-                Diagnostics.log("‼️ 超过硬上限 \(hardLimitMB)MB，主动退出以保护系统")
+                Diagnostics.log("‼️ 超过硬上限 \(hardLimitMB)MB，dump 内存分区后主动退出")
                 NSLog("[MemoryGuard] %lluMB 超过硬上限，主动退出", mb)
+                // 退出前 dump 自己的内存分区，定位 GB 级内存堆在哪个区（IOSurface/图层/MALLOC）
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/vmmap")
+                task.arguments = ["--summary", "\(getpid())"]
+                if let out = FileHandle(forWritingAtPath: "/tmp/hunk_vmmap_exit.txt")
+                    ?? { FileManager.default.createFile(atPath: "/tmp/hunk_vmmap_exit.txt", contents: nil)
+                         return FileHandle(forWritingAtPath: "/tmp/hunk_vmmap_exit.txt") }() {
+                    task.standardOutput = out
+                    try? task.run()
+                    task.waitUntilExit()
+                    try? out.close()
+                }
                 exit(137)  // 主动退出，避免吃满内存触发系统级 OOM 连锁
             } else if mb >= softLimitMB {
                 if !warned {
