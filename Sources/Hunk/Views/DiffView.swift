@@ -2,18 +2,15 @@ import SwiftUI
 import HunkCore
 
 /// 更改详情：文件头 + diff 内容（统一 / 分栏），支持行级暂存。
-/// 行选择方式：点击行逐行切换；在内容任意位置按住拖拽，像选文本一样连选；
-/// ⇧+点击做范围选择。
+/// 行选择方式：点击行选中（⌘+点击切换单行）；⇧+点击或 ⇧↑↓ 做范围扩选；⌘A 全选。
 struct DiffDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
     @EnvironmentObject var settings: SettingsStore
     let path: String
 
     // 编辑器式行选择状态：锚点 + 光标（行序号），选区 = 两者之间
-    @State private var rowFrames: [String: CGRect] = [:]
     @State private var anchorRow: Int?
     @State private var cursorRow: Int?
-    @State private var dragging = false
     @FocusState private var diffFocused: Bool
     // GitHub 式「展开未更改区域」
     @State private var expandedGaps: Set<Int> = []
@@ -183,7 +180,7 @@ struct DiffDetailView: View {
 
             Spacer()
 
-            Text(tr("拖拽/⇧↑↓ 扩选 · ⌘点击多选 · ⌘A 全选 · ⎋ 清除", "Drag/⇧↑↓ extend · ⌘-click multi · ⌘A all · ⎋ clear"))
+            Text(tr("⇧点击/⇧↑↓ 扩选 · ⌘点击多选 · ⌘A 全选 · ⎋ 清除", "⇧-click/⇧↑↓ extend · ⌘-click multi · ⌘A all · ⎋ clear"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -344,9 +341,9 @@ struct DiffDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - gutter 拖拽 / 范围选择
+    // MARK: - 范围选择
 
-    /// 可在 gutter 上拖拽选择的行序表（按显示顺序）。
+    /// 行序表（按显示顺序），用于范围扩选与键盘移动。
     private struct SelectableRow {
         let key: String
         let lineIDs: [Int]
@@ -403,26 +400,6 @@ struct DiffDetailView: View {
         proxy.scrollTo(order[next].key, anchor: nil)
     }
 
-    /// 内容区任意位置的拖拽选择（像选文本一样，替换选区）。
-    /// simultaneousGesture + 5pt 启动距离，不影响行点击与按钮。
-    private var selectionDrag: some Gesture {
-        DragGesture(minimumDistance: 5, coordinateSpace: .named("diffRows"))
-            .onChanged { value in
-                if !dragging {
-                    dragging = true
-                    anchorRow = rowIndex(atY: value.startLocation.y)
-                }
-                guard anchorRow != nil,
-                      let current = rowIndex(atY: value.location.y)
-                else { return }
-                cursorRow = current
-                applyRangeSelection()
-            }
-            .onEnded { _ in
-                dragging = false
-            }
-    }
-
     /// 行点击（编辑器语义）：
     /// 普通点击 = 选中该行（替换选区）；⇧+点击 = 锚点扩选；⌘+点击 = 切换该行。
     private func handleLineTap(_ id: Int) {
@@ -447,30 +424,8 @@ struct DiffDetailView: View {
         }
     }
 
-    private func rowIndex(atY y: CGFloat) -> Int? {
-        guard let key = rowKey(atY: y) else { return nil }
-        return rowOrder.firstIndex { $0.key == key }
-    }
-
-    private func rowKey(atY y: CGFloat) -> String? {
-        rowFrames.first { $0.value.minY <= y && y < $0.value.maxY }?.key
-    }
-
     private func rowKeyContaining(_ lineID: Int) -> String? {
         rowOrder.first { $0.lineIDs.contains(lineID) }?.key
-    }
-}
-
-private struct RowFramesKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-private func rowFrameReader(_ key: String) -> some View {
-    GeometryReader { proxy in
-        Color.clear.preference(key: RowFramesKey.self, value: [key: proxy.frame(in: .named("diffRows"))])
     }
 }
 
