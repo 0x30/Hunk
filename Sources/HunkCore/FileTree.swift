@@ -20,7 +20,7 @@ public final class FileNode: Identifiable, Hashable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-/// 树拍平后的一行（目录或文件），单子目录链已合并为 "a/b/c"。
+/// 树拍平后的一行（目录或文件），单子目录链已合并为 "a/b/c"；分叉点不再合并。
 public struct FlatTreeRow: Identifiable {
     public let node: FileNode
     public let depth: Int
@@ -36,8 +36,11 @@ public struct FlatTreeRow: Identifiable {
 
 public enum FileTreeBuilder {
     /// 拍平为行列表（默认全展开）。
-    /// 没有直接文件变化的中间层目录不单独成行，名字并入子目录显示
-    /// （/a/b/c/d/f.json 只变动一个文件时，目录行直接是 "a/b/c/d"）。
+    /// 只把「单子目录链」合并成一行：某目录恰好只有一个子项且它是目录时，名字
+    /// 并入下一层继续合并（/a/b/c/d/f.json → 目录行 "a/b/c/d"）。一旦目录出现
+    /// 分叉（多个子项）或含直接文件，就在此停下成行，子目录从这一行往下展开——
+    /// 这样 a/b/c/1 与 a/b/e/2 会得到公共枝干 "a/b"，再在其下分出 c、e，而不是
+    /// 把前缀重复并进 "a/b/c"、"a/b/e" 两条独立链。
     /// `collapsed` 中的目录路径只输出目录行本身，跳过其子树。
     public static func flattenMergingChains(
         _ nodes: [FileNode],
@@ -49,12 +52,12 @@ public enum FileTreeBuilder {
         for node in nodes {
             if node.isDirectory {
                 let children = node.children ?? []
-                let hasDirectFiles = children.contains { !$0.isDirectory }
                 let name = prefix.isEmpty ? node.name : prefix + "/" + node.name
-                if !hasDirectFiles && !children.isEmpty {
-                    // 本层没有直接文件变化：不成行，名字并入子目录
+                if children.count == 1, children[0].isDirectory {
+                    // 单子目录链：不成行，名字并入下一层继续合并
                     result += flattenMergingChains(children, depth: depth, collapsed: collapsed, prefix: name)
                 } else {
+                    // 分叉点 / 含文件 / 叶子目录：成行，子节点从这一行往下展开
                     result.append(FlatTreeRow(node: node, depth: depth, displayName: name))
                     if !collapsed.contains(node.path) {
                         result += flattenMergingChains(children, depth: depth + 1, collapsed: collapsed)

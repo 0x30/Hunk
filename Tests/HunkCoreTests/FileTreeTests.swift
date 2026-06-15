@@ -41,16 +41,30 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 1])
     }
 
-    /// 没有直接文件变化的中间层不成行：src 只含 core/views 两个子目录时,
-    /// 行直接是 "src/core" 与 "src/views"，没有单独的 src 层。
-    func testFlattenDropsIntermediateDirsWithoutDirectFiles() {
+    /// 分叉点保留为公共枝干：src 含 core/views 两个子目录时，
+    /// 合并到分叉点 "src" 成一行，core/views 在其下展开——
+    /// 不再把前缀重复并进 "src/core"、"src/views" 两条独立链。
+    func testFlattenStopsMergingAtBranch() {
         let nodes = FileTreeBuilder.build(paths: [
             "src/core/util.txt",
             "src/views/page.txt",
         ])
         let rows = FileTreeBuilder.flattenMergingChains(nodes)
 
-        XCTAssertEqual(rows.map(\.displayName), ["src/core", "util.txt", "src/views", "page.txt"])
-        XCTAssertEqual(rows.map(\.depth), [0, 1, 0, 1])
+        XCTAssertEqual(rows.map(\.displayName), ["src", "core", "util.txt", "views", "page.txt"])
+        XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 1, 2])
+    }
+
+    /// 单链合并到分叉点再拆分：a/b/c/1.json 与 a/b/e/2.json
+    /// → 公共枝干 "a/b"，其下分出 c、e（而非 "a/b/c"、"a/b/e" 两条枝干）。
+    func testFlattenMergesToCommonBranchThenSplits() {
+        let nodes = FileTreeBuilder.build(paths: [
+            "a/b/c/1.json",
+            "a/b/e/2.json",
+        ])
+        let rows = FileTreeBuilder.flattenMergingChains(nodes)
+
+        XCTAssertEqual(rows.map(\.displayName), ["a/b", "c", "1.json", "e", "2.json"])
+        XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 1, 2])
     }
 }
