@@ -343,16 +343,25 @@ private struct AppCommands: Commands {
             .keyboardShortcut("j", modifiers: .command)
             .disabled(vm?.repoRoot == nil)
 
+            Button(tr("清空终端", "Clear Terminal")) {
+                vm?.clearActiveTerminal()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(vm?.terminalFocused != true)
+
             Divider()
 
-            Button(tr("下一个标签页", "Next Tab")) {
-                vm?.activateNeighborTab(offset: 1)
+            // 终端聚焦时 ⌘⇧[]/⌘⇧] 切终端标签，否则切编辑器文件标签
+            Button(vm?.terminalFocused == true ? tr("下一个终端", "Next Terminal") : tr("下一个标签页", "Next Tab")) {
+                if let vm, vm.terminalFocused { vm.cycleTerminal(offset: 1) }
+                else { vm?.activateNeighborTab(offset: 1) }
             }
             .keyboardShortcut("]", modifiers: [.command, .shift])
             .disabled(vm == nil)
 
-            Button(tr("上一个标签页", "Previous Tab")) {
-                vm?.activateNeighborTab(offset: -1)
+            Button(vm?.terminalFocused == true ? tr("上一个终端", "Previous Terminal") : tr("上一个标签页", "Previous Tab")) {
+                if let vm, vm.terminalFocused { vm.cycleTerminal(offset: -1) }
+                else { vm?.activateNeighborTab(offset: -1) }
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
             .disabled(vm == nil)

@@ -82,6 +82,15 @@ final class RepoViewModel: ObservableObject {
     @Published var editorText = ""
     @Published var editorPath: String?
     @Published var editorDirty = false
+    /// 当前编辑文件是二进制（含 NUL）→ 显示 hex 查看器而非纯文本编辑器
+    @Published var editorIsBinary = false
+    /// 底部状态栏：光标行列（1 基）+ 选中行数
+    @Published var editorCursorLine = 1
+    @Published var editorCursorColumn = 1
+    @Published var editorSelectedLines = 0
+    /// 手动指定的高亮语言扩展名；nil = 按文件名推断。
+    /// 新建未保存文件没有扩展名时，可借此提前选语言高亮（如 Markdown）。
+    @Published var editorLanguageOverride: String?
     @Published var openTabs: [String] = []
     @Published var pendingCloseTab: String?
     @Published var editingChangedFile = false  // 在更改详情里切到了编辑模式
@@ -161,6 +170,54 @@ final class RepoViewModel: ObservableObject {
     func closeTerminal(_ session: TerminalSession) {
         session.terminate()
         removeTerminal(session)
+    }
+
+    /// 清空当前终端（⌘K）。
+    func clearActiveTerminal() {
+        activeTerminal?.clear()
+    }
+
+    /// 在终端标签间循环切换（终端聚焦时 ⌘⇧[ / ⌘⇧]）。
+    func cycleTerminal(offset: Int) {
+        guard terminals.count > 1,
+              let current = activeTerminal,
+              let index = terminals.firstIndex(where: { $0.id == current.id })
+        else { return }
+        activeTerminalID = terminals[(index + offset + terminals.count) % terminals.count].id
+    }
+
+    /// 右键菜单：批量结束一组会话，并修正当前选中/空面板状态。
+    func closeTerminals(_ targets: [TerminalSession]) {
+        guard !targets.isEmpty else { return }
+        let killIDs = Set(targets.map(\.id))
+        for session in targets { session.terminate() }
+        terminals.removeAll { killIDs.contains($0.id) }
+        if let active = activeTerminalID, killIDs.contains(active) {
+            activeTerminalID = terminals.last?.id
+        }
+        if terminals.isEmpty {
+            showTerminal = false
+            terminalFocused = false
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+    }
+
+    func closeTerminalsToLeft(of session: TerminalSession) {
+        guard let index = terminals.firstIndex(where: { $0.id == session.id }) else { return }
+        closeTerminals(Array(terminals[..<index]))
+    }
+
+    func closeTerminalsToRight(of session: TerminalSession) {
+        guard let index = terminals.firstIndex(where: { $0.id == session.id }) else { return }
+        closeTerminals(Array(terminals[(index + 1)...]))
+    }
+
+    func closeOtherTerminals(_ session: TerminalSession) {
+        closeTerminals(terminals.filter { $0.id != session.id })
+    }
+
+    func closeAllTerminals() {
+        closeTerminals(terminals)
     }
 
     private func removeTerminal(_ session: TerminalSession) {
@@ -446,6 +503,7 @@ final class RepoViewModel: ObservableObject {
             if newFiles != self.workspaceFiles {
                 self.workspaceFiles = newFiles
                 self.workspaceTree = FileTreeBuilder.build(paths: newFiles)
+                Diagnostics.log("工作区树重建 文件=\(newFiles.count) 顶层节点=\(self.workspaceTree.count)")
             }
             let graph = GraphBuilder.rows(from: (try? await repo.history(path: self.historyFilterPath)) ?? [])
             assignIfChanged(graph.rows, to: \.history)
@@ -501,6 +559,9 @@ final class RepoViewModel: ObservableObject {
 
     func loadDetail() async {
         guard let repo else { return }
+        // 快速切换时上一个任务已被取消：直接跳过，别再跑一遍重活
+        //（取消只在 await 边界生效，所以下面每个 await 之后还要再查一次）
+        if Task.isCancelled { return }
         Diagnostics.log("loadDetail \(selection.map { "\($0)" } ?? "nil")")
         selectedLineIDs = []
         switch selection {
@@ -518,10 +579,22 @@ final class RepoViewModel: ObservableObject {
             }
             do {
                 let change = changes.first { $0.path == path }
+                let loaded: FileDiff?
                 if area == .unstaged, change?.unstaged == .untracked {
-                    diff = try await repo.untrackedDiff(for: path)
+                    loaded = try await repo.untrackedDiff(for: path)
                 } else {
-                    diff = try await repo.diff(for: path, staged: area == .staged)
+                    loaded = try await repo.diff(for: path, staged: area == .staged)
+                }
+                // 选择已切走（任务被取消）：丢弃这份已是过期的 diff，别覆盖新选择
+                if Task.isCancelled { return }
+                diff = loaded
+                if let d = loaded {
+                    // 诊断：用 reduce 累加，不实体化大数组（避免诊断自身加压内存）
+                    let lineCount = d.hunks.reduce(0) { $0 + $1.lines.count }
+                    let maxLineLen = d.hunks.reduce(0) { acc, h in
+                        max(acc, h.lines.reduce(0) { max($0, $1.text.count) })
+                    }
+                    Diagnostics.log("diff \(path) hunks=\(d.hunks.count) 行=\(lineCount) 最长行=\(maxLineLen) bin=\(d.isBinary)")
                 }
                 // 列表标记为有变化、diff 实际却为空（非二进制/删除/新建）→
                 // 多半是文件已被外部命令提交/暂存/丢弃，自动刷新一次让状态对齐。
@@ -543,8 +616,22 @@ final class RepoViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         case .file(let path):
+            if Task.isCancelled { return }
             diff = nil
             diffNewSideLines = nil
+            // 大文件读盘移出主线程：快速切换时主线程同步 IO 会卡。
+            // 预读进缓冲，openEditor 命中缓冲分支即可，不在主线程再读一次。
+            // 二进制文件跳过——会走 hex 查看器，预读全文进 buffer 纯属浪费内存。
+            let url = repo.fileURL(for: path)
+            if buffers[path] == nil, !isUntitled(path), !FileIcon.isImage(path),
+               !BinaryDetector.isBinary(url: url) {
+                let text = await Task.detached(priority: .userInitiated) {
+                    (try? String(contentsOf: url, encoding: .utf8))
+                        ?? (try? String(contentsOf: url, encoding: .isoLatin1))
+                }.value
+                if Task.isCancelled { return }
+                buffers[path] = EditorBuffer(text: text ?? "", dirty: false)
+            }
             openEditor(path: path)
         }
     }
@@ -567,16 +654,22 @@ final class RepoViewModel: ObservableObject {
         }
         if lines.last == "" { lines.removeLast() }
         diffNewSideLines = lines
+        Diagnostics.log("loadDiffContext \(path) 新侧行数=\(lines.count) 字节≈\(content?.utf8.count ?? 0)")
     }
 
     // MARK: - 编辑器（多标签）
 
     func openEditor(path: String) {
         guard let repo else { return }
+        if path != editorPath {
+            editorLanguageOverride = nil  // 换文件才重置手动选的语言
+            editorCursorLine = 1; editorCursorColumn = 1; editorSelectedLines = 0
+        }
         stashActiveBuffer()
 
         if !openTabs.contains(path) {
             openTabs.append(path)
+            pruneTabsIfNeeded(active: path)
         }
 
         if FileIcon.isImage(path) {
@@ -584,8 +677,21 @@ final class RepoViewModel: ObservableObject {
             editorText = ""
             editorDirty = false
             conflictBlocks = []
+            editorIsBinary = false
             return
         }
+
+        // 二进制文件（含 NUL）→ 走 hex 查看器，不把字节读成乱码文本
+        if !isUntitled(path), BinaryDetector.isBinary(url: repo.fileURL(for: path)) {
+            editorPath = path
+            editorText = ""
+            editorDirty = false
+            editorIsBinary = true
+            conflictBlocks = []
+            blameText = nil
+            return
+        }
+        editorIsBinary = false
 
         if let buffer = buffers[path] {
             editorText = buffer.text
@@ -605,6 +711,44 @@ final class RepoViewModel: ObservableObject {
         editorPath = path
         blameText = nil
         reparseConflicts()
+    }
+
+    /// 状态栏：更新光标行列与选中行数。
+    func updateEditorCursor(line: Int, column: Int, selectedLines: Int) {
+        editorCursorLine = line
+        editorCursorColumn = column
+        editorSelectedLines = selectedLines
+    }
+
+    /// 状态栏显示的当前高亮语言名（手动覆盖 ?? 文件名推断 ?? 纯文本）。
+    var editorLanguageName: String {
+        if let ext = editorLanguageOverride, let def = Lexer.language(forFileExtension: ext) {
+            return def.name
+        }
+        if let path = editorPath,
+           let def = Lexer.language(forFileName: (path as NSString).lastPathComponent) {
+            return def.name
+        }
+        return tr("纯文本", "Plain Text")
+    }
+
+    /// 标签上限：扫树/快速切换会给每个划过的文件开标签并常驻其全文，
+    /// 超过上限就回收最早的、未修改、非当前的标签，把内存增长卡死在一个上界。
+    private func pruneTabsIfNeeded(active: String) {
+        let cap = 30
+        guard openTabs.count > cap else { return }
+        var overflow = openTabs.count - cap
+        // filter 保持插入顺序：从最早的可回收标签开始删
+        let candidates = openTabs.filter {
+            $0 != active && !isUntitled($0) && buffers[$0]?.dirty != true
+        }
+        for path in candidates where overflow > 0 {
+            if let index = openTabs.firstIndex(of: path) {
+                openTabs.remove(at: index)
+                buffers[path] = nil
+                overflow -= 1
+            }
+        }
     }
 
     /// 把当前激活文件的内容存回缓冲区（切换标签前调用）。
@@ -775,9 +919,7 @@ final class RepoViewModel: ObservableObject {
                 } else {
                     var parts = [info.author]
                     if let date = info.date {
-                        let formatter = RelativeDateTimeFormatter()
-                        formatter.unitsStyle = .abbreviated
-                        parts.append(formatter.localizedString(for: date, relativeTo: Date()))
+                        parts.append(relativeTime(date))
                     }
                     if !info.summary.isEmpty { parts.append(info.summary) }
                     text = parts.joined(separator: " · ")
@@ -1074,6 +1216,7 @@ final class RepoViewModel: ObservableObject {
                 case .compare(let base, let target):
                     historyFiles = try await repo.filesChanged(from: base, to: target)
                 }
+                Diagnostics.log("历史详情文件数=\(historyFiles.count)")
                 // 历史详情里若只改了一个文件，直接展示它的 diff
                 if let first = historyFiles.first, historyFiles.count == 1 {
                     selectHistoryFile(first)

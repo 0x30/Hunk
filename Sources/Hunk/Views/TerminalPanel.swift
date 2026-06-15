@@ -44,6 +44,14 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
         terminalView = nil
     }
 
+    /// 清屏（⌘K）：清掉回滚历史，再发 Ctrl-L 让 shell 清屏并重画当前 prompt/输入，
+    /// 体验对齐 macOS Terminal 的「清除」。
+    func clear() {
+        guard let view = terminalView else { return }
+        view.feed(text: "\u{1b}[3J")  // 清 scrollback
+        view.send(txt: "\u{0c}")       // Ctrl-L
+    }
+
     // MARK: LocalProcessTerminalViewDelegate
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
@@ -210,6 +218,17 @@ private struct TerminalTabItem: View {
         .contentShape(Rectangle())
         .onTapGesture { vm.activeTerminalID = session.id }
         .onHover { hovering = $0 }
+        .contextMenu {
+            Button(tr("关闭", "Close")) { vm.closeTerminal(session) }
+            Button(tr("关闭左侧标签", "Close Tabs to the Left")) { vm.closeTerminalsToLeft(of: session) }
+                .disabled(index == 0)
+            Button(tr("关闭右侧标签", "Close Tabs to the Right")) { vm.closeTerminalsToRight(of: session) }
+                .disabled(index >= vm.terminals.count - 1)
+            Button(tr("关闭其他标签", "Close Other Tabs")) { vm.closeOtherTerminals(session) }
+                .disabled(vm.terminals.count <= 1)
+            Divider()
+            Button(tr("关闭全部", "Close All")) { vm.closeAllTerminals() }
+        }
     }
 }
 

@@ -299,4 +299,15 @@ public enum Lexer {
 
     /// 已加载的语言扩展名数量（0 表示 languages.json 没加载到——资源缺失或打包漏拷 bundle）。
     public static var loadedExtensionCount: Int { registry.byExtension.count }
+
+    /// 所有语言（name + 一个代表扩展名），按 name 去重并排序——用于「手动切换语言」菜单。
+    public static var allLanguages: [(name: String, ext: String)] {
+        var seen = Set<String>()
+        var result: [(name: String, ext: String)] = []
+        for (ext, def) in registry.byExtension.sorted(by: { $0.key < $1.key })
+        where seen.insert(def.name).inserted {
+            result.append((name: def.name, ext: ext))
+        }
+        return result.sorted { $0.name < $1.name }
+    }
 }

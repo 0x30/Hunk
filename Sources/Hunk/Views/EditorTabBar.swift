@@ -28,7 +28,7 @@ struct EditorTabBar: View {
                 .frame(width: 1, height: 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
+                LazyHStack(spacing: 0) {
                     ForEach(vm.openTabs, id: \.self) { path in
                         EditorTabItem(path: path, isActive: path == vm.editorPath)
                     }
@@ -133,6 +133,8 @@ struct EditorArea: View {
             } else {
                 EditorView(path: activePath, showConflictBar: showConflictBar)
             }
+            Divider()
+            EditorStatusBar()
         }
         .confirmationDialog(
             tr("「\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")」有未保存的修改",

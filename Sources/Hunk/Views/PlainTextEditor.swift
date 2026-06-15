@@ -12,6 +12,10 @@ struct PlainTextEditor: NSViewRepresentable {
     var blameText: String?
     var onEdit: () -> Void
     var onCursorLineChange: (Int) -> Void = { _ in }
+    /// 光标/选中变化：(行, 列, 选中行数)，喂给底部状态栏
+    var onSelectionInfo: (Int, Int, Int) -> Void = { _, _, _ in }
+    /// 高亮语言扩展名覆盖；nil = 按 fileName 推断（新建未保存文件可手动指定）
+    var languageOverride: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -98,7 +102,10 @@ struct PlainTextEditor: NSViewRepresentable {
             textView.string = text
             let length = (text as NSString).length
             textView.setSelectedRange(NSRange(location: isNewDocument ? 0 : min(selected.location, length), length: 0))
-            coordinator.highlightNow()
+            // 防抖高亮（与打字路径一致）：快速切文件时合并成一次，不再每次切换都
+            // 在主线程同步整文件 tokenize+全量上色——那是「切换卡死」的主因之一。
+            // 字体是等宽、已就位，延迟的只是语法配色，可读性不受影响。
+            coordinator.scheduleHighlight()
             if isNewDocument {
                 // 新文档从顶部开始（底部 overscroll inset 会把初始位置带偏）
                 DispatchQueue.main.async {
@@ -115,6 +122,9 @@ struct PlainTextEditor: NSViewRepresentable {
             coordinator.highlightNow()
         } else if coordinator.lastThemeName != ThemeStore.shared.active?.name {
             // 颜色主题切换后重新着色
+            coordinator.highlightNow()
+        } else if coordinator.lastLanguageOverride != languageOverride {
+            // 手动切换语言后重新着色
             coordinator.highlightNow()
         }
 
@@ -138,6 +148,7 @@ struct PlainTextEditor: NSViewRepresentable {
         var lastConflicts: [ConflictBlock] = []
         var lastThemeName: String?
         var lastFileName: String?
+        var lastLanguageOverride: String?
         private var lastBlameText: String?
         private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
@@ -181,8 +192,16 @@ struct PlainTextEditor: NSViewRepresentable {
                 blameLabel?.isHidden = true
                 return
             }
-            let caret = textView.selectedRange().location
+            let sel = textView.selectedRange()
+            let caret = sel.location
             let line = ruler.lineNumber(forCharacterPublic: caret)
+            // 列 = 光标相对本行行首的字符数 + 1；选中跨越的行数
+            let nsString = textView.string as NSString
+            let lineStart = nsString.lineRange(for: NSRange(location: min(caret, nsString.length), length: 0)).location
+            let column = caret - lineStart + 1
+            let selectedLines = sel.length == 0 ? 0
+                : ruler.lineNumber(forCharacterPublic: max(caret, NSMaxRange(sel) - 1)) - line + 1
+            parent.onSelectionInfo(line, column, selectedLines)
             if line != lastCursorLine {
                 lastCursorLine = line
                 blameLabel?.isHidden = true  // 移动后先隐藏，等新结果
@@ -226,7 +245,7 @@ struct PlainTextEditor: NSViewRepresentable {
             ))
         }
 
-        private func scheduleHighlight() {
+        func scheduleHighlight() {
             pendingHighlight?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 self?.highlightNow()
@@ -259,7 +278,10 @@ struct PlainTextEditor: NSViewRepresentable {
                 .foregroundColor: theme.editorForeground ?? NSColor.labelColor,
             ], range: fullRange)
 
-            if let language = Lexer.language(forFileName: parent.fileName) {
+            lastLanguageOverride = parent.languageOverride
+            let langDef = parent.languageOverride.flatMap { Lexer.language(forFileExtension: $0) }
+                ?? Lexer.language(forFileName: parent.fileName)
+            if let language = langDef {
                 for token in Lexer.tokenize(string, language: language) {
                     guard NSMaxRange(token.range) <= nsString.length else { continue }
                     storage.addAttribute(

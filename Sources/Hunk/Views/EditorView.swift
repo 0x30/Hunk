@@ -14,21 +14,29 @@ struct EditorView: View {
                 ConflictBar()
                 Divider()
             }
-            PlainTextEditor(
-                text: $vm.editorText,
-                fileName: (path as NSString).lastPathComponent,
-                conflicts: vm.conflictBlocks,
-                scrollToLine: $vm.scrollToLine,
-                blameText: vm.blameText,
-                onEdit: {
-                    vm.editorDirty = true
-                    vm.reparseConflicts()
-                },
-                onCursorLineChange: { line in
-                    vm.requestBlame(line: line)
-                }
-            )
-            .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
+            if vm.editorIsBinary, let root = vm.repoRoot {
+                HexView(url: root.appendingPathComponent(path))
+            } else {
+                PlainTextEditor(
+                    text: $vm.editorText,
+                    fileName: (path as NSString).lastPathComponent,
+                    conflicts: vm.conflictBlocks,
+                    scrollToLine: $vm.scrollToLine,
+                    blameText: vm.blameText,
+                    onEdit: {
+                        vm.editorDirty = true
+                        vm.reparseConflicts()
+                    },
+                    onCursorLineChange: { line in
+                        vm.requestBlame(line: line)
+                    },
+                    onSelectionInfo: { line, column, selectedLines in
+                        vm.updateEditorCursor(line: line, column: column, selectedLines: selectedLines)
+                    },
+                    languageOverride: vm.editorLanguageOverride
+                )
+                .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
