@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "_comment": "词法高亮的语言数据。由 Lexer 加载（Bundle.module）。字段默认值：lineComments=[]、blockComment=null、stringDelimiters=[\"\\\"\",\"'\"]、capitalizedTypes=false。新增语言只需在此追加一项，无需改引擎。可用 Scripts/gen-languages 从 VS Code language-configuration + highlight.js 批量生成。",
+  "filenames": {
+    "Makefile": "make",
+    "makefile": "make",
+    "GNUmakefile": "make",
+    "Dockerfile": "dockerfile",
+    "Containerfile": "dockerfile",
+    "Gemfile": "rb",
+    "Rakefile": "rb",
+    "Podfile": "rb",
+    "Brewfile": "rb",
+    "CMakeLists.txt": "cmake"
+  },
+  "languages": [
+    {
+      "name": "Swift",
+      "extensions": ["swift"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["associatedtype","class","deinit","enum","extension","fileprivate","func","import","init","inout","internal","let","open","operator","private","protocol","public","rethrows","static","struct","subscript","typealias","var","break","case","continue","default","defer","do","else","fallthrough","for","guard","if","in","repeat","return","switch","where","while","as","any","catch","false","is","nil","super","self","Self","throw","throws","true","try","await","async","actor","some","lazy","weak","unowned","mutating","nonmutating","override","required","convenience","final","indirect","macro"]
+    },
+    {
+      "name": "JavaScript/TypeScript",
+      "extensions": ["js","jsx","ts","tsx","mjs","cjs","mts","cts"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "stringDelimiters": ["\"", "'", "`"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","any","as","asserts","async","await","boolean","break","case","catch","class","const","continue","debugger","declare","default","delete","do","else","enum","export","extends","false","finally","for","from","function","get","if","implements","import","in","infer","instanceof","interface","is","keyof","let","namespace","never","new","null","number","object","of","package","private","protected","public","readonly","return","satisfies","set","static","string","super","switch","symbol","this","throw","true","try","type","typeof","undefined","unique","unknown","var","void","while","with","yield"]
+    },
+    {
+      "name": "Python",
+      "extensions": ["py","pyi","pyw"],
+      "lineComments": ["#"],
+      "capitalizedTypes": true,
+      "keywords": ["and","as","assert","async","await","break","class","continue","def","del","elif","else","except","finally","for","from","global","if","import","in","is","lambda","nonlocal","not","or","pass","raise","return","try","while","with","yield","True","False","None","self","cls","match","case"]
+    },
+    {
+      "name": "Ruby",
+      "extensions": ["rb","rake","gemspec"],
+      "lineComments": ["#"],
+      "capitalizedTypes": true,
+      "keywords": ["alias","and","begin","break","case","class","def","defined?","do","else","elsif","end","ensure","false","for","if","in","module","next","nil","not","or","redo","rescue","retry","return","self","super","then","true","undef","unless","until","when","while","yield","require","require_relative","attr_accessor","attr_reader","attr_writer","puts","raise","lambda","proc"]
+    },
+    {
+      "name": "Go",
+      "extensions": ["go"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "stringDelimiters": ["\"", "'", "`"],
+      "keywords": ["break","case","chan","const","continue","default","defer","else","fallthrough","for","func","go","goto","if","import","interface","map","package","range","return","select","struct","switch","type","var","nil","true","false","iota","make","new","append","len","cap","copy","delete","panic","recover","error","string","int","int8","int16","int32","int64","uint","byte","rune","float32","float64","bool","any"]
+    },
+    {
+      "name": "Rust",
+      "extensions": ["rs"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["as","async","await","break","const","continue","crate","dyn","else","enum","extern","false","fn","for","if","impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self","static","struct","super","trait","true","type","unsafe","use","where","while","macro_rules","u8","u16","u32","u64","u128","usize","i8","i16","i32","i64","i128","isize","f32","f64","bool","char","str","String","Vec","Option","Result","Some","None","Ok","Err","Box"]
+    },
+    {
+      "name": "Java",
+      "extensions": ["java"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","assert","boolean","break","byte","case","catch","char","class","const","continue","default","do","double","else","enum","extends","final","finally","float","for","goto","if","implements","import","instanceof","int","interface","long","native","new","package","private","protected","public","return","short","static","strictfp","super","switch","synchronized","this","throw","throws","transient","try","void","volatile","while","true","false","null","var","record","sealed","permits","yield"]
+    },
+    {
+      "name": "Kotlin",
+      "extensions": ["kt","kts"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","actual","annotation","as","break","by","catch","class","companion","const","constructor","continue","crossinline","data","do","dynamic","else","enum","expect","external","false","final","finally","for","fun","get","if","import","in","infix","init","inline","inner","interface","internal","is","lateinit","noinline","null","object","open","operator","out","override","package","private","protected","public","reified","return","sealed","set","super","suspend","tailrec","this","throw","true","try","typealias","typeof","val","var","vararg","when","where","while","Unit","Nothing","String","Int","Boolean","Long","Double","Float","List","Map","Set"]
+    },
+    {
+      "name": "Scala",
+      "extensions": ["scala","sc"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","case","catch","class","def","do","else","enum","extends","false","final","finally","for","forSome","given","if","implicit","import","lazy","match","new","null","object","override","package","private","protected","return","sealed","super","this","throw","trait","true","try","type","using","val","var","while","with","yield"]
+    },
+    {
+      "name": "Groovy",
+      "extensions": ["groovy","gradle"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "stringDelimiters": ["\"", "'", "`"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","as","assert","break","case","catch","class","const","continue","def","default","do","else","enum","extends","false","final","finally","for","goto","if","implements","import","in","instanceof","interface","it","new","null","package","private","protected","public","return","static","super","switch","this","throw","throws","trait","true","try","void","while"]
+    },
+    {
+      "name": "Dart",
+      "extensions": ["dart"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","as","assert","async","await","break","case","catch","class","const","continue","covariant","default","deferred","do","dynamic","else","enum","export","extends","extension","external","factory","false","final","finally","for","Function","get","hide","if","implements","import","in","interface","is","late","library","mixin","new","null","on","operator","part","required","rethrow","return","set","show","static","super","switch","sync","this","throw","true","try","typedef","var","void","while","with","yield"]
+    },
+    {
+      "name": "C/C++/Objective-C",
+      "extensions": ["c","h","cpp","cc","cxx","hpp","hh","m","mm","cppm","ixx"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["auto","break","case","char","const","continue","default","do","double","else","enum","extern","float","for","goto","if","inline","int","long","register","return","short","signed","sizeof","static","struct","switch","typedef","union","unsigned","void","volatile","while","class","namespace","template","typename","public","private","protected","virtual","override","new","delete","this","nullptr","true","false","using","constexpr","consteval","noexcept","operator","friend","explicit","mutable","thread_local","static_cast","dynamic_cast","reinterpret_cast","const_cast","try","catch","throw","concept","requires","co_await","co_return","co_yield","@interface","@implementation","@property","@end","id","self","nil","YES","NO"]
+    },
+    {
+      "name": "C#",
+      "extensions": ["cs","csx"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","as","async","await","base","bool","break","byte","case","catch","char","checked","class","const","continue","decimal","default","delegate","do","double","else","enum","event","explicit","extern","false","finally","fixed","float","for","foreach","goto","if","implicit","in","init","int","interface","internal","is","lock","long","nameof","namespace","new","null","object","operator","out","override","params","private","protected","public","readonly","record","ref","return","sbyte","sealed","short","sizeof","stackalloc","static","string","struct","switch","this","throw","true","try","typeof","uint","ulong","unchecked","unsafe","ushort","using","var","virtual","void","volatile","where","while","yield"]
+    },
+    {
+      "name": "PHP",
+      "extensions": ["php","phtml"],
+      "lineComments": ["//", "#"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["abstract","and","array","as","break","callable","case","catch","class","clone","const","continue","declare","default","do","echo","else","elseif","empty","enddeclare","endfor","endforeach","endif","endswitch","endwhile","enum","extends","final","finally","fn","for","foreach","function","global","goto","if","implements","include","include_once","instanceof","insteadof","interface","isset","list","match","namespace","new","or","print","private","protected","public","readonly","require","require_once","return","static","switch","throw","trait","try","unset","use","var","while","xor","yield","true","false","null","this","self","parent"]
+    },
+    {
+      "name": "Shell",
+      "extensions": ["sh","bash","zsh","fish","ksh"],
+      "lineComments": ["#"],
+      "keywords": ["if","then","else","elif","fi","case","esac","for","while","until","do","done","in","function","select","time","break","continue","return","exit","export","local","readonly","declare","unset","shift","source","alias","echo","printf","read","cd","set","trap","eval","exec","true","false","test"]
+    },
+    {
+      "name": "PowerShell",
+      "extensions": ["ps1","psm1","psd1"],
+      "lineComments": ["#"],
+      "blockComment": ["<#", "#>"],
+      "keywords": ["begin","break","catch","class","continue","data","do","dynamicparam","else","elseif","end","enum","exit","filter","finally","for","foreach","from","function","if","in","param","process","return","switch","throw","trap","try","until","using","while","workflow","true","false","null","and","or","not","eq","ne","lt","gt","le","ge"]
+    },
+    {
+      "name": "Lua",
+      "extensions": ["lua"],
+      "lineComments": ["--"],
+      "blockComment": ["--[[", "]]"],
+      "keywords": ["and","break","do","else","elseif","end","false","for","function","goto","if","in","local","nil","not","or","repeat","return","then","true","until","while","self"]
+    },
+    {
+      "name": "Perl",
+      "extensions": ["pl","pm","t"],
+      "lineComments": ["#"],
+      "keywords": ["my","our","local","sub","if","elsif","else","unless","while","until","for","foreach","do","return","last","next","redo","use","require","package","no","print","printf","say","defined","undef","ref","bless","wantarray","die","warn","eval","qw","q","qq","and","or","not","eq","ne","lt","gt"]
+    },
+    {
+      "name": "R",
+      "extensions": ["r"],
+      "lineComments": ["#"],
+      "keywords": ["if","else","for","while","repeat","function","return","break","next","in","library","require","source","TRUE","FALSE","NULL","NA","Inf","NaN","T","F"]
+    },
+    {
+      "name": "Julia",
+      "extensions": ["jl"],
+      "lineComments": ["#"],
+      "blockComment": ["#=", "=#"],
+      "capitalizedTypes": true,
+      "keywords": ["function","end","if","elseif","else","for","while","break","continue","return","module","baremodule","using","import","export","struct","mutable","abstract","primitive","type","begin","let","do","quote","macro","try","catch","finally","throw","true","false","nothing","missing","in","isa","where","const","global","local"]
+    },
+    {
+      "name": "Haskell",
+      "extensions": ["hs","lhs"],
+      "lineComments": ["--"],
+      "blockComment": ["{-", "-}"],
+      "capitalizedTypes": true,
+      "keywords": ["module","where","import","data","type","newtype","class","instance","deriving","do","let","in","if","then","else","case","of","forall","foreign","default","infix","infixl","infixr"]
+    },
+    {
+      "name": "Elixir",
+      "extensions": ["ex","exs"],
+      "lineComments": ["#"],
+      "capitalizedTypes": true,
+      "keywords": ["def","defp","defmodule","defmacro","defmacrop","defstruct","defprotocol","defimpl","defguard","do","end","if","else","unless","cond","case","when","fn","for","with","try","catch","rescue","after","raise","throw","import","alias","require","use","quote","unquote","receive","true","false","nil","and","or","not","in"]
+    },
+    {
+      "name": "Erlang",
+      "extensions": ["erl","hrl"],
+      "lineComments": ["%"],
+      "keywords": ["module","export","import","define","if","case","of","when","end","fun","receive","after","begin","try","catch","throw","true","false","andalso","orelse","not","band","bor","bxor","div","rem"]
+    },
+    {
+      "name": "Clojure",
+      "extensions": ["clj","cljs","cljc","edn"],
+      "lineComments": [";"],
+      "stringDelimiters": ["\""],
+      "keywords": ["def","defn","defn-","defmacro","defmulti","defmethod","defprotocol","defrecord","deftype","let","letfn","if","if-let","if-not","when","when-let","when-not","cond","condp","case","do","fn","loop","recur","ns","require","import","use","true","false","nil","and","or","not","quote"]
+    },
+    {
+      "name": "YAML",
+      "extensions": ["yaml","yml"],
+      "lineComments": ["#"],
+      "keywords": ["true","false","null","yes","no","on","off","Yes","No","True","False","Null"]
+    },
+    {
+      "name": "TOML",
+      "extensions": ["toml"],
+      "lineComments": ["#"],
+      "keywords": ["true","false"]
+    },
+    {
+      "name": "INI",
+      "extensions": ["ini","cfg","conf","properties","editorconfig"],
+      "lineComments": ["#", ";"],
+      "keywords": []
+    },
+    {
+      "name": "JSON",
+      "extensions": ["json","jsonc","json5"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "stringDelimiters": ["\""],
+      "keywords": ["true","false","null"]
+    },
+    {
+      "name": "HTML/XML",
+      "extensions": ["html","htm","xml","svg","plist","vue","svelte","xhtml","resx","storyboard","xib"],
+      "lineComments": [],
+      "blockComment": ["<!--", "-->"],
+      "keywords": []
+    },
+    {
+      "name": "CSS",
+      "extensions": ["css"],
+      "lineComments": [],
+      "blockComment": ["/*", "*/"],
+      "keywords": ["important","inherit","initial","unset","auto","none","var","calc","rgb","rgba","hsl","hsla"]
+    },
+    {
+      "name": "SCSS",
+      "extensions": ["scss","less","sass"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "keywords": ["important","inherit","initial","unset","mixin","include","extend","if","else","for","each","while","function","return","use","forward","import","media","content","at-root","map-get"]
+    },
+    {
+      "name": "Markdown",
+      "extensions": ["md","markdown","mdx","mdown"],
+      "lineComments": [],
+      "stringDelimiters": [],
+      "keywords": []
+    },
+    {
+      "name": "reStructuredText",
+      "extensions": ["rst"],
+      "lineComments": [],
+      "stringDelimiters": [],
+      "keywords": []
+    },
+    {
+      "name": "SQL",
+      "extensions": ["sql","ddl","dml"],
+      "lineComments": ["--"],
+      "blockComment": ["/*", "*/"],
+      "keywords": ["select","from","where","insert","into","values","update","set","delete","create","table","index","view","drop","alter","add","join","inner","left","right","outer","full","cross","on","using","as","and","or","not","null","is","in","like","ilike","between","order","by","group","having","limit","offset","fetch","distinct","union","intersect","except","all","exists","case","when","then","else","end","primary","key","foreign","references","default","constraint","unique","check","begin","commit","rollback","transaction","with","returning","cascade","SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","INDEX","VIEW","DROP","ALTER","ADD","JOIN","INNER","LEFT","RIGHT","OUTER","FULL","CROSS","ON","USING","AS","AND","OR","NOT","NULL","IS","IN","LIKE","ILIKE","BETWEEN","ORDER","BY","GROUP","HAVING","LIMIT","OFFSET","FETCH","DISTINCT","UNION","INTERSECT","EXCEPT","ALL","EXISTS","CASE","WHEN","THEN","ELSE","END","PRIMARY","KEY","FOREIGN","REFERENCES","DEFAULT","CONSTRAINT","UNIQUE","CHECK","BEGIN","COMMIT","ROLLBACK","TRANSACTION","WITH","RETURNING","CASCADE"]
+    },
+    {
+      "name": "Dockerfile",
+      "extensions": ["dockerfile"],
+      "lineComments": ["#"],
+      "keywords": ["FROM","RUN","CMD","LABEL","MAINTAINER","EXPOSE","ENV","ADD","COPY","ENTRYPOINT","VOLUME","USER","WORKDIR","ARG","ONBUILD","STOPSIGNAL","HEALTHCHECK","SHELL","AS"]
+    },
+    {
+      "name": "GraphQL",
+      "extensions": ["graphql","gql"],
+      "lineComments": ["#"],
+      "capitalizedTypes": true,
+      "keywords": ["type","input","enum","interface","union","scalar","schema","query","mutation","subscription","fragment","on","implements","extend","directive","true","false","null"]
+    },
+    {
+      "name": "Protocol Buffers",
+      "extensions": ["proto"],
+      "lineComments": ["//"],
+      "blockComment": ["/*", "*/"],
+      "capitalizedTypes": true,
+      "keywords": ["syntax","package","import","public","weak","option","message","enum","service","rpc","returns","stream","repeated","optional","required","reserved","oneof","map","group","extend","extensions","to","true","false","double","float","int32","int64","uint32","uint64","sint32","sint64","fixed32","fixed64","bool","string","bytes"]
+    },
+    {
+      "name": "Makefile",
+      "extensions": ["mk","make"],
+      "lineComments": ["#"],
+      "keywords": ["ifeq","ifneq","ifdef","ifndef","else","endif","define","endef","include","sinclude","export","unexport","override","vpath",".PHONY"]
+    },
+    {
+      "name": "CMake",
+      "extensions": ["cmake"],
+      "lineComments": ["#"],
+      "keywords": ["if","elseif","else","endif","foreach","endforeach","while","endwhile","function","endfunction","macro","endmacro","return","break","continue","set","unset","list","string","file","find_package","add_executable","add_library","target_link_libraries","include","project","cmake_minimum_required","option","message","ON","OFF","TRUE","FALSE"]
+    }
+  ]
+}

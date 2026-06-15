@@ -11,6 +11,7 @@ let package = Package(
     targets: [
         .target(
             name: "HunkCore",
+            resources: [.process("Resources/languages.json")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

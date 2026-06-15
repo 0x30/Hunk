@@ -61,6 +61,7 @@ public enum Lexer {
 
         var utf16Offset = 0
         var i = 0
+        var guardI = -1  // 上一轮的扫描位置，用于死循环防御（见循环顶部）
         let count = scalars.count
 
         func utf16Length(_ c: Character) -> Int { String(c).utf16.count }
@@ -75,6 +76,17 @@ public enum Lexer {
         func isWordChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" }
 
         while i < count {
+            // 死循环防御：上一轮处理后扫描位置没有前进（语言规则 bug / 病态输入）→
+            // 强制吃掉一个字符再继续。保证 i 严格递增 ⇒ 循环至多 count 轮、token 数
+            // ≤ 字符数，杜绝「i 不动 → 无限 append」（曾因此让单行 [Token] 涨到
+            // 数百 MB 触发 OOM）。
+            if i == guardI {
+                utf16Offset += utf16Length(scalars[i])
+                i += 1
+                continue
+            }
+            guardI = i
+
             let c = scalars[i]
 
             // 行注释
@@ -233,295 +245,58 @@ public enum Lexer {
     public static func language(forFileName name: String) -> LanguageDef? {
         let ext = (name as NSString).pathExtension
         if !ext.isEmpty, let lang = language(forFileExtension: ext) { return lang }
-        switch name {
-        case "Makefile", "makefile": return languages["sh"]
-        case "Dockerfile": return languages["sh"]
-        default: return nil
+        // 按完整文件名映射（Makefile / Dockerfile / Gemfile …），表见 languages.json
+        if let mapped = filenameMap[name], let lang = languages[mapped] { return lang }
+        return nil
+    }
+
+    // MARK: - 数据驱动的语言表（Resources/languages.json）
+
+    /// 语言数据外置在 json：新增/修正语言只改数据、不动引擎。加载失败（资源缺失/
+    /// 损坏）→ 返回空表，高亮降级为纯文本，绝不崩。
+    private struct LanguagesDoc: Decodable {
+        let filenames: [String: String]
+        let languages: [LangDTO]
+    }
+
+    private struct LangDTO: Decodable {
+        let name: String
+        let extensions: [String]
+        let keywords: [String]
+        let lineComments: [String]?
+        let blockComment: [String]?       // [start, end]
+        let stringDelimiters: [String]?
+        let capitalizedTypes: Bool?
+
+        func toDef() -> LanguageDef {
+            LanguageDef(
+                name: name,
+                keywords: Set(keywords),
+                lineComments: lineComments ?? [],
+                blockCommentStart: blockComment?.first,
+                blockCommentEnd: (blockComment?.count ?? 0) >= 2 ? blockComment?[1] : nil,
+                stringDelimiters: (stringDelimiters ?? ["\"", "'"]).compactMap(\.first),
+                capitalizedTypes: capitalizedTypes ?? false
+            )
         }
     }
 
-    private static let cFamilyKeywords: Set<String> = [
-        "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
-        "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
-        "register", "return", "short", "signed", "sizeof", "static", "struct", "switch",
-        "typedef", "union", "unsigned", "void", "volatile", "while", "class", "namespace",
-        "template", "typename", "public", "private", "protected", "virtual", "override",
-        "new", "delete", "this", "nullptr", "true", "false", "using", "constexpr", "noexcept",
-        "operator", "friend", "explicit", "mutable", "thread_local", "static_cast",
-        "dynamic_cast", "reinterpret_cast", "const_cast", "try", "catch", "throw",
-        "@interface", "@implementation", "@property", "@end", "id", "self", "nil", "YES", "NO",
-    ]
-
-    private static let languages: [String: LanguageDef] = {
+    private static let registry: (byExtension: [String: LanguageDef], byFilename: [String: String]) = {
+        guard let url = Bundle.module.url(forResource: "languages", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let doc = try? JSONDecoder().decode(LanguagesDoc.self, from: data)
+        else { return ([:], [:]) }
         var map: [String: LanguageDef] = [:]
-
-        let swift = LanguageDef(
-            name: "Swift",
-            keywords: [
-                "associatedtype", "class", "deinit", "enum", "extension", "fileprivate",
-                "func", "import", "init", "inout", "internal", "let", "open", "operator",
-                "private", "protocol", "public", "rethrows", "static", "struct", "subscript",
-                "typealias", "var", "break", "case", "continue", "default", "defer", "do",
-                "else", "fallthrough", "for", "guard", "if", "in", "repeat", "return",
-                "switch", "where", "while", "as", "any", "catch", "false", "is", "nil",
-                "super", "self", "Self", "throw", "throws", "true", "try", "await", "async",
-                "actor", "some", "lazy", "weak", "unowned", "mutating", "nonmutating",
-                "override", "required", "convenience", "final", "indirect", "macro",
-            ],
-            capitalizedTypes: true
-        )
-        map["swift"] = swift
-
-        let jsTS = LanguageDef(
-            name: "JavaScript/TypeScript",
-            keywords: [
-                "abstract", "any", "as", "async", "await", "boolean", "break", "case",
-                "catch", "class", "const", "continue", "debugger", "declare", "default",
-                "delete", "do", "else", "enum", "export", "extends", "false", "finally",
-                "for", "from", "function", "get", "if", "implements", "import", "in",
-                "instanceof", "interface", "is", "keyof", "let", "namespace", "never",
-                "new", "null", "number", "object", "of", "package", "private", "protected",
-                "public", "readonly", "return", "set", "static", "string", "super",
-                "switch", "symbol", "this", "throw", "true", "try", "type", "typeof",
-                "undefined", "unique", "unknown", "var", "void", "while", "with", "yield",
-            ],
-            stringDelimiters: ["\"", "'", "`"],
-            capitalizedTypes: true
-        )
-        map["js"] = jsTS
-        map["jsx"] = jsTS
-        map["ts"] = jsTS
-        map["tsx"] = jsTS
-        map["mjs"] = jsTS
-        map["cjs"] = jsTS
-
-        let python = LanguageDef(
-            name: "Python",
-            keywords: [
-                "and", "as", "assert", "async", "await", "break", "class", "continue",
-                "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-                "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass",
-                "raise", "return", "try", "while", "with", "yield", "True", "False",
-                "None", "self", "match", "case",
-            ],
-            lineComments: ["#"],
-            blockCommentStart: nil, blockCommentEnd: nil,
-            capitalizedTypes: true
-        )
-        map["py"] = python
-
-        let ruby = LanguageDef(
-            name: "Ruby",
-            keywords: [
-                "alias", "and", "begin", "break", "case", "class", "def", "defined?",
-                "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in",
-                "module", "next", "nil", "not", "or", "redo", "rescue", "retry", "return",
-                "self", "super", "then", "true", "undef", "unless", "until", "when",
-                "while", "yield", "require", "require_relative", "attr_accessor",
-                "attr_reader", "attr_writer", "puts", "raise", "lambda", "proc",
-            ],
-            lineComments: ["#"],
-            blockCommentStart: nil, blockCommentEnd: nil,
-            capitalizedTypes: true
-        )
-        map["rb"] = ruby
-
-        let go = LanguageDef(
-            name: "Go",
-            keywords: [
-                "break", "case", "chan", "const", "continue", "default", "defer", "else",
-                "fallthrough", "for", "func", "go", "goto", "if", "import", "interface",
-                "map", "package", "range", "return", "select", "struct", "switch", "type",
-                "var", "nil", "true", "false", "iota", "make", "new", "append", "len",
-                "cap", "copy", "delete", "panic", "recover", "error", "string", "int",
-                "int8", "int16", "int32", "int64", "uint", "byte", "rune", "float32",
-                "float64", "bool", "any",
-            ],
-            stringDelimiters: ["\"", "'", "`"]
-        )
-        map["go"] = go
-
-        let rust = LanguageDef(
-            name: "Rust",
-            keywords: [
-                "as", "async", "await", "break", "const", "continue", "crate", "dyn",
-                "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
-                "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
-                "self", "Self", "static", "struct", "super", "trait", "true", "type",
-                "unsafe", "use", "where", "while", "macro_rules", "u8", "u16", "u32",
-                "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "bool",
-                "char", "str", "String", "Vec", "Option", "Result", "Some", "None", "Ok", "Err",
-            ],
-            capitalizedTypes: true
-        )
-        map["rs"] = rust
-
-        let java = LanguageDef(
-            name: "Java/Kotlin",
-            keywords: [
-                "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
-                "class", "const", "continue", "default", "do", "double", "else", "enum",
-                "extends", "final", "finally", "float", "for", "if", "implements",
-                "import", "instanceof", "int", "interface", "long", "native", "new",
-                "package", "private", "protected", "public", "return", "short", "static",
-                "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
-                "transient", "try", "void", "volatile", "while", "true", "false", "null",
-                "var", "val", "fun", "when", "object", "companion", "data", "sealed",
-                "suspend", "lateinit", "by", "is", "in", "out", "override", "open",
-                "internal", "inline", "reified", "crossinline", "noinline",
-            ],
-            capitalizedTypes: true
-        )
-        map["java"] = java
-        map["kt"] = java
-        map["kts"] = java
-        map["scala"] = java
-        map["groovy"] = java
-        map["dart"] = java
-
-        let cFamily = LanguageDef(name: "C/C++/Objective-C", keywords: cFamilyKeywords, capitalizedTypes: true)
-        map["c"] = cFamily
-        map["h"] = cFamily
-        map["cpp"] = cFamily
-        map["cc"] = cFamily
-        map["cxx"] = cFamily
-        map["hpp"] = cFamily
-        map["hh"] = cFamily
-        map["m"] = cFamily
-        map["mm"] = cFamily
-
-        let csharp = LanguageDef(
-            name: "C#",
-            keywords: cFamilyKeywords.union([
-                "abstract", "async", "await", "base", "bool", "byte", "checked", "decimal",
-                "delegate", "event", "fixed", "foreach", "implicit", "internal", "is",
-                "lock", "object", "out", "params", "readonly", "ref", "sbyte", "sealed",
-                "stackalloc", "string", "uint", "ulong", "unchecked", "unsafe", "ushort",
-                "var", "virtual", "where", "yield", "record", "init", "nameof", "null",
-            ]),
-            capitalizedTypes: true
-        )
-        map["cs"] = csharp
-
-        let php = LanguageDef(
-            name: "PHP",
-            keywords: [
-                "abstract", "and", "array", "as", "break", "callable", "case", "catch",
-                "class", "clone", "const", "continue", "declare", "default", "do", "echo",
-                "else", "elseif", "empty", "enddeclare", "endfor", "endforeach", "endif",
-                "endswitch", "endwhile", "enum", "extends", "final", "finally", "fn",
-                "for", "foreach", "function", "global", "goto", "if", "implements",
-                "include", "include_once", "instanceof", "insteadof", "interface", "isset",
-                "list", "match", "namespace", "new", "or", "print", "private", "protected",
-                "public", "readonly", "require", "require_once", "return", "static",
-                "switch", "throw", "trait", "try", "unset", "use", "var", "while", "xor",
-                "yield", "true", "false", "null", "this", "self", "parent",
-            ],
-            lineComments: ["//", "#"],
-            capitalizedTypes: true
-        )
-        map["php"] = php
-
-        let shell = LanguageDef(
-            name: "Shell",
-            keywords: [
-                "if", "then", "else", "elif", "fi", "case", "esac", "for", "while",
-                "until", "do", "done", "in", "function", "select", "time", "break",
-                "continue", "return", "exit", "export", "local", "readonly", "declare",
-                "unset", "shift", "source", "alias", "echo", "printf", "read", "cd",
-                "set", "trap", "eval", "exec", "true", "false", "test",
-            ],
-            lineComments: ["#"],
-            blockCommentStart: nil, blockCommentEnd: nil
-        )
-        map["sh"] = shell
-        map["bash"] = shell
-        map["zsh"] = shell
-        map["fish"] = shell
-
-        let yaml = LanguageDef(
-            name: "YAML",
-            keywords: ["true", "false", "null", "yes", "no", "on", "off"],
-            lineComments: ["#"],
-            blockCommentStart: nil, blockCommentEnd: nil
-        )
-        map["yaml"] = yaml
-        map["yml"] = yaml
-        map["toml"] = yaml
-        map["ini"] = LanguageDef(
-            name: "INI", keywords: [],
-            lineComments: ["#", ";"],
-            blockCommentStart: nil, blockCommentEnd: nil
-        )
-
-        map["json"] = LanguageDef(
-            name: "JSON",
-            keywords: ["true", "false", "null"],
-            lineComments: ["//"],  // 容忍 JSONC
-            stringDelimiters: ["\""]
-        )
-        map["jsonc"] = map["json"]
-
-        let markup = LanguageDef(
-            name: "HTML/XML",
-            keywords: [],
-            lineComments: [],
-            blockCommentStart: "<!--", blockCommentEnd: "-->"
-        )
-        map["html"] = markup
-        map["htm"] = markup
-        map["xml"] = markup
-        map["svg"] = markup
-        map["plist"] = markup
-        map["vue"] = markup
-        map["svelte"] = markup
-
-        map["css"] = LanguageDef(
-            name: "CSS",
-            keywords: ["important", "inherit", "initial", "unset", "auto", "none"],
-            lineComments: []
-        )
-        map["scss"] = LanguageDef(
-            name: "SCSS",
-            keywords: ["important", "inherit", "mixin", "include", "extend", "if", "else", "for", "each", "while", "function", "return", "use", "forward"],
-            lineComments: ["//"]
-        )
-        map["less"] = map["scss"]
-
-        let markdown = LanguageDef(
-            name: "Markdown",
-            keywords: [],
-            lineComments: [],
-            blockCommentStart: nil, blockCommentEnd: nil,
-            stringDelimiters: []
-        )
-        map["md"] = markdown
-        map["markdown"] = markdown
-        map["rst"] = markdown
-
-        map["sql"] = LanguageDef(
-            name: "SQL",
-            keywords: [
-                "select", "from", "where", "insert", "into", "values", "update", "set",
-                "delete", "create", "table", "index", "view", "drop", "alter", "add",
-                "join", "inner", "left", "right", "outer", "full", "on", "as", "and",
-                "or", "not", "null", "is", "in", "like", "between", "order", "by",
-                "group", "having", "limit", "offset", "distinct", "union", "all",
-                "exists", "case", "when", "then", "else", "end", "primary", "key",
-                "foreign", "references", "default", "constraint", "unique", "begin",
-                "commit", "rollback", "transaction",
-                "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
-                "DELETE", "CREATE", "TABLE", "INDEX", "VIEW", "DROP", "ALTER", "ADD",
-                "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "ON", "AS", "AND",
-                "OR", "NOT", "NULL", "IS", "IN", "LIKE", "BETWEEN", "ORDER", "BY",
-                "GROUP", "HAVING", "LIMIT", "OFFSET", "DISTINCT", "UNION", "ALL",
-                "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END", "PRIMARY", "KEY",
-                "FOREIGN", "REFERENCES", "DEFAULT", "CONSTRAINT", "UNIQUE", "BEGIN",
-                "COMMIT", "ROLLBACK", "TRANSACTION",
-            ],
-            lineComments: ["--"]
-        )
-
-        return map
+        for dto in doc.languages {
+            let def = dto.toDef()
+            for ext in dto.extensions { map[ext.lowercased()] = def }
+        }
+        return (map, doc.filenames)
     }()
+
+    private static var languages: [String: LanguageDef] { registry.byExtension }
+    private static var filenameMap: [String: String] { registry.byFilename }
+
+    /// 已加载的语言扩展名数量（0 表示 languages.json 没加载到——资源缺失或打包漏拷 bundle）。
+    public static var loadedExtensionCount: Int { registry.byExtension.count }
 }

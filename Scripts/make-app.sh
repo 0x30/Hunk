@@ -26,6 +26,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/$CONFIG/Hunk" "$APP/Contents/MacOS/Hunk"
 cp "$ROOT/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+# SPM 资源包（HunkCore 的 languages.json 等）：Bundle.module 在可执行文件同目录查找，
+# 不拷贝则打包版语法高亮的语言表加载不到（降级为纯文本）。
+for bundle in ".build/$CONFIG/"*.bundle; do
+    [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/MacOS/"
+done
+
 # 声明中英双语言包：AppKit 据此按用户/应用语言加载系统菜单（文件/编辑/窗口…）
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj" "$APP/Contents/Resources/en.lproj"
 touch "$APP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" \
