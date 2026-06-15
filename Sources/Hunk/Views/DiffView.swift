@@ -153,7 +153,7 @@ struct DiffDetailView: View {
     private var selectionBar: some View {
         HStack(spacing: 12) {
             Label(
-                tr("已选 \(vm.selectedLineIDs.count) 行", "\(vm.selectedLineIDs.count) lines selected"),
+                tr("已选 \(vm.selectedLineIDs.count) 行", "\(vm.selectedLineIDs.count) line(s) selected"),
                 systemImage: "checkmark.square.fill"
             )
             .font(.callout)
@@ -325,6 +325,7 @@ struct DiffDetailView: View {
             }
         } else {
             ExpanderRow(count: gap.newRange.count) {
+                Diagnostics.log("展开未更改区 gap=\(gap.id) 行数=\(gap.newRange.count)")
                 expandedGaps.insert(gap.id)
             }
         }
@@ -483,7 +484,7 @@ private struct ExpanderRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up.and.down.text.horizontal")
                     .font(.system(size: 9))
-                Text(tr("展开 \(count) 行未更改的内容", "Expand \(count) unchanged lines"))
+                Text(tr("展开 \(count) 行未更改的内容", "Expand \(count) unchanged line(s)"))
                     .font(.caption)
             }
             .foregroundStyle(hovering ? Color.accentColor : Color.secondary)

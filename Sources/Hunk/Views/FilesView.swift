@@ -16,8 +16,17 @@ struct FilesView: View {
         var id: String { node.path }
     }
 
+    /// 诊断：body 每次求值都会重算 rows（重新 flatten 整棵展开的树）。
+    /// 用节流计数确认暴涨期是否在被高频重算 + 当前行数规模。
+    private static var rowsEvalCount = 0
+
     private var rows: [Row] {
-        flatten(vm.workspaceTree, depth: 0)
+        let r = flatten(vm.workspaceTree, depth: 0)
+        Self.rowsEvalCount += 1
+        if Self.rowsEvalCount % 100 == 0 {
+            Diagnostics.log("FilesView.rows 第\(Self.rowsEvalCount)次求值 行数=\(r.count)")
+        }
+        return r
     }
 
     private func flatten(_ nodes: [FileNode], depth: Int) -> [Row] {

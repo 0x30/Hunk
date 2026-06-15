@@ -16,6 +16,8 @@ enum MemoryGuard {
     private static var warned = false
     /// 上次采样的内存，用于检测快速增长
     private static var lastSampleMB: UInt64 = 0
+    /// 已抓过「进行中」快照，避免每 2s 重复 dump（覆盖写，只留最近一张）
+    private static var grewDumped = false
 
     /// 当前内存占用（字节）：取 phys_footprint 与 RSS(resident_size) 的较大值。
     /// 关键：图形/图层内存（CoreAnimation 图层、IOSurface、GPU 纹理）只体现在 RSS，
@@ -54,26 +56,34 @@ enum MemoryGuard {
             let delta = Int64(mb) - Int64(lastSampleMB)
             if delta > 300 {
                 Diagnostics.log("⚠️ 内存快速增长 +\(delta)MB（采样间隔 2s）")
+                // 暴涨「进行中」就抓一张分区快照：和退出时那张对比，即可看出
+                // 这 1~2 秒里涨的是哪个区（MALLOC 堆 / IOSurface / 图层）。只抓一次。
+                if !grewDumped {
+                    grewDumped = true
+                    dumpVmmapSummary(to: "/tmp/hunk_vmmap_grow.txt")
+                    // heap 按对象类型聚合，直接看出 GB 级堆里堆的是什么（String/Array/
+                    // AttributedString/自定义类）。在「刚开始涨」时抓最安全（内存尚低）。
+                    dumpHeap(to: "/tmp/hunk_heap_grow.txt")
+                    Diagnostics.log("已抓进行中分区+堆快照 → /tmp/hunk_vmmap_grow.txt /tmp/hunk_heap_grow.txt")
+                }
             } else {
                 Diagnostics.log("内存采样")
+                if mb < softLimitMB { grewDumped = false }  // 回落到安全区后，允许下次暴涨再抓
             }
             lastSampleMB = mb
 
             if mb >= hardLimitMB {
-                Diagnostics.log("‼️ 超过硬上限 \(hardLimitMB)MB，dump 内存分区后主动退出")
+                Diagnostics.log("‼️ 超过硬上限 \(hardLimitMB)MB，dump 内存分区+堆后主动退出")
                 NSLog("[MemoryGuard] %lluMB 超过硬上限，主动退出", mb)
                 // 退出前 dump 自己的内存分区，定位 GB 级内存堆在哪个区（IOSurface/图层/MALLOC）
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/vmmap")
-                task.arguments = ["--summary", "\(getpid())"]
-                if let out = FileHandle(forWritingAtPath: "/tmp/hunk_vmmap_exit.txt")
-                    ?? { FileManager.default.createFile(atPath: "/tmp/hunk_vmmap_exit.txt", contents: nil)
-                         return FileHandle(forWritingAtPath: "/tmp/hunk_vmmap_exit.txt") }() {
-                    task.standardOutput = out
-                    try? task.run()
-                    task.waitUntilExit()
-                    try? out.close()
+                dumpVmmapSummary(to: "/tmp/hunk_vmmap_exit.txt")
+                // 暴涨太突然、没在 grow 阶段抓到堆时，退出前补一张——确保「杀死前」
+                // 一定知道堆里是什么。已抓过就不重复（heap 很慢，避免拖到系统 OOM）。
+                if !grewDumped {
+                    Diagnostics.log("退出前补抓堆快照 → /tmp/hunk_heap_exit.txt")
+                    dumpHeap(to: "/tmp/hunk_heap_exit.txt")
                 }
+                Diagnostics.log("dump 完成，退出码 137（堆快照见 /tmp/hunk_heap_*.txt）")
                 exit(137)  // 主动退出，避免吃满内存触发系统级 OOM 连锁
             } else if mb >= softLimitMB {
                 if !warned {
@@ -84,6 +94,34 @@ enum MemoryGuard {
             } else {
                 warned = false
             }
+        }
+    }
+
+    /// 把本进程的 vmmap 分区汇总写到 path（覆盖写）。退出 dump 与「进行中」快照共用。
+    private static func dumpVmmapSummary(to path: String) {
+        runTool("/usr/bin/vmmap", ["--summary", "\(getpid())"], to: path)
+    }
+
+    /// 把本进程的堆按对象类型聚合（heap --sortBySize）写到 path——直接看出 GB 级
+    /// 堆里堆的是什么类型的对象（String / Array / AttributedString / 自定义类）。
+    /// 比 vmmap 慢（要遍历所有对象），所以只在「刚开始涨」或退出兜底时抓一次。
+    private static func dumpHeap(to path: String) {
+        runTool("/usr/bin/heap", ["--sortBySize", "\(getpid())"], to: path)
+    }
+
+    /// 跑一个诊断工具、stdout 重定向到 path、同步等它结束。
+    private static func runTool(_ tool: String, _ args: [String], to path: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: tool)
+        task.arguments = args
+        if let out = FileHandle(forWritingAtPath: path)
+            ?? { FileManager.default.createFile(atPath: path, contents: nil)
+                 return FileHandle(forWritingAtPath: path) }() {
+            task.standardOutput = out
+            task.standardError = FileHandle.nullDevice
+            try? task.run()
+            task.waitUntilExit()
+            try? out.close()
         }
     }
 }
