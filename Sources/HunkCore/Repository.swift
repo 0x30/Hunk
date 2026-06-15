@@ -16,7 +16,7 @@ public final class Repository: @unchecked Sendable {
         let result = try await client.run(["rev-parse", "--show-toplevel"])
         let top = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !top.isEmpty else {
-            throw GitError(command: "rev-parse --show-toplevel", exitCode: 1, stderr: "不是 git 仓库")
+            throw GitError(command: "rev-parse --show-toplevel", exitCode: 1, stderr: ctr("不是 git 仓库", "Not a git repository"))
         }
         return Repository(root: URL(fileURLWithPath: top))
     }
@@ -41,7 +41,7 @@ public final class Repository: @unchecked Sendable {
         // 分离 HEAD：退回短 hash
         let head = try await git.run(["rev-parse", "--short", "HEAD"], allowedExitCodes: [0, 128])
         let hash = head.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return hash.isEmpty ? "(无提交)" : "(分离头 \(hash))"
+        return hash.isEmpty ? ctr("(无提交)", "(no commits)") : ctr("(分离头 \(hash))", "(detached \(hash))")
     }
 
     public func headSummary() async throws -> String? {

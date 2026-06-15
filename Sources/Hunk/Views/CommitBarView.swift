@@ -74,7 +74,7 @@ struct CommitBarView: View {
                 .padding(6)
                 .help(vm.stagedChanges.isEmpty
                       ? tr("没有已暂存的更改", "No staged changes")
-                      : tr("提交 \(vm.stagedChanges.count) 个已暂存的文件 (⌘⏎)", "Commit \(vm.stagedChanges.count) staged files (⌘⏎)"))
+                      : tr("提交 \(vm.stagedChanges.count) 个已暂存的文件 (⌘⏎)", "Commit \(vm.stagedChanges.count) staged file(s) (⌘⏎)"))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)

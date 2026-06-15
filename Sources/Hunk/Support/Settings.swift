@@ -27,6 +27,20 @@ func tr(_ zh: String, _ en: String) -> String {
     SettingsStore.shared.resolvedLanguage == .zh ? zh : en
 }
 
+/// 当前 app 语言对应的 Locale（跟随设置、不跟系统）——相对时间与绝对日期格式化都用它。
+/// 否则 Foundation 的格式化默认走系统 locale，app 内切到 English 后仍显示中文。
+var appLocale: Locale {
+    Locale(identifier: SettingsStore.shared.resolvedLanguage == .zh ? "zh_Hans" : "en")
+}
+
+/// 跟随 app 语言设置的相对时间（"3周前" / "3w ago"）。
+func relativeTime(_ date: Date, to reference: Date = Date()) -> String {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    formatter.locale = appLocale
+    return formatter.localizedString(for: date, relativeTo: reference)
+}
+
 // MARK: - 设置存储
 
 /// 应用级设置，全部持久化到 UserDefaults，变更实时发布。

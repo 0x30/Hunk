@@ -169,12 +169,14 @@ private struct ExtensionSettings: View {
     @ObservedObject var extensions = ExtensionStore.shared
     @State private var customReference = ""
 
-    private let recommended: [(reference: String, title: String, note: String)] = [
-        ("PKief.material-icon-theme", "Material Icon Theme", "文件图标 / File icons"),
-        ("zhuangtongfa.material-theme", "One Dark Pro", "颜色主题 / Color theme"),
-        ("dracula-theme.theme-dracula", "Dracula Official", "颜色主题 / Color theme"),
-        ("GitHub.github-vscode-theme", "GitHub Theme", "颜色主题 / Color theme"),
-    ]
+    private var recommended: [(reference: String, title: String, note: String)] {
+        [
+            ("PKief.material-icon-theme", "Material Icon Theme", tr("文件图标", "File icons")),
+            ("zhuangtongfa.material-theme", "One Dark Pro", tr("颜色主题", "Color theme")),
+            ("dracula-theme.theme-dracula", "Dracula Official", tr("颜色主题", "Color theme")),
+            ("GitHub.github-vscode-theme", "GitHub Theme", tr("颜色主题", "Color theme")),
+        ]
+    }
 
     var body: some View {
         Form {

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import notify
+import HunkCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cliNotifyToken: Int32 = 0
@@ -33,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 避免拖垮整个系统的 OOM 连锁）。日志在 ~/Library/Logs/Hunk/session.log
         Diagnostics.start()
         MemoryGuard.start()
+        // HunkCore 够不到 app 层的 tr，启动时注入翻译器，让 git 错误/状态描述跟随语言
+        CoreLocale.translate = { zh, en in tr(zh, en) }
+        // 确认语法高亮的语言表已从 bundle 加载（0 = 打包漏拷 SPM 资源包，高亮会降级纯文本）
+        Diagnostics.log("语言表加载 \(Lexer.loadedExtensionCount) 个扩展名")
 
         // AppKit 接管「文件 → 最近打开」（两行：项目名 + 灰色路径）。
         // SwiftUI 建好菜单的时机晚于此处，故在窗口出现、应用激活、菜单栏追踪时都确保接管一次（幂等）。

@@ -54,7 +54,7 @@ struct GlobalSearchView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else if !hits.isEmpty {
-                        Text(tr("\(hits.count) 个结果", "\(hits.count) results"))
+                        Text(tr("\(hits.count) 个结果", "\(hits.count) result(s)"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

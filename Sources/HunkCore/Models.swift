@@ -27,14 +27,14 @@ public enum ChangeKind: String, Hashable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .added: return "已添加"
-        case .modified: return "已修改"
-        case .deleted: return "已删除"
-        case .renamed: return "已重命名"
-        case .copied: return "已复制"
-        case .typeChanged: return "类型变更"
-        case .untracked: return "未跟踪"
-        case .conflicted: return "冲突"
+        case .added: return ctr("已添加", "Added")
+        case .modified: return ctr("已修改", "Modified")
+        case .deleted: return ctr("已删除", "Deleted")
+        case .renamed: return ctr("已重命名", "Renamed")
+        case .copied: return ctr("已复制", "Copied")
+        case .typeChanged: return ctr("类型变更", "Type changed")
+        case .untracked: return ctr("未跟踪", "Untracked")
+        case .conflicted: return ctr("冲突", "Conflicted")
         }
     }
 }

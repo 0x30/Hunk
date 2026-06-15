@@ -304,9 +304,7 @@ private struct HistoryRow: View {
     }
 
     private func relative(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        relativeTime(date)
     }
 }
 
@@ -364,7 +362,7 @@ struct HistoryDetailView: View {
                     Text(commit.subject)
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
-                    Text("\(commit.shortHash) · \(commit.author) · \(commit.date.formatted(date: .abbreviated, time: .shortened))")
+                    Text("\(commit.shortHash) · \(commit.author) · \(commit.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(appLocale)))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -380,7 +378,7 @@ struct HistoryDetailView: View {
 
             Spacer()
 
-            Text(tr("\(vm.historyFiles.count) 个文件", "\(vm.historyFiles.count) files"))
+            Text(tr("\(vm.historyFiles.count) 个文件", "\(vm.historyFiles.count) file(s)"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

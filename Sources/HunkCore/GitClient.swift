@@ -22,7 +22,9 @@ public struct GitError: Error, LocalizedError {
 
     public var errorDescription: String? {
         let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "git \(command) 失败（退出码 \(exitCode)）" + (detail.isEmpty ? "" : "：\(detail)")
+        // git 框架文案跟随语言；detail 是 git 原始输出，保持原样
+        let head = ctr("git \(command) 失败（退出码 \(exitCode)）", "git \(command) failed (exit \(exitCode))")
+        return head + (detail.isEmpty ? "" : ctr("：", ": ") + detail)
     }
 }
 
