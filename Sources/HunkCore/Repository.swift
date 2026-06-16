@@ -163,8 +163,9 @@ public final class Repository: @unchecked Sendable {
 
     public func branches() async throws -> [Branch] {
         let result = try await git.run(["for-each-ref", "refs/heads", "--format=%(HEAD)%(refname:short)"])
-        // 已合并进 HEAD 的分支集合，用于在列表里标记「已合并」
-        let mergedResult = try await git.run(["branch", "--format=%(refname:short)", "--merged"])
+        // 已合并进 HEAD 的分支集合，用于在列表里标记「已合并」。
+        // 空仓库（unborn HEAD）跑 --merged 会 fatal，容错为「无已合并分支」。
+        let mergedResult = try await git.run(["branch", "--format=%(refname:short)", "--merged"], allowedExitCodes: [0, 128])
         let merged = Set(mergedResult.stdout.split(separator: "\n").map(String.init))
         return result.stdout
             .split(separator: "\n")
@@ -190,7 +191,7 @@ public final class Repository: @unchecked Sendable {
 
     /// 已合并进当前分支的本地分支（不含当前分支与 main/master/develop 主干）。
     public func mergedBranches() async throws -> [String] {
-        let result = try await git.run(["branch", "--format=%(refname:short)", "--merged"])
+        let result = try await git.run(["branch", "--format=%(refname:short)", "--merged"], allowedExitCodes: [0, 128])
         let protected: Set<String> = ["main", "master", "develop"]
         let current = try await currentBranch()
         return result.stdout

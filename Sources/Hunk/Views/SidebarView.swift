@@ -89,12 +89,15 @@ struct SidebarNavButtons: View {
                 systemImage: "folder",
                 help: tr("文件 (⌘1)", "Files (⌘1)")
             )
-            navButton(
-                tab: .changes,
-                systemImage: "plus.forwardslash.minus",
-                badge: vm.changes.count,
-                help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
-            )
+            // 源代码管理仅 git 仓库可用
+            if vm.isGitRepo {
+                navButton(
+                    tab: .changes,
+                    systemImage: "plus.forwardslash.minus",
+                    badge: vm.changes.count,
+                    help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
+                )
+            }
         }
     }
 

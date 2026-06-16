@@ -20,6 +20,10 @@ final class RepoViewModel: ObservableObject {
     // MARK: 仓库状态
 
     @Published var repoRoot: URL?
+    /// 当前根是否 git 仓库（false = 非 git 目录 / 单文件 → 隐藏 git 功能）
+    @Published var isGitRepo = false
+    /// 单文件模式（无文件树；tab 右键只保留复制路径 / Finder）
+    @Published var isStandaloneFile = false
     @Published var changes: [FileChange] = []
     @Published var branches: [Branch] = []
     @Published var stashes: [Stash] = []
@@ -441,29 +445,31 @@ final class RepoViewModel: ObservableObject {
 
     func open(_ url: URL) async {
         Diagnostics.log("open repo \(url.path)")
-        do {
-            let repository = try await Repository.discover(at: url)
-            repo = repository
-            repoRoot = repository.root
-            selection = nil
-            diff = nil
-            editorPath = nil
-            // 换仓库重置文件树展开状态，让新仓库重新做首层展开
-            fileTreeExpanded = []
-            fileTreeDidInitialExpand = false
-            defaults.set(repository.root.path, forKey: "lastRepo")
-            var recents = defaults.stringArray(forKey: "recentRepos") ?? []
-            recents.removeAll { $0 == repository.root.path }
-            recents.insert(repository.root.path, at: 0)
-            defaults.set(Array(recents.prefix(8)), forKey: "recentRepos")
-            await refresh()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        // 非 git 目录也能打开：discover 失败就以 url 本身作根（无 git 功能），不报错
+        let repository = try? await Repository.discover(at: url)
+        let root = repository?.root ?? url
+        repo = repository
+        isGitRepo = repository != nil
+        isStandaloneFile = false
+        repoRoot = root
+        selection = nil
+        diff = nil
+        editorPath = nil
+        // 换根重置文件树展开状态，让新根重新做首层展开
+        fileTreeExpanded = []
+        fileTreeDidInitialExpand = false
+        defaults.set(root.path, forKey: "lastRepo")
+        var recents = defaults.stringArray(forKey: "recentRepos") ?? []
+        recents.removeAll { $0 == root.path }
+        recents.insert(root.path, at: 0)
+        defaults.set(Array(recents.prefix(8)), forKey: "recentRepos")
+        await refresh()
     }
 
     func closeRepo() {
         repo = nil
+        isGitRepo = false
+        isStandaloneFile = false
         repoRoot = nil
         changes = []
         selection = nil
@@ -482,10 +488,21 @@ final class RepoViewModel: ObservableObject {
     private var isRefreshing = false
 
     func refresh() async {
-        guard let repo, !isRefreshing else { return }
+        guard !isRefreshing else { return }
         isRefreshing = true
+        defer { isRefreshing = false }
+        // 非 git 目录：每次刷新尝试重新 discover（用户可能刚 git init），仍不是就只刷文件树
+        if repo == nil, !isStandaloneFile, let root = repoRoot,
+           let rediscovered = try? await Repository.discover(at: root) {
+            repo = rediscovered
+            isGitRepo = true
+        }
+        guard let repo else {
+            await refreshNonGit()
+            return
+        }
         Diagnostics.log("refresh 开始（变更 \(changes.count)）")
-        defer { isRefreshing = false; Diagnostics.log("refresh 结束") }
+        defer { Diagnostics.log("refresh 结束") }
         do {
             async let status = repo.status()
             async let branches = repo.branches()
@@ -531,6 +548,58 @@ final class RepoViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// 非 git 根的刷新：清空所有 git 状态，文件树改用文件系统列。
+    private func refreshNonGit() async {
+        changes = []
+        branches = []
+        stashes = []
+        history = []
+        currentBranch = ""
+        sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
+        headSummary = nil
+        guard let root = repoRoot, !isStandaloneFile else {
+            workspaceFiles = []        // 单文件模式：无文件树
+            workspaceTree = []
+            return
+        }
+        let files = await Task.detached(priority: .userInitiated) {
+            RepoViewModel.listFilesOnDisk(root: root)
+        }.value
+        if files != workspaceFiles {
+            workspaceFiles = files
+            workspaceTree = FileTreeBuilder.build(paths: files)
+            Diagnostics.log("非 git 文件树 文件=\(files.count) 顶层=\(workspaceTree.count)")
+        }
+    }
+
+    /// 文件系统列文件（非 git 目录用）：排除 .git / 常见大目录 / 隐藏文件，限量防 OOM。
+    nonisolated static func listFilesOnDisk(root: URL, limit: Int = 5000) -> [String] {
+        let skip: Set<String> = [
+            ".git", "node_modules", ".build", "build", "target", "dist", ".next",
+            "DerivedData", ".venv", "venv", "__pycache__", ".gradle", "Pods", ".idea", ".cache",
+        ]
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        let prefixLen = root.path.count + 1
+        var result: [String] = []
+        for case let url as URL in enumerator {
+            if result.count >= limit { break }
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir {
+                if skip.contains(url.lastPathComponent) { enumerator.skipDescendants() }
+                continue
+            }
+            if url.path.count > prefixLen {
+                result.append(String(url.path.dropFirst(prefixLen)))
+            }
+        }
+        return result
     }
 
     private func assignIfChanged<T: Equatable>(_ value: T, to keyPath: ReferenceWritableKeyPath<RepoViewModel, T>) {
@@ -667,7 +736,6 @@ final class RepoViewModel: ObservableObject {
     // MARK: - 编辑器（多标签）
 
     func openEditor(path: String) {
-        guard let repo else { return }
         if path != editorPath {
             editorLanguageOverride = nil  // 换文件才重置手动选的语言
             editorCursorLine = 1; editorCursorColumn = 1; editorSelectedLines = 0
@@ -689,7 +757,7 @@ final class RepoViewModel: ObservableObject {
         }
 
         // 二进制文件（含 NUL）→ 走 hex 查看器，不把字节读成乱码文本
-        if !isUntitled(path), BinaryDetector.isBinary(url: repo.fileURL(for: path)) {
+        if !isUntitled(path), BinaryDetector.isBinary(url: editorFileURL(path)) {
             editorPath = path
             editorText = ""
             editorDirty = false
@@ -707,7 +775,7 @@ final class RepoViewModel: ObservableObject {
             editorText = ""
             editorDirty = false
         } else {
-            let url = repo.fileURL(for: path)
+            let url = editorFileURL(path)
             do {
                 editorText = try String(contentsOf: url, encoding: .utf8)
             } catch {
@@ -718,6 +786,28 @@ final class RepoViewModel: ObservableObject {
         editorPath = path
         blameText = nil
         reparseConflicts()
+    }
+
+    /// 编辑器读盘用的 URL：绝对路径（单文件模式 / 仓库外文件）直接用，相对路径走仓库根。
+    func editorFileURL(_ path: String) -> URL {
+        path.hasPrefix("/")
+            ? URL(fileURLWithPath: path)
+            : (repo?.fileURL(for: path) ?? URL(fileURLWithPath: path))
+    }
+
+    /// 打开单个文件（不要求 git 仓库）：以文件所在目录为根、repo=nil，纯查看/编辑。
+    func openStandaloneFile(_ url: URL) {
+        Diagnostics.log("单文件模式打开 \(url.lastPathComponent)（无 git 仓库）")
+        repo = nil
+        isGitRepo = false
+        isStandaloneFile = true
+        repoRoot = url.deletingLastPathComponent()  // 目录作根（无 git），让主界面显示编辑器
+        sidebarVisible = false                       // 单文件无文件树，收起侧边栏只看文件
+        workspaceFiles = []
+        workspaceTree = []
+        changes = []
+        diff = nil
+        selection = .file(path: url.path)
     }
 
     /// 状态栏：更新光标行列与选中行数。
@@ -872,13 +962,13 @@ final class RepoViewModel: ObservableObject {
             promptSaveUntitled(path, closeAfterSave: false)
             return
         }
-        guard let repo, let path = editorPath, editorDirty else { return }
+        guard let path = editorPath, editorDirty else { return }
         do {
-            try editorText.write(to: repo.fileURL(for: path), atomically: true, encoding: .utf8)
+            try editorText.write(to: editorFileURL(path), atomically: true, encoding: .utf8)
             editorDirty = false
             buffers[path] = EditorBuffer(text: editorText, dirty: false)
             blameCache = blameCache.filter { !$0.key.hasPrefix("\(path)#") }
-            await refresh()
+            if repo != nil { await refresh() }  // 单文件模式无 git，无需刷新状态
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1297,11 +1387,15 @@ final class RepoViewModel: ObservableObject {
         Task {
             if isDirectory.boolValue {
                 await open(url)
-            } else {
+            } else if (try? await Repository.discover(at: url.deletingLastPathComponent())) != nil {
+                // 文件在 git 仓库内：打开仓库并定位到该文件
                 await open(url.deletingLastPathComponent())
                 if let root = repoRoot, url.path.hasPrefix(root.path + "/") {
                     revealInFiles(String(url.path.dropFirst(root.path.count + 1)))
                 }
+            } else {
+                // 文件不在任何 git 仓库：单文件查看模式，不报错
+                openStandaloneFile(url)
             }
         }
     }
@@ -1336,12 +1430,11 @@ final class RepoViewModel: ObservableObject {
     // MARK: - 杂项
 
     func revealInFinder(_ path: String) {
-        guard let repo else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([repo.fileURL(for: path)])
+        NSWorkspace.shared.activateFileViewerSelecting([editorFileURL(path)])
     }
 
     func copyPath(_ path: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
+        NSPasteboard.general.setString(editorFileURL(path).path, forType: .string)
     }
 }

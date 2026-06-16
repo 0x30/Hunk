@@ -105,6 +105,17 @@ enum CLIOpenRouter {
             return
         }
 
+        // 文件不在任何 git 仓库 → 单文件查看（复用空白窗口，否则当前/首个窗口，不强开仓库）
+        if let file, !directoryInGitRepo(directory) {
+            let target = vms.first(where: { $0.repoRoot == nil })
+                ?? vms.first(where: { $0.window?.isKeyWindow == true })
+                ?? vms[0]
+            target.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            target.openStandaloneFile(URL(fileURLWithPath: file))
+            return
+        }
+
         // 2. 有空白窗口（欢迎页）→ 就地打开
         if let vm = vms.first(where: { $0.repoRoot == nil }) {
             vm.window?.makeKeyAndOrderFront(nil)
@@ -117,6 +128,18 @@ enum CLIOpenRouter {
         pendingReveal = file
         let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
         requester.openWindowRequest = directory.path
+    }
+
+    /// 同步判断目录是否在 git 仓库内（向上找 .git）；route 是同步的，不能 await discover。
+    private static func directoryInGitRepo(_ dir: URL) -> Bool {
+        var d = dir
+        while d.path != "/", !d.path.isEmpty {
+            if FileManager.default.fileExists(atPath: d.appendingPathComponent(".git").path) { return true }
+            let parent = d.deletingLastPathComponent()
+            if parent.path == d.path { break }
+            d = parent
+        }
+        return false
     }
 
     static func takePending() -> String? {

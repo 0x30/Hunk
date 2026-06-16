@@ -14,8 +14,8 @@ struct EditorView: View {
                 ConflictBar()
                 Divider()
             }
-            if vm.editorIsBinary, let root = vm.repoRoot {
-                HexView(url: root.appendingPathComponent(path))
+            if vm.editorIsBinary {
+                HexView(url: vm.editorFileURL(path))
             } else {
                 PlainTextEditor(
                     text: $vm.editorText,

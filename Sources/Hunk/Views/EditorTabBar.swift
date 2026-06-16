@@ -10,22 +10,24 @@ struct EditorTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // blame 视图开关：查看当前文件的逐块归属与提交
-            Button {
-                vm.toggleBlameView()
-            } label: {
-                Image(systemName: "person.text.rectangle")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(blameActive ? Color.accentColor : Color.secondary)
-                    .frame(width: 30, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(tr("Blame 视图：查看每一块代码的作者与提交", "Blame view: who wrote each block"))
+            // blame 视图开关（仅 git 仓库）：查看当前文件的逐块归属与提交
+            if vm.isGitRepo {
+                Button {
+                    vm.toggleBlameView()
+                } label: {
+                    Image(systemName: "person.text.rectangle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(blameActive ? Color.accentColor : Color.secondary)
+                        .frame(width: 30, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(tr("Blame 视图：查看每一块代码的作者与提交", "Blame view: who wrote each block"))
 
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.5))
-                .frame(width: 1, height: 16)
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor).opacity(0.5))
+                    .frame(width: 1, height: 16)
+            }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
@@ -104,8 +106,14 @@ private struct EditorTabItem: View {
             Button(tr("关闭右侧", "Close to the Right")) { vm.closeTabsToTheRight(of: path) }
             if !vm.isUntitled(path) {
                 Divider()
-                Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
-                Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
+                // 有文件树时才有「在文件列表中显示」（单文件模式无树）
+                if !vm.workspaceTree.isEmpty {
+                    Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
+                }
+                // 文件历史需要 git
+                if vm.isGitRepo {
+                    Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
+                }
                 Divider()
                 Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
                 Button(tr("复制路径", "Copy Path")) { vm.copyPath(path) }
