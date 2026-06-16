@@ -132,8 +132,24 @@ struct HistoryPanel: View {
         ScrollView {
             // spacing 0 + 固定行高：泳道线在行间无缝衔接
             LazyVStack(spacing: 0) {
-                ForEach(vm.history) { row in
+                ForEach(Array(vm.history.enumerated()), id: \.element.id) { index, row in
                     HistoryRow(row: row, maxColumns: vm.historyMaxColumns)
+                        .onAppear {
+                            // 接近底部时预加载下一批
+                            if index >= vm.history.count - 8 { vm.loadMoreHistory() }
+                        }
+                }
+                if vm.isLoadingMoreHistory {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                } else if !vm.hasMoreHistory, !vm.history.isEmpty {
+                    Text(tr("已到最早的提交", "Beginning of history"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                 }
             }
         }

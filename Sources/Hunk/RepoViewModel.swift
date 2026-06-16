@@ -374,6 +374,10 @@ final class RepoViewModel: ObservableObject {
     @Published var history: [GraphRow] = []
     @Published var historyMaxColumns = 1
     @Published var historyFilterPath: String?
+    /// 历史分页：当前加载条数上限（触底自动 +500）、是否还有更多、是否正在加载
+    @Published var historyLimit = 300
+    @Published var hasMoreHistory = true
+    @Published var isLoadingMoreHistory = false
     @Published var historyDetail: HistoryDetail?
     @Published var historyFiles: [Repository.CommitFileChange] = []
     @Published var historyDiff: FileDiff?
@@ -505,7 +509,10 @@ final class RepoViewModel: ObservableObject {
                 self.workspaceTree = FileTreeBuilder.build(paths: newFiles)
                 Diagnostics.log("工作区树重建 文件=\(newFiles.count) 顶层节点=\(self.workspaceTree.count)")
             }
-            let graph = GraphBuilder.rows(from: (try? await repo.history(path: self.historyFilterPath)) ?? [])
+            // 保持已加载的分页量（用户触底加载到多少，刷新后维持多少）
+            let commits = (try? await repo.history(limit: self.historyLimit, path: self.historyFilterPath)) ?? []
+            hasMoreHistory = commits.count >= self.historyLimit
+            let graph = GraphBuilder.rows(from: commits)
             assignIfChanged(graph.rows, to: \.history)
             assignIfChanged(graph.maxColumns, to: \.historyMaxColumns)
 
@@ -1186,11 +1193,32 @@ final class RepoViewModel: ObservableObject {
 
     func setHistoryFilter(_ path: String?) {
         historyFilterPath = path
+        historyLimit = 300       // 换过滤条件，分页从头开始
+        hasMoreHistory = true
         Task {
             guard let repo else { return }
-            let graph = GraphBuilder.rows(from: (try? await repo.history(path: path)) ?? [])
+            let commits = (try? await repo.history(limit: historyLimit, path: path)) ?? []
+            hasMoreHistory = commits.count >= historyLimit
+            let graph = GraphBuilder.rows(from: commits)
             history = graph.rows
             historyMaxColumns = graph.maxColumns
+        }
+    }
+
+    /// 历史列表触底：再多加载一批（泳道线要连续，所以整段重拉重算，不能简单 append）。
+    func loadMoreHistory() {
+        guard hasMoreHistory, !isLoadingMoreHistory, let repo else { return }
+        isLoadingMoreHistory = true
+        let newLimit = historyLimit + 500
+        let path = historyFilterPath
+        Task {
+            let commits = (try? await repo.history(limit: newLimit, path: path)) ?? []
+            historyLimit = newLimit
+            hasMoreHistory = commits.count >= newLimit
+            let graph = GraphBuilder.rows(from: commits)
+            history = graph.rows
+            historyMaxColumns = graph.maxColumns
+            isLoadingMoreHistory = false
         }
     }
 
