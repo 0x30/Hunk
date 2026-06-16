@@ -26,11 +26,24 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/$CONFIG/Hunk" "$APP/Contents/MacOS/Hunk"
 cp "$ROOT/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-# SPM 资源包（HunkCore 的 languages.json 等）：Bundle.module 在可执行文件同目录查找，
-# 不拷贝则打包版语法高亮的语言表加载不到（降级为纯文本）。
-for bundle in ".build/$CONFIG/"*.bundle; do
-    [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/MacOS/"
+# SPM 资源包（HunkCore 的 languages.json、SwiftTerm 的终端资源等）拷进可执行文件同目录
+# Contents/MacOS——Lexer.loadLanguagesJSON 会在此查找。漏拷则语法高亮降级为纯文本。
+# 用 find -L 跟随 .build/<config> 软链(指向 .build/<triple>/<config>)，比裸 glob 更稳；
+# 找不到资源包直接报错退出，避免 CI 静默打出「无语言表」的残包(曾因此线上启动即崩)。
+BUNDLES="$(find -L ".build/$CONFIG" -maxdepth 1 -name "*.bundle" -type d)"
+if [ -z "$BUNDLES" ]; then
+    echo "❌ .build/$CONFIG 下未找到任何 *.bundle 资源包——打包中止" >&2
+    exit 1
+fi
+echo "$BUNDLES" | while IFS= read -r bundle; do
+    cp -R "$bundle" "$APP/Contents/MacOS/"
+    echo "  ⬆︎ $(basename "$bundle")"
 done
+# 语言表是高亮的命脉，单独兜底校验，缺则视为打包失败
+if [ ! -e "$APP/Contents/MacOS/Hunk_HunkCore.bundle" ]; then
+    echo "❌ Hunk_HunkCore.bundle 未拷入 app——语法高亮会失效，打包中止" >&2
+    exit 1
+fi
 
 # 声明中英双语言包：AppKit 据此按用户/应用语言加载系统菜单（文件/编辑/窗口…）
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj" "$APP/Contents/Resources/en.lproj"

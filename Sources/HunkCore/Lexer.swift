@@ -282,8 +282,7 @@ public enum Lexer {
     }
 
     private static let registry: (byExtension: [String: LanguageDef], byFilename: [String: String]) = {
-        guard let url = Bundle.module.url(forResource: "languages", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
+        guard let data = loadLanguagesJSON(),
               let doc = try? JSONDecoder().decode(LanguagesDoc.self, from: data)
         else { return ([:], [:]) }
         var map: [String: LanguageDef] = [:]
@@ -293,6 +292,39 @@ public enum Lexer {
         }
         return (map, doc.filenames)
     }()
+
+    /// 加载 languages.json。**不用 `Bundle.module`**——它找不到资源包时会 `fatalError`，
+    /// 让整个 app 启动即崩（CI 打包漏拷 bundle 就会这样）。改为在多个候选位置手动查找，
+    /// 找不到返回 nil → 空语言表、高亮降级为纯文本，绝不崩。
+    private static func loadLanguagesJSON() -> Data? {
+        let token = Bundle(for: BundleToken.self)
+        var bases: [URL] = [token.bundleURL]
+        if let r = token.resourceURL { bases.append(r) }
+        // token 所在包的上一级：`swift test` 时 token 在 *.xctest 内，其父目录
+        // .build/<triple>/debug 正好平铺着 Hunk_HunkCore.bundle；`swift run` 时
+        // 父目录即 .build/release。覆盖开发/测试两种裸执行场景。
+        bases.append(token.bundleURL.deletingLastPathComponent())
+        if let r = Bundle.main.resourceURL { bases.append(r) }
+        bases.append(Bundle.main.bundleURL)
+        bases.append(Bundle.main.bundleURL.deletingLastPathComponent())
+        bases.append(Bundle.main.bundleURL.appendingPathComponent("Contents/Resources"))
+        bases.append(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS"))
+        for base in bases {
+            // SPM 资源包内（Hunk_HunkCore.bundle / HunkCore_HunkCore.bundle）
+            for name in ["Hunk_HunkCore.bundle", "HunkCore_HunkCore.bundle"] {
+                if let b = Bundle(url: base.appendingPathComponent(name)),
+                   let url = b.url(forResource: "languages", withExtension: "json"),
+                   let d = try? Data(contentsOf: url) {
+                    return d
+                }
+            }
+            // 或直接平铺在该目录
+            if let d = try? Data(contentsOf: base.appendingPathComponent("languages.json")) {
+                return d
+            }
+        }
+        return nil
+    }
 
     private static var languages: [String: LanguageDef] { registry.byExtension }
     private static var filenameMap: [String: String] { registry.byFilename }
@@ -311,3 +343,7 @@ public enum Lexer {
         return result.sorted { $0.name < $1.name }
     }
 }
+
+/// 仅用于 `Bundle(for:)` 定位本模块所在的包——比 `Bundle.module` 安全：
+/// `Bundle.module` 找不到资源包时直接 `fatalError`，这个不会。
+private final class BundleToken {}
