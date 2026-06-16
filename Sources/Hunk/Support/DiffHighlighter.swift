@@ -24,27 +24,31 @@ enum DiffHighlighter {
               let language = Lexer.language(forFileName: (filePath as NSString).lastPathComponent)
         else { return nil }
 
+        if Task.isCancelled { return nil }
         let key = "\(settings.themeID)\u{1}\(language.name)\u{1}\(display)"
         if let cached = cache[key] { return cached }
 
         // 主线程快照配色，后台只做纯计算（不触碰 settings / 主线程状态）
         let colors = Dictionary(uniqueKeysWithValues:
             TokenType.allCases.map { ($0, settings.tokenColor(for: $0)) })
-        let result = await Task.detached(priority: .userInitiated) {
-            tokenizeAndColor(display, language: language, colors: colors)
-        }.value
+        // 直接 await 一个 nonisolated async：会切到后台执行器、但仍属当前任务——
+        // 快速切文件时 SwiftUI 取消了这一行的 .task，取消会传导进来、tokenize 提前退出。
+        // （此前用 Task.detached 是「游离任务」，父任务取消传不进去，被取消的行还在死算，CPU 打满 → 卡死。）
+        let result = await tokenizeAndColor(display, language: language, colors: colors)
 
+        if Task.isCancelled { return nil }
         if cache.count > 8000 { cache.removeAll() }  // 防无限增长
         cache[key] = result
         return result
     }
 
-    /// 纯计算（后台线程）：tokenize + 着色。
+    /// 纯计算（后台执行器，响应取消）：tokenize + 着色。
     private nonisolated static func tokenizeAndColor(
         _ display: String, language: LanguageDef, colors: [TokenType: Color]
-    ) -> AttributedString {
+    ) async -> AttributedString {
         var attributed = AttributedString(display)
         for token in Lexer.tokenize(display, language: language) {
+            if Task.isCancelled { break }
             guard let stringRange = Range(token.range, in: display),
                   let lower = AttributedString.Index(stringRange.lowerBound, within: attributed),
                   let upper = AttributedString.Index(stringRange.upperBound, within: attributed)
