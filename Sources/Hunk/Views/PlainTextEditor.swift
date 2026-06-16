@@ -95,7 +95,8 @@ struct PlainTextEditor: NSViewRepresentable {
         coordinator.updateOverscroll()
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
-        if textView.string != text {
+        // 输入法合成期间（有 marked text）不重置 string，否则会打断中文/日文等输入法合成
+        if textView.string != text, !textView.hasMarkedText() {
             let isNewDocument = coordinator.lastFileName != fileName
             coordinator.lastFileName = fileName
             let selected = textView.selectedRange()
@@ -188,6 +189,8 @@ struct PlainTextEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView, let ruler else { return }
+            // 输入法合成中不上报光标/选区，避免触发重绘打断输入法
+            if textView.hasMarkedText() { return }
             guard editorFocused else {
                 blameLabel?.isHidden = true
                 return
