@@ -284,6 +284,11 @@ struct EmptyDetailView: View {
         // 未选择文件时保持纯净，不展示任何提示内容
         Color(nsColor: .textBackgroundColor)
             .ignoresSafeArea(edges: .bottom)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // 点击空白编辑器：把键盘焦点从终端移走，⌘N 回到「新建文件」语义
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
     }
 }
 
