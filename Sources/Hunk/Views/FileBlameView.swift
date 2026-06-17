@@ -13,6 +13,13 @@ struct FileBlameView: View {
     @EnvironmentObject var settings: SettingsStore
     let path: String
 
+    // 提交卡：悬浮预览 + 点击钉住。锚到所属提交段段首行(cardRow)，段内任意带文字处都触发同一张卡。
+    @State private var cardRow: Int?
+    @State private var cardPinned = false
+    @State private var mouseInCard = false
+    @State private var cardShowWork: DispatchWorkItem?
+    @State private var cardCloseWork: DispatchWorkItem?
+
     /// 一行 blame：携带它在所属提交段内的序号，段首一两行用来显示归属文字。
     private struct Row: Identifiable {
         let id: Int
@@ -93,10 +100,31 @@ struct FileBlameView: View {
                     Rectangle().fill(blockTint(row).opacity(0.7)).frame(width: 2)
                 }
                 .contentShape(Rectangle())
-                .onTapGesture { openCommit(row) }
-                .help(row.isUncommitted
-                      ? tr("尚未提交的更改", "Uncommitted changes")
-                      : tr("点击查看这次提交的全部更改", "Click to view all changes in this commit"))
+                .onHover { bandHover(row, inside: $0) }
+                .onTapGesture { bandTap(row) }
+                .help(row.isUncommitted ? tr("尚未提交的更改", "Uncommitted changes") : "")
+                .popover(isPresented: Binding(
+                    get: { cardRow == row.id && row.runOffset == 0 },
+                    set: { if !$0 { dismissCard() } }
+                ), arrowEdge: .trailing) {
+                    CommitCard(
+                        hash: row.hash,
+                        fetch: { await vm.commitDetail(hash: $0) },
+                        onViewCommit: { detail in
+                            vm.openHistoryDetail(.commit(Repository.Commit(
+                                hash: detail.hash, shortHash: detail.shortHash,
+                                author: detail.author, subject: detail.subject,
+                                date: detail.date, refs: []
+                            )))
+                        },
+                        onHoverChange: { inside in
+                            mouseInCard = inside
+                            if inside { cancelCardClose() }
+                            else if !cardPinned { scheduleCardClose() }
+                        },
+                        onClose: { dismissCard() }
+                    )
+                }
 
             // 代码列
             HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -143,16 +171,50 @@ struct FileBlameView: View {
         }
     }
 
-    private func openCommit(_ row: Row) {
-        guard !row.isUncommitted else { return }
-        vm.openHistoryDetail(.commit(Repository.Commit(
-            hash: row.hash,
-            shortHash: String(row.hash.prefix(7)),
-            author: row.author,
-            subject: row.summary,
-            date: row.date ?? Date(),
-            refs: []
-        )))
+    // MARK: - 提交卡 悬浮/钉住
+
+    /// 段内带归属文字的行(runOffset 0/1)才触发；都锚到段首行,段内滑动不闪。
+    private func bandHover(_ row: Row, inside: Bool) {
+        guard !row.isUncommitted, row.runOffset <= 1 else { return }
+        let anchor = row.id - row.runOffset
+        if inside {
+            cancelCardClose()
+            guard !cardPinned else { return }
+            cardShowWork?.cancel()
+            let work = DispatchWorkItem { cardRow = anchor; cardPinned = false }
+            cardShowWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        } else {
+            cardShowWork?.cancel(); cardShowWork = nil
+            if !cardPinned { scheduleCardClose() }
+        }
+    }
+
+    private func bandTap(_ row: Row) {
+        guard !row.isUncommitted, row.runOffset <= 1 else { return }
+        cardShowWork?.cancel(); cardShowWork = nil
+        cancelCardClose()
+        cardRow = row.id - row.runOffset
+        cardPinned = true
+    }
+
+    private func scheduleCardClose() {
+        cancelCardClose()
+        let work = DispatchWorkItem {
+            if !mouseInCard, !cardPinned { dismissCard() }
+        }
+        cardCloseWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    private func cancelCardClose() { cardCloseWork?.cancel(); cardCloseWork = nil }
+
+    private func dismissCard() {
+        cardShowWork?.cancel(); cardShowWork = nil
+        cancelCardClose()
+        cardRow = nil
+        cardPinned = false
+        mouseInCard = false
     }
 
     /// 按哈希派生一个稳定的色相，让不同提交的块肉眼可分。
