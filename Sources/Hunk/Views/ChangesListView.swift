@@ -13,20 +13,25 @@ struct ChangesListView: View {
         List(selection: $vm.selection) {
             if !vm.conflictedChanges.isEmpty {
                 Section {
-                    changeRows(vm.conflictedChanges, area: .conflicted)
+                    if !isCollapsed("conflicted") {
+                        changeRows(vm.conflictedChanges, area: .conflicted)
+                    }
                 } header: {
                     sectionHeader(
                         tr("合并更改", "Merge Changes"),
                         count: vm.conflictedChanges.count,
+                        collapseKey: "conflicted",
                         systemImage: "exclamationmark.triangle"
                     ) { EmptyView() }
                 }
             }
 
             Section {
-                changeRows(vm.stagedChanges, area: .staged)
+                if !isCollapsed("staged") {
+                    changeRows(vm.stagedChanges, area: .staged)
+                }
             } header: {
-                sectionHeader(tr("已暂存的更改", "Staged Changes"), count: vm.stagedChanges.count) {
+                sectionHeader(tr("已暂存的更改", "Staged Changes"), count: vm.stagedChanges.count, collapseKey: "staged") {
                     Button {
                         vm.unstageAll()
                     } label: {
@@ -39,9 +44,11 @@ struct ChangesListView: View {
             }
 
             Section {
-                changeRows(vm.unstagedChanges, area: .unstaged)
+                if !isCollapsed("unstaged") {
+                    changeRows(vm.unstagedChanges, area: .unstaged)
+                }
             } header: {
-                sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count) {
+                sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count, collapseKey: "unstaged") {
                     HStack(spacing: 6) {
                         Button {
                             settings.changesAsTree.toggle()
@@ -76,11 +83,13 @@ struct ChangesListView: View {
 
             if !vm.stashes.isEmpty {
                 Section {
-                    ForEach(vm.stashes) { stash in
-                        StashRow(stash: stash)
+                    if !isCollapsed("stash") {
+                        ForEach(vm.stashes) { stash in
+                            StashRow(stash: stash)
+                        }
                     }
                 } header: {
-                    sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count) { EmptyView() }
+                    sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count, collapseKey: "stash") { EmptyView() }
                 }
             }
         }
@@ -176,27 +185,56 @@ struct ChangesListView: View {
         .padding(.leading, CGFloat(item.depth) * 14)
     }
 
+    private func isCollapsed(_ key: String) -> Bool {
+        settings.collapsedChangeSections.contains(key)
+    }
+
+    private func toggleSection(_ key: String) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            if settings.collapsedChangeSections.contains(key) {
+                settings.collapsedChangeSections.remove(key)
+            } else {
+                settings.collapsedChangeSections.insert(key)
+            }
+        }
+    }
+
     private func sectionHeader<Actions: View>(
         _ title: String,
         count: Int,
+        collapseKey: String,
         systemImage: String? = nil,
         @ViewBuilder actions: () -> Actions
     ) -> some View {
-        HStack(spacing: 5) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .foregroundStyle(.orange)
-                    .font(.system(size: 10))
+        let collapsed = isCollapsed(collapseKey)
+        return HStack(spacing: 5) {
+            // 折叠箭头 + 图标 + 标题 + 计数：整块可点，点击收起/展开该分区
+            Button {
+                toggleSection(collapseKey)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    if let systemImage {
+                        Image(systemName: systemImage)
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 10))
+                    }
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("\(count)")
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(.quaternary.opacity(0.6)))
+                }
+                .contentShape(Rectangle())
             }
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text("\(count)")
-                .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4.5)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(.quaternary.opacity(0.6)))
+            .buttonStyle(.plain)
             Spacer()
             actions()
                 .foregroundStyle(.secondary)

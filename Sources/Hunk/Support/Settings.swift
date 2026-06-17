@@ -89,6 +89,12 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(splitDiff, forKey: "splitDiff") }
     }
 
+    /// 「源代码管理」里被折叠的分区（"conflicted"/"staged"/"unstaged"/"stash"）。
+    /// 持久化：折叠一次（如收起贮藏）后长期生效，不必每次重折。
+    @Published var collapsedChangeSections: Set<String> {
+        didSet { defaults.set(Array(collapsedChangeSections), forKey: "collapsedChangeSections") }
+    }
+
     private init() {
         let saved = AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system
         language = saved
@@ -100,6 +106,7 @@ final class SettingsStore: ObservableObject {
         iconThemeID = defaults.string(forKey: "iconThemeID") ?? ""
         changesAsTree = defaults.object(forKey: "changesAsTree") as? Bool ?? true
         splitDiff = defaults.object(forKey: "splitDiff") as? Bool ?? true  // 默认左右分栏比对
+        collapsedChangeSections = Set(defaults.stringArray(forKey: "collapsedChangeSections") ?? [])
     }
 
     var resolvedLanguage: ResolvedLanguage {

@@ -17,7 +17,17 @@ struct SidebarView: View {
                         title: tr("文件变化", "Changes"),
                         count: vm.changes.count,
                         collapsed: $vm.changesPanelCollapsed
-                    )
+                    ) {
+                        // 手动刷新工作区状态：不必再失焦/回焦才更新
+                        Button {
+                            Task { await vm.refresh() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .help(tr("刷新更改", "Refresh changes"))
+                    }
                     if !vm.changesPanelCollapsed {
                         CommitBarView()
                         ChangesListView()
@@ -114,39 +124,52 @@ private struct WorkspaceStatusBar: View {
     }
 }
 
-/// 可折叠模块的头部（chevron + 标题 + 计数）。
-struct PanelHeader: View {
+/// 可折叠模块的头部（chevron + 标题 + 计数 + 右侧操作槽）。
+struct PanelHeader<Trailing: View>: View {
     let title: String
     var count: Int = 0
     @Binding var collapsed: Bool
+    @ViewBuilder var trailing: () -> Trailing
+
+    init(title: String, count: Int = 0, collapsed: Binding<Bool>,
+         @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
+        self.title = title
+        self.count = count
+        self._collapsed = collapsed
+        self.trailing = trailing
+    }
 
     var body: some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) {
-                collapsed.toggle()
+        HStack(spacing: 5) {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    collapsed.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(count > 0 ? "\(count)" : "")
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, count > 0 ? 4.5 : 0)
+                        .padding(.vertical, count > 0 ? 1 : 0)
+                        .background(Capsule().fill(.quaternary.opacity(count > 0 ? 0.6 : 0)))
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(collapsed ? 0 : 90))
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(count > 0 ? "\(count)" : "")
-                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, count > 0 ? 4.5 : 0)
-                    .padding(.vertical, count > 0 ? 1 : 0)
-                    .background(Capsule().fill(.quaternary.opacity(count > 0 ? 0.6 : 0)))
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            trailing()
+                .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
     }
 }
 
