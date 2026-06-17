@@ -203,11 +203,8 @@ struct SidebarNavButtons: View {
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            // Xcode 式：选中用背景胶囊包裹，而非给图标染色；切换时图标轻微弹一下
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .symbolEffect(.bounce, value: selected)
+            // Xcode 式：选中用背景胶囊包裹，而非给图标染色；切换时图标用「描绘」动画重画线条
+            NavSymbol(systemImage: systemImage, selected: selected)
                 .frame(width: 26, height: 22)
                 .background {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -229,6 +226,38 @@ struct SidebarNavButtons: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// 导航图标 + 「描绘」动画：选中状态变化时，符号的线条像用笔重新描一遍（SF Symbols 6 / macOS 15+）。
+/// drawOn 属于「过渡」类效果（不是 discrete，不能用 value: 触发），故用局部自增 id 触发插入过渡，
+/// 动画只作用于图标本身，不牵动侧边栏开合。旧系统优雅降级为静态图标。
+private struct NavSymbol: View {
+    let systemImage: String
+    let selected: Bool
+    @State private var drawTick = 0
+
+    var body: some View {
+        symbol
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .onChange(of: selected) { _, _ in
+                withAnimation(.easeOut(duration: 0.45)) { drawTick += 1 }
+            }
+    }
+
+    @ViewBuilder
+    private var symbol: some View {
+        if #available(macOS 26.0, *) {
+            Image(systemName: systemImage)
+                .id(drawTick)
+                .transition(.asymmetric(
+                    insertion: AnyTransition(.symbolEffect(.drawOn, options: .nonRepeating)),
+                    removal: .identity
+                ))
+        } else {
+            Image(systemName: systemImage)
+        }
     }
 }
 
