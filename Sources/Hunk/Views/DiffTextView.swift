@@ -19,10 +19,11 @@ extension NSAttributedString.Key {
 
 /// 一行（视觉行）在文本里的范围 + 它对应的 diff 行身份。
 private struct DiffLineSpan {
-    let range: NSRange          // 含行号槽与行尾换行
+    let range: NSRange          // 行内容 + 行尾换行（分栏视图不再含行号槽）
     let lineID: Int?            // 改动行才有；上下文/块头为 nil
     let kind: DiffLineKind?
     var isFiller = false        // 分栏视图里某侧没有对应行的占位空行（画淡灰）
+    var displayNumber: Int? = nil  // 分栏视图：该行要在固定行号槽（ruler）里画的号
 }
 
 private enum DiffSide { case left, right }
@@ -153,6 +154,8 @@ final class SelectableDiffTextView: NSTextView {
         self.font = font
         setSelectedRange(NSRange(location: 0, length: 0))
         needsDisplay = true
+        // 分栏视图的固定行号槽：内容换了重算宽度并重绘（统一视图无此 ruler，安全跳过）
+        (enclosingScrollView?.verticalRulerView as? DiffGutterRuler)?.refresh()
     }
 
     /// 整行 +/- 底色：自绘撑满整行宽（背景属性只覆盖字形，不够整齐）。
@@ -271,31 +274,23 @@ enum DiffTextBuilder {
 
     /// 构建分栏视图的某一列（左=旧/删除，右=新/新增）。两列行数一致（每个 SplitRow 一行，
     /// 缺失侧画占位空行），配同步滚动即左右对齐。
+    /// 行号不进正文——交给固定的 DiffGutterRuler 画（横滑不动、不被选中）；也不画 +/-（靠红绿底色区分）。
     fileprivate static func buildSplit(diff: FileDiff, side: DiffSide, filePath: String,
                                        font: NSFont, tokenColors: [TokenType: NSColor]) -> Result {
         let storage = NSMutableAttributedString()
         var spans: [DiffLineSpan] = []
         let language = Lexer.language(forFileName: (filePath as NSString).lastPathComponent)
-        let allLines = diff.hunks.flatMap(\.lines)
-        let maxNum = side == .left ? (allLines.compactMap(\.oldNumber).max() ?? 0)
-                                   : (allLines.compactMap(\.newNumber).max() ?? 0)
-        let w = max(String(maxNum).count, 2)
 
-        let gutterColor = NSColor.tertiaryLabelColor
         let textColor = NSColor.labelColor
         let headerColor = NSColor.secondaryLabelColor
 
         func append(_ s: String, _ attrs: [NSAttributedString.Key: Any]) {
             storage.append(NSAttributedString(string: s, attributes: attrs))
         }
-        func pad(_ s: String, _ width: Int) -> String {
-            s.count >= width ? s : String(repeating: " ", count: width - s.count) + s
-        }
 
         for hunk in diff.hunks {
             // 块头：左列显示 @@…，右列同高空行，保持两列对齐
             let hs = storage.length
-            append(pad("", w) + "  ", [.font: font, .diffGutter: true, .foregroundColor: gutterColor])
             if side == .left {
                 let heading = hunk.sectionHeading.isEmpty ? "" : " \(hunk.sectionHeading)"
                 append("@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@\(heading)\n",
@@ -309,26 +304,16 @@ enum DiffTextBuilder {
                 let cell = side == .left ? row.left : row.right
                 let start = storage.length
                 if let line = cell {
-                    let marker: String
-                    let markerColor: NSColor
-                    switch line.kind {
-                    case .addition: marker = "+"; markerColor = .systemGreen
-                    case .deletion: marker = "-"; markerColor = .systemRed
-                    case .context:  marker = " "; markerColor = gutterColor
-                    }
                     let num = side == .left ? line.oldNumber : line.newNumber
-                    append(pad(num.map(String.init) ?? "", w) + " ",
-                           [.font: font, .diffGutter: true, .foregroundColor: gutterColor])
-                    append(marker + " ", [.font: font, .diffGutter: true, .foregroundColor: markerColor])
                     appendCode(line.text, into: storage, font: font, baseColor: textColor,
                                language: language, tokenColors: tokenColors)
                     append("\n", [.font: font, .foregroundColor: textColor])
                     let staged = (side == .left && line.kind == .deletion) || (side == .right && line.kind == .addition)
                     spans.append(DiffLineSpan(range: NSRange(location: start, length: storage.length - start),
-                                              lineID: staged ? line.id : nil, kind: line.kind))
+                                              lineID: staged ? line.id : nil, kind: line.kind, displayNumber: num))
                 } else {
                     // 该侧无对应行：占位空行（画淡灰）
-                    append(pad("", w) + "  \n", [.font: font, .diffGutter: true, .foregroundColor: gutterColor])
+                    append("\n", [.font: font, .foregroundColor: textColor])
                     spans.append(DiffLineSpan(range: NSRange(location: start, length: storage.length - start),
                                               lineID: nil, kind: nil, isFiller: true))
                 }
@@ -354,6 +339,89 @@ enum DiffTextBuilder {
             piece.addAttribute(.foregroundColor, value: color, range: token.range)
         }
         storage.append(piece)
+    }
+}
+
+// MARK: - 分栏 diff 的固定行号槽
+
+/// 分栏视图每列左侧的行号标尺：行号画在这里而不是正文里，
+/// 因此横向滚动时不动、也不会被文本选区选中。底色与对应代码行的红/绿一致。
+final class DiffGutterRuler: NSRulerView {
+    private weak var diffTextView: SelectableDiffTextView?
+
+    init(scrollView: NSScrollView, textView: SelectableDiffTextView) {
+        self.diffTextView = textView
+        super.init(scrollView: scrollView, orientation: .verticalRuler)
+        clientView = textView
+        ruleThickness = 34
+        let clip = scrollView.contentView
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrolled),
+                                               name: NSView.boundsDidChangeNotification, object: clip)
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func scrolled() { needsDisplay = true }
+
+    private var charWidth: CGFloat {
+        let font = diffTextView?.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        return ("0" as NSString).size(withAttributes: [.font: font]).width
+    }
+
+    /// 内容变化后按最大行号重算槽宽。
+    func refresh() {
+        let maxNum = diffTextView?.lineSpans.compactMap(\.displayNumber).max() ?? 0
+        let digits = max(2, String(maxNum).count)
+        ruleThickness = CGFloat(digits) * charWidth + 12
+        needsDisplay = true
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let tv = diffTextView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
+
+        // 底色与代码区一致；不画分隔线
+        NSColor.textBackgroundColor.setFill()
+        bounds.fill()
+
+        let visibleRect = tv.visibleRect
+        let inset = tv.textContainerInset
+        let font = tv.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        let visibleGlyphs = lm.glyphRange(forBoundingRect: visibleRect, in: tc)
+        let visibleChars = lm.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+
+        for span in tv.lineSpans {
+            if NSMaxRange(span.range) <= visibleChars.location { continue }
+            if span.range.location >= NSMaxRange(visibleChars) { break }
+
+            let glyphRange = lm.glyphRange(forCharacterRange: span.range, actualCharacterRange: nil)
+            let fragRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            let y = fragRect.minY + inset.height - visibleRect.minY
+
+            // 行底色：与代码行的红/绿/占位灰对齐
+            let tint: NSColor?
+            switch span.kind {
+            case .addition: tint = tv.addColor
+            case .deletion: tint = tv.delColor
+            default:        tint = span.isFiller ? tv.fillerColor : nil
+            }
+            if let tint {
+                tint.setFill()
+                NSRect(x: 0, y: y, width: bounds.width, height: fragRect.height).fill()
+            }
+
+            if let number = span.displayNumber {
+                let text = "\(number)" as NSString
+                let size = text.size(withAttributes: attrs)
+                text.draw(at: NSPoint(x: bounds.width - size.width - 5,
+                                      y: y + (fragRect.height - size.height) / 2),
+                          withAttributes: attrs)
+            }
+        }
     }
 }
 
@@ -419,6 +487,8 @@ struct SplitDiffTextView: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
+        // 短内容也给橡皮筋回弹（纵向）
+        scroll.verticalScrollElasticity = .allowed
         let contentSize = scroll.contentSize
         let storage = NSTextStorage()
         let lm = NSLayoutManager(); storage.addLayoutManager(lm)
@@ -439,6 +509,12 @@ struct SplitDiffTextView: NSViewRepresentable {
         tv.minSize = .zero
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = tv
+
+        // 固定行号槽：横滑不动、不在选区内
+        let ruler = DiffGutterRuler(scrollView: scroll, textView: tv)
+        scroll.verticalRulerView = ruler
+        scroll.hasVerticalRuler = true
+        scroll.rulersVisible = true
         return (scroll, tv)
     }
 
