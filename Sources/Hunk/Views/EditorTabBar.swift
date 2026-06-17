@@ -106,14 +106,36 @@ private struct ViewTabItem: View {
         r.count > 12 && r.allSatisfy(\.isHexDigit) ? String(r.prefix(8)) : r
     }
 
+    /// 前导图标:diff 标签用「文件类型图标 + 小 ∓ 角标」(认得出是哪个文件、又一眼是 diff);
+    /// 提交/比较/搜索用各自 SF Symbol。
+    @ViewBuilder private var leadingIcon: some View {
+        if case .diff(let p, _) = tab {
+            FileIconView(fileName: vm.displayName(for: p))
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "plus.forwardslash.minus")
+                        .font(.system(size: 6, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(1.5)
+                        .background(Circle().fill(Color.orange))
+                        .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                        .offset(x: 3, y: 2)
+                }
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .frame(width: 16)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            leadingIcon
             Text(title)
                 .font(.system(size: 12))
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 180, alignment: .leading)
                 .foregroundStyle(isActive ? .primary : .secondary)
             closeButton(hovering: hovering) { vm.closeViewTab(tab) }
         }
@@ -150,6 +172,8 @@ private struct EditorTabItem: View {
             Text(fileName)
                 .font(.system(size: 12))
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 160, alignment: .leading)
                 .foregroundStyle(isActive ? .primary : .secondary)
 
             // 关闭按钮与未保存圆点共用同一块区域

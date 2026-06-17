@@ -18,8 +18,8 @@ struct CommitCard: View {
     var onClose: () -> Void = {}
     /// 是否显示「查看此提交」按钮（内嵌到提交详情头部时关掉——已经在看了）。
     var showViewButton: Bool = true
-    /// 固定宽度（popover 用 360）；nil = 撑满可用宽度（内嵌横幅用）。
-    var fixedWidth: CGFloat? = 360
+    /// 固定宽度（popover 用 330）；nil = 撑满可用宽度（内嵌横幅用）。
+    var fixedWidth: CGFloat? = 330
 
     @State private var detail: Repository.CommitDetail?
     @State private var loadFailed = false
@@ -66,11 +66,11 @@ struct CommitCard: View {
                 avatar(author: d.author, email: d.email)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(d.author)
-                        .font(.system(size: 13.5, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                     if !d.email.isEmpty {
                         Text(d.email)
-                            .font(.system(size: 11.5))
+                            .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
@@ -105,26 +105,26 @@ struct CommitCard: View {
                     .font(.system(size: 11.5))
             }
             .foregroundStyle(.tertiary)
-            .padding(.top, 8)
+            .padding(.top, 6)
 
-            Divider().padding(.vertical, 10)
+            Divider().padding(.vertical, 7)
 
             // 完整提交消息：标题加粗，正文多行（长则滚动）
             Text(d.subject)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12.5, weight: .medium))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if !d.body.isEmpty {
                 ScrollView {
                     Text(d.body)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 150)
-                .padding(.top, 6)
+                .frame(maxHeight: 110)
+                .padding(.top, 5)
             }
 
             // 底部：文件数 + 查看此提交
@@ -133,7 +133,7 @@ struct CommitCard: View {
                     tr("改动 \(d.filesChanged) 个文件", "\(d.filesChanged) file(s)"),
                     systemImage: "doc.text"
                 )
-                .font(.system(size: 11.5))
+                .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 Spacer()
                 if showViewButton {
@@ -142,14 +142,14 @@ struct CommitCard: View {
                         onClose()
                     } label: {
                         Label(tr("查看此提交", "View commit"), systemImage: "arrow.up.forward.square")
-                            .font(.system(size: 12))
+                            .font(.system(size: 11.5))
                     }
                     .buttonStyle(.borderless)
                 }
             }
-            .padding(.top, 11)
+            .padding(.top, 8)
         }
-        .padding(14)
+        .padding(12)
     }
 
     /// 头像：优先 Gravatar（按邮箱），没有则回退到首字母色块。

@@ -335,8 +335,7 @@ struct HistoryDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            // 顶部 header(关闭/标题/文件数/树切换)已删:关闭+标题由 tab 承担,提交详情看下方横幅。
             // 提交详情:顶部一条富信息横幅（复用提交悬浮卡——作者/哈希/时间/完整消息/文件数）
             if case .commit(let commit) = vm.historyDetail {
                 CommitCard(
@@ -350,8 +349,13 @@ struct HistoryDetailView: View {
                 Divider()
             }
             HStack(spacing: 0) {
-                fileList
-                    .frame(width: 250)
+                // 文件列表列:顶部一条小 header(文件数 + 树/平铺切换),作用域只在这一列
+                VStack(spacing: 0) {
+                    fileListHeader
+                    Divider()
+                    fileList
+                }
+                .frame(width: 250)
                 Divider()
                 if let diff = vm.historyDiff {
                     ReadOnlyDiffView(diff: diff)
@@ -371,42 +375,13 @@ struct HistoryDetailView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button {
-                vm.closeHistoryDetail()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .buttonStyle(.borderless)
-            .help(tr("关闭", "Close"))
-
-            switch vm.historyDetail {
-            case .commit(let commit):
-                Image(systemName: "circle.dotted")
-                    .foregroundStyle(.secondary)
-                // 详情在下方横幅展示，这里只留紧凑标识
-                Text(tr("提交 \(commit.shortHash)", "Commit \(commit.shortHash)"))
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-            case .compare(let base, let target):
-                Image(systemName: "arrow.left.arrow.right")
-                    .foregroundStyle(.secondary)
-                Text("\(shortRef(base)) ↔ \(shortRef(target))")
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-            case nil:
-                EmptyView()
-            }
-
-            Spacer()
-
+    /// 文件列表列的小 header:文件数 + 树/平铺切换（只管这一列，不是全宽头部）。
+    private var fileListHeader: some View {
+        HStack(spacing: 6) {
             Text(tr("\(vm.historyFiles.count) 个文件", "\(vm.historyFiles.count) file(s)"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            // 文件列表树状/扁平切换
+            Spacer()
             Button {
                 filesAsTree.toggle()
             } label: {
@@ -417,10 +392,11 @@ struct HistoryDetailView: View {
             .buttonStyle(.borderless)
             .help(filesAsTree ? tr("平铺显示", "Flat list") : tr("树状显示", "Tree view"))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .background(Color(nsColor: .windowBackgroundColor))
     }
+
 
     private func shortRef(_ ref: String) -> String {
         ref.count > 12 && ref.allSatisfy(\.isHexDigit) ? String(ref.prefix(8)) : ref
