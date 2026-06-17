@@ -954,6 +954,7 @@ final class RepoViewModel: ObservableObject {
         }
         editorPath = path
         blameText = nil
+        blameHash = nil
         reparseConflicts()
     }
 
