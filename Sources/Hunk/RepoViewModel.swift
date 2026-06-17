@@ -111,6 +111,8 @@ final class RepoViewModel: ObservableObject {
     @Published var conflictBlocks: [ConflictBlock] = []
     @Published var conflictIndex = 0
     @Published var scrollToLine: Int?
+    /// 新建文件后请求编辑器抢键盘焦点（⌘N 后无需再点一下即可输入）；编辑器消费后清空。
+    @Published var pendingEditorFocus = false
     @Published var blameText: String?
     /// blame 视图：非空且等于当前文件时，编辑区显示整文件 blame 块
     @Published var blameViewPath: String?
@@ -299,6 +301,7 @@ final class RepoViewModel: ObservableObject {
         let path = Self.untitledPrefix + "\(untitledCounter)"
         buffers[path] = EditorBuffer(text: "", dirty: false)
         selection = .file(path: path)
+        pendingEditorFocus = true   // 让编辑器一挂载就抢焦点,⌘N 后直接打字
     }
 
     func promptNewFile(in directory: String? = nil) {

@@ -33,7 +33,9 @@ struct EditorView: View {
                     onSelectionInfo: { line, column, selectedLines in
                         vm.updateEditorCursor(line: line, column: column, selectedLines: selectedLines)
                     },
-                    languageOverride: vm.editorLanguageOverride
+                    languageOverride: vm.editorLanguageOverride,
+                    requestFocus: vm.pendingEditorFocus,
+                    onFocusHandled: { vm.pendingEditorFocus = false }
                 )
                 .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
             }

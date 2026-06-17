@@ -16,6 +16,9 @@ struct PlainTextEditor: NSViewRepresentable {
     var onSelectionInfo: (Int, Int, Int) -> Void = { _, _, _ in }
     /// 高亮语言扩展名覆盖；nil = 按 fileName 推断（新建未保存文件可手动指定）
     var languageOverride: String?
+    /// 为真时编辑器挂载后抢键盘焦点（⌘N 新建文件）；消费后回调清空。
+    var requestFocus: Bool = false
+    var onFocusHandled: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -133,6 +136,17 @@ struct PlainTextEditor: NSViewRepresentable {
             coordinator.scroll(toLine: line)
             DispatchQueue.main.async {
                 self.scrollToLine = nil
+            }
+        }
+
+        if requestFocus {
+            // 等本轮布局结束再夺焦点,避免被同一轮的其它焦点变更覆盖;消费后回调清空标志
+            let handled = onFocusHandled
+            DispatchQueue.main.async { [weak textView] in
+                if let textView, let window = textView.window, window.firstResponder !== textView {
+                    window.makeFirstResponder(textView)
+                }
+                handled()
             }
         }
 
