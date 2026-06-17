@@ -207,6 +207,7 @@ struct DiffDetailView: View {
                         if supportsLineStaging { vm.selectedLineIDs = ids }
                     }
                 )
+                .clipped()
             } else {
                 // 统一视图：只读 NSTextView 编辑器——原生选择/复制/双击/拖选，选区驱动行级暂存
                 DiffTextView(
@@ -220,6 +221,7 @@ struct DiffDetailView: View {
                         if supportsLineStaging { vm.selectedLineIDs = ids }
                     }
                 )
+                .clipped()
             }
         } else {
             placeholder(symbol: "equal.circle", text: tr("没有差异", "No differences"))
@@ -267,7 +269,7 @@ struct ReadOnlyDiffView: View {
                 .fixedSize()
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .frame(height: 34)  // 与文件列表列头同高,横向分隔线对齐
             .background(Color(nsColor: .windowBackgroundColor))
             Divider()
 
@@ -288,6 +290,7 @@ struct ReadOnlyDiffView: View {
                     selectable: false, settings: settings,
                     onSelectChangedLines: { _ in }
                 )
+                .clipped()
             } else {
                 DiffTextView(
                     diff: diff, filePath: diff.path,
@@ -296,8 +299,10 @@ struct ReadOnlyDiffView: View {
                     selectable: false, settings: settings,
                     onSelectChangedLines: { _ in }
                 )
+                .clipped()
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .clipped()  // 关键:diff 的 NSView(标尺/分栏线)不得溢出自身区域,画进上方的提交卡
     }
 }
