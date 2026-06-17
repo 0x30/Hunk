@@ -26,6 +26,13 @@ struct PlainTextEditor: NSViewRepresentable {
     var requestFocus: Bool = false
     var onFocusHandled: () -> Void = {}
 
+    /// 行高:按设置里的倍数(默认 1.3)。等宽字体默认行距偏紧,调大更透气。
+    static func lineParagraphStyle() -> NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineHeightMultiple = SettingsStore.shared.editorLineHeight
+        return p
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
@@ -66,6 +73,8 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.usesFindBar = true
         textView.textContainerInset = NSSize(width: 6, height: 8)
         textView.font = SettingsStore.shared.editorNSFont
+        textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle()
+        textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle()
         textView.delegate = context.coordinator
 
         // 行号 gutter
@@ -158,6 +167,11 @@ struct PlainTextEditor: NSViewRepresentable {
         } else if coordinator.lastLanguageOverride != languageOverride {
             // 手动切换语言后重新着色
             coordinator.highlightNow()
+        } else if coordinator.lastLineHeight != SettingsStore.shared.editorLineHeight {
+            // 行高设置改变后重新应用段落样式
+            textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle()
+            textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle()
+            coordinator.highlightNow()
         }
 
         if let line = scrollToLine {
@@ -193,6 +207,7 @@ struct PlainTextEditor: NSViewRepresentable {
         var lastThemeName: String?
         var lastFileName: String?
         var lastLanguageOverride: String?
+        var lastLineHeight: Double = 0
         private var lastBlameText: String?
         private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
@@ -322,10 +337,12 @@ struct PlainTextEditor: NSViewRepresentable {
             textView.insertionPointColor = theme.editorForeground ?? .labelColor
             ruler?.invalidateLineIndex()
 
+            lastLineHeight = settings.editorLineHeight
             storage.beginEditing()
             storage.setAttributes([
                 .font: settings.editorNSFont,
                 .foregroundColor: theme.editorForeground ?? NSColor.labelColor,
+                .paragraphStyle: PlainTextEditor.lineParagraphStyle(),
             ], range: fullRange)
 
             lastLanguageOverride = parent.languageOverride

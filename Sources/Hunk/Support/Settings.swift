@@ -21,6 +21,22 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
 enum ResolvedLanguage { case zh, en }
 
+/// 文件列表的展示风格（全局,文件树 + 提交详情文件列表都遵循）。
+enum FileTreeStyle: String, CaseIterable, Identifiable {
+    case flat         // 全部平铺,每行完整相对路径
+    case fullTree     // 完全展开:每层文件夹各占一级
+    case mergedTree   // 合并单链路径(推荐):a/b/c 合成一行,分叉才拆
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .flat: return tr("平铺列表", "Flat list")
+        case .fullTree: return tr("完全展开树", "Full tree")
+        case .mergedTree: return tr("合并路径树（推荐）", "Merged-path tree (recommended)")
+        }
+    }
+}
+
 /// 全局翻译函数：`tr("中文", "English")`。
 /// 字符串直接内联在调用点，新增文案无需维护 key 表。
 func tr(_ zh: String, _ en: String) -> String {
@@ -79,14 +95,24 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(iconThemeID, forKey: "iconThemeID") }
     }
 
-    /// 侧边栏更改列表：树状 / 扁平
-    @Published var changesAsTree: Bool {
-        didSet { defaults.set(changesAsTree, forKey: "changesAsTree") }
-    }
-
     /// diff 布局：分栏 / 统一
     @Published var splitDiff: Bool {
         didSet { defaults.set(splitDiff, forKey: "splitDiff") }
+    }
+
+    /// 文件列表风格（全局）：平铺 / 完全展开树 / 合并路径树
+    @Published var fileTreeStyle: FileTreeStyle {
+        didSet { defaults.set(fileTreeStyle.rawValue, forKey: "fileTreeStyle") }
+    }
+
+    /// 编辑器行高倍数（1.0 = 字体自带行距；偏紧的等宽字体建议 1.2~1.4）
+    @Published var editorLineHeight: Double {
+        didSet { defaults.set(editorLineHeight, forKey: "editorLineHeight") }
+    }
+
+    /// 字体选择器是否列出全部字体（默认只列等宽——代码可读性更好）
+    @Published var showAllFonts: Bool {
+        didSet { defaults.set(showAllFonts, forKey: "showAllFonts") }
     }
 
     /// 「源代码管理」里被折叠的分区（"conflicted"/"staged"/"unstaged"/"stash"）。
@@ -104,9 +130,22 @@ final class SettingsStore: ObservableObject {
         editorFontSize = size > 0 ? size : 13
         themeID = defaults.string(forKey: "themeID") ?? "system"
         iconThemeID = defaults.string(forKey: "iconThemeID") ?? ""
-        changesAsTree = defaults.object(forKey: "changesAsTree") as? Bool ?? true
         splitDiff = defaults.object(forKey: "splitDiff") as? Bool ?? true  // 默认左右分栏比对
+        fileTreeStyle = FileTreeStyle(rawValue: defaults.string(forKey: "fileTreeStyle") ?? "") ?? .mergedTree
+        let lineHeight = defaults.double(forKey: "editorLineHeight")
+        editorLineHeight = lineHeight > 0 ? lineHeight : 1.3
+        showAllFonts = defaults.bool(forKey: "showAllFonts")
         collapsedChangeSections = Set(defaults.stringArray(forKey: "collapsedChangeSections") ?? [])
+    }
+
+    /// 恢复编辑器 / 视图相关设置为默认（不动语言、主题、图标——那些是有意的选择）。
+    func restoreDefaults() {
+        editorFontName = "SF Mono"
+        editorFontSize = 13
+        editorLineHeight = 1.3
+        showAllFonts = false
+        fileTreeStyle = .mergedTree
+        splitDiff = true
     }
 
     var resolvedLanguage: ResolvedLanguage {
@@ -145,6 +184,11 @@ final class SettingsStore: ObservableObject {
             guard let font = NSFont(name: family, size: 12) else { return false }
             return font.isFixedPitch
         }.sorted()
+    }
+
+    /// 系统上全部字体族（字体选择器开启「显示全部」时用）。
+    static var allFontFamilies: [String] {
+        NSFontManager.shared.availableFontFamilies.sorted()
     }
 }
 

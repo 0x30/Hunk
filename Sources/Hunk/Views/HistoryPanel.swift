@@ -328,8 +328,7 @@ private struct HistoryRow: View {
 
 struct HistoryDetailView: View {
     @EnvironmentObject var vm: RepoViewModel
-    /// 文件列表树状/扁平（默认树状，跨会话记忆）
-    @AppStorage("historyFilesAsTree") private var filesAsTree = true
+    @EnvironmentObject var settings: SettingsStore
     /// 已折叠的目录路径（每次打开新详情时重置）
     @State private var collapsedDirs: Set<String> = []
 
@@ -345,7 +344,7 @@ struct HistoryDetailView: View {
                     showViewButton: false,
                     fixedWidth: nil
                 )
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
+                .background(Color(nsColor: .windowBackgroundColor))  // 不透明:挡住下方 diff 可能溢出的标尺线
                 Divider()
             }
             HStack(spacing: 0) {
@@ -382,18 +381,26 @@ struct HistoryDetailView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button {
-                filesAsTree.toggle()
+            Menu {
+                Picker(tr("文件列表风格", "File list style"), selection: $settings.fileTreeStyle) {
+                    ForEach(FileTreeStyle.allCases) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
             } label: {
-                Image(systemName: filesAsTree ? "list.bullet" : "list.bullet.indent")
+                Image(systemName: settings.fileTreeStyle == .flat ? "list.bullet" : "list.bullet.indent")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
-            .help(filesAsTree ? tr("平铺显示", "Flat list") : tr("树状显示", "Tree view"))
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(tr("文件列表风格", "File list style"))
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .frame(height: 34)  // 与右侧 diff 文件头同高,顶边对齐
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -404,22 +411,23 @@ struct HistoryDetailView: View {
 
     private var fileList: some View {
         List {
-            if filesAsTree {
+            if settings.fileTreeStyle == .flat {
+                ForEach(vm.historyFiles) { file in
+                    fileRow(file, showDirectory: true)
+                }
+            } else {
                 let lookup = Dictionary(uniqueKeysWithValues: vm.historyFiles.map { ($0.path, $0) })
-                ForEach(FileTreeBuilder.flattenMergingChains(
-                    FileTreeBuilder.build(paths: vm.historyFiles.map(\.path)),
-                    collapsed: collapsedDirs
-                )) { item in
+                let tree = FileTreeBuilder.build(paths: vm.historyFiles.map(\.path))
+                let rows = settings.fileTreeStyle == .fullTree
+                    ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedDirs)
+                    : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedDirs)
+                ForEach(rows) { item in
                     if item.node.isDirectory {
                         directoryRow(item)
                     } else if let file = lookup[item.node.path] {
                         fileRow(file, showDirectory: false)
                             .padding(.leading, CGFloat(item.depth) * 12)
                     }
-                }
-            } else {
-                ForEach(vm.historyFiles) { file in
-                    fileRow(file, showDirectory: true)
                 }
             }
         }

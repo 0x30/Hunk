@@ -2,7 +2,7 @@ import SwiftUI
 import HunkCore
 
 /// 「源代码管理」标签页：合并更改 / 已暂存 / 更改 三个分区，
-/// 支持树状与扁平两种展示。
+/// 文件列表风格(平铺 / 完全展开树 / 合并路径树)读全局 settings.fileTreeStyle。
 struct ChangesListView: View {
     @EnvironmentObject var vm: RepoViewModel
     @EnvironmentObject var settings: SettingsStore
@@ -50,15 +50,21 @@ struct ChangesListView: View {
             } header: {
                 sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count, collapseKey: "unstaged") {
                     HStack(spacing: 6) {
-                        Button {
-                            settings.changesAsTree.toggle()
+                        Menu {
+                            Picker(tr("文件列表风格", "File list style"), selection: $settings.fileTreeStyle) {
+                                ForEach(FileTreeStyle.allCases) { style in
+                                    Text(style.displayName).tag(style)
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
                         } label: {
-                            Image(systemName: settings.changesAsTree ? "list.bullet" : "list.bullet.indent")
+                            Image(systemName: settings.fileTreeStyle == .flat ? "list.bullet" : "list.bullet.indent")
                         }
-                        .buttonStyle(.plain)
-                        .help(settings.changesAsTree
-                              ? tr("切换为扁平列表", "Switch to flat list")
-                              : tr("切换为树状视图", "Switch to tree view"))
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help(tr("文件列表风格", "File list style"))
 
                         Button {
                             vm.stashAll()
@@ -128,16 +134,22 @@ struct ChangesListView: View {
 
     @ViewBuilder
     private func changeRows(_ changes: [FileChange], area: ChangeArea) -> some View {
-        if settings.changesAsTree {
+        if settings.fileTreeStyle == .flat {
+            ForEach(changes) { change in
+                ChangeRow(change: change, area: area, showDirectory: true)
+                    .tag(SidebarSelection.change(path: change.path, area: area))
+            }
+        } else {
             let lookup = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
             let collapsedInArea = Set(collapsedDirs.compactMap { key -> String? in
                 let prefix = "\(area)|"
                 return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
             })
-            ForEach(FileTreeBuilder.flattenMergingChains(
-                FileTreeBuilder.build(paths: changes.map(\.path)),
-                collapsed: collapsedInArea
-            )) { item in
+            let tree = FileTreeBuilder.build(paths: changes.map(\.path))
+            let rows = settings.fileTreeStyle == .fullTree
+                ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedInArea)
+                : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedInArea)
+            ForEach(rows) { item in
                 if item.node.isDirectory {
                     directoryRow(item, area: area)
                 } else if let change = lookup[item.node.path] {
@@ -145,11 +157,6 @@ struct ChangesListView: View {
                         .padding(.leading, CGFloat(item.depth) * 14)
                         .tag(SidebarSelection.change(path: change.path, area: area))
                 }
-            }
-        } else {
-            ForEach(changes) { change in
-                ChangeRow(change: change, area: area, showDirectory: true)
-                    .tag(SidebarSelection.change(path: change.path, area: area))
             }
         }
     }

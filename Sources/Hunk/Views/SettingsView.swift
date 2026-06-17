@@ -119,12 +119,30 @@ private struct AppearanceSettings: View {
 
 private struct EditorSettings: View {
     @EnvironmentObject var settings: SettingsStore
-    @State private var families: [String] = []
+    @State private var monoFamilies: [String] = []
+    @State private var allFamilies: [String] = []
+    @State private var showRestoreConfirm = false
+
+    /// 字号输入框:不限制范围,手动输入(SwiftUI 默认仍会拦非法字符)
+    private var sizeText: Binding<String> {
+        Binding(
+            get: { String(Int(settings.editorFontSize.rounded())) },
+            set: { newValue in
+                let digits = newValue.filter(\.isNumber)
+                if let value = Double(digits), value > 0 { settings.editorFontSize = value }
+            }
+        )
+    }
+
+    private var families: [String] {
+        settings.showAllFonts ? allFamilies : monoFamilies
+    }
 
     var body: some View {
         Form {
             Section(tr("字体", "Font")) {
-                Picker(tr("等宽字体", "Monospaced Font"), selection: $settings.editorFontName) {
+                Picker(settings.showAllFonts ? tr("字体", "Font") : tr("等宽字体", "Monospaced Font"),
+                       selection: $settings.editorFontName) {
                     ForEach(families, id: \.self) { family in
                         Text(family).tag(family)
                     }
@@ -133,18 +151,52 @@ private struct EditorSettings: View {
                     }
                 }
 
+                Toggle(tr("显示全部字体（含非等宽）", "Show all fonts (including non-monospaced)"),
+                       isOn: $settings.showAllFonts)
+
                 HStack {
                     Text(tr("字号", "Size"))
-                    Slider(value: $settings.editorFontSize, in: 9...22, step: 1)
-                    Text("\(Int(settings.editorFontSize)) pt")
+                    Spacer()
+                    TextField("", text: sizeText)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 56)
+                    Stepper("", value: $settings.editorFontSize, in: 1...512, step: 1)
+                        .labelsHidden()
+                    Text("pt").foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text(tr("行高", "Line height"))
+                    Slider(value: $settings.editorLineHeight, in: 1.0...2.2, step: 0.05)
+                    Text(String(format: "%.2f×", settings.editorLineHeight))
                         .monospacedDigit()
-                        .frame(width: 44, alignment: .trailing)
+                        .frame(width: 48, alignment: .trailing)
                 }
             }
 
+            Section(tr("视图", "View")) {
+                Picker(tr("差异默认视图", "Default diff view"), selection: $settings.splitDiff) {
+                    Text(tr("统一视图", "Unified")).tag(false)
+                    Text(tr("左右分栏", "Side-by-side")).tag(true)
+                }
+
+                Picker(tr("文件列表风格", "File list style"), selection: $settings.fileTreeStyle) {
+                    ForEach(FileTreeStyle.allCases) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+
+                Text(tr("「文件列表风格」作用于「源代码管理」更改列表与提交详情的文件列表;页面内的切换开关与此设置同步。",
+                        "“File list style” applies to the Source Control changes list and the commit-detail file list; the in-page toggle stays in sync with this setting."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section(tr("预览", "Preview")) {
-                Text("func greet(name: String) -> String {\n    // 简单的示例 sample\n    return \"Hello, \\(name)! 你好\"\n}")
+                Text("func greet(name: String) -> String {\n    // 简单的示例 sample\n    let parts = [\"Hello\", name]\n    return parts.joined(separator: \", \") + \" 你好\"\n}")
                     .font(Font(settings.editorNSFont))
+                    .lineSpacing(settings.editorFontSize * (settings.editorLineHeight - 1))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(
@@ -152,12 +204,31 @@ private struct EditorSettings: View {
                             .fill(Color(nsColor: ThemeStore.shared.editorBackground ?? .textBackgroundColor))
                     )
             }
+
+            Section {
+                Button(role: .destructive) {
+                    showRestoreConfirm = true
+                } label: {
+                    Label(tr("恢复默认设置", "Restore Defaults"), systemImage: "arrow.counterclockwise")
+                }
+                .confirmationDialog(
+                    tr("恢复编辑器与视图的默认设置？", "Restore editor & view defaults?"),
+                    isPresented: $showRestoreConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button(tr("恢复默认", "Restore Defaults"), role: .destructive) {
+                        settings.restoreDefaults()
+                    }
+                } message: {
+                    Text(tr("字体、字号、行高、差异视图、文件列表风格将恢复为推荐值（不影响语言、主题、图标）。",
+                            "Font, size, line height, diff view and file list style return to recommended values (language, theme and icons are untouched)."))
+                }
+            }
         }
         .formStyle(.grouped)
         .onAppear {
-            if families.isEmpty {
-                families = SettingsStore.monospacedFontFamilies
-            }
+            if monoFamilies.isEmpty { monoFamilies = SettingsStore.monospacedFontFamilies }
+            if allFamilies.isEmpty { allFamilies = SettingsStore.allFontFamilies }
         }
     }
 }

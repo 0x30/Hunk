@@ -70,6 +70,27 @@ public enum FileTreeBuilder {
         return result
     }
 
+    /// 完全展开:每一层目录都各占一行,不做单链合并(a/b/c 拆成三行)。
+    /// `collapsed` 中的目录只输出目录行本身,跳过其子树。
+    public static func flattenFullTree(
+        _ nodes: [FileNode],
+        depth: Int = 0,
+        collapsed: Set<String> = []
+    ) -> [FlatTreeRow] {
+        var result: [FlatTreeRow] = []
+        for node in nodes {
+            if node.isDirectory {
+                result.append(FlatTreeRow(node: node, depth: depth, displayName: node.name))
+                if !collapsed.contains(node.path) {
+                    result += flattenFullTree(node.children ?? [], depth: depth + 1, collapsed: collapsed)
+                }
+            } else {
+                result.append(FlatTreeRow(node: node, depth: depth, displayName: node.name))
+            }
+        }
+        return result
+    }
+
     /// 把路径列表组装成树，目录在前、同级按名称排序。
     public static func build(paths: [String]) -> [FileNode] {
         final class Builder {
