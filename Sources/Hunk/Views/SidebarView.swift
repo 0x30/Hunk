@@ -167,7 +167,7 @@ struct SidebarNavButtons: View {
             if vm.isGitRepo {
                 navButton(
                     tab: .changes,
-                    systemImage: "plus.forwardslash.minus",
+                    systemImage: "point.3.connected.trianglepath.dotted",
                     badge: vm.changes.count,
                     help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
                 )
@@ -180,10 +180,17 @@ struct SidebarNavButtons: View {
         return Button {
             vm.toggleSidebarTab(tab)
         } label: {
-            // 固定框 + 角标 overlay：计数变化不会让图标移位
+            // Xcode 式：选中用背景胶囊包裹，而非给图标染色；切换时图标轻微弹一下
             Image(systemName: systemImage)
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .frame(width: 22, height: 18)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .symbolEffect(.bounce, value: selected)
+                .frame(width: 26, height: 22)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(selected ? 0.1 : 0))
+                }
+                // 固定框 + 角标 overlay：计数变化不会让图标移位
                 .overlay(alignment: .topTrailing) {
                     if badge > 0 {
                         Text("\(min(badge, 99))")
@@ -195,7 +202,9 @@ struct SidebarNavButtons: View {
                             .offset(x: 5, y: -4)
                     }
                 }
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
+        .buttonStyle(.plain)
         .help(help)
     }
 }
