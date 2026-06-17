@@ -154,8 +154,8 @@ final class SelectableDiffTextView: NSTextView {
         self.font = font
         setSelectedRange(NSRange(location: 0, length: 0))
         needsDisplay = true
-        // 分栏视图的固定行号槽：内容换了重算宽度并重绘（统一视图无此 ruler，安全跳过）
-        (enclosingScrollView?.verticalRulerView as? DiffGutterRuler)?.refresh()
+        // 行号槽宽度由分栏协调器统一设置（两列同宽），这里只触发重绘
+        (enclosingScrollView?.verticalRulerView as? DiffGutterRuler)?.needsDisplay = true
     }
 
     /// 整行 +/- 底色：自绘撑满整行宽（背景属性只覆盖字形，不够整齐）。
@@ -365,16 +365,19 @@ final class DiffGutterRuler: NSRulerView {
 
     @objc private func scrolled() { needsDisplay = true }
 
+    /// 行号用比代码略小、更淡的字，读作「槽」而非与代码抢戏。
+    private var gutterFont: NSFont {
+        let codeSize = diffTextView?.font?.pointSize ?? 11
+        return NSFont.monospacedDigitSystemFont(ofSize: max(9, codeSize - 2), weight: .regular)
+    }
     private var charWidth: CGFloat {
-        let font = diffTextView?.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        return ("0" as NSString).size(withAttributes: [.font: font]).width
+        ("0" as NSString).size(withAttributes: [.font: gutterFont]).width
     }
 
-    /// 内容变化后按最大行号重算槽宽。
-    func refresh() {
-        let maxNum = diffTextView?.lineSpans.compactMap(\.displayNumber).max() ?? 0
-        let digits = max(2, String(maxNum).count)
-        ruleThickness = CGFloat(digits) * charWidth + 12
+    /// 按给定最大行号定宽（两列传同一个值即可同宽，避免错位）。
+    func refresh(maxLineNumber: Int) {
+        let digits = max(2, String(max(0, maxLineNumber)).count)
+        ruleThickness = CGFloat(digits) * charWidth + 14
         needsDisplay = true
     }
 
@@ -387,9 +390,8 @@ final class DiffGutterRuler: NSRulerView {
 
         let visibleRect = tv.visibleRect
         let inset = tv.textContainerInset
-        let font = tv.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
+            .font: gutterFont, .foregroundColor: NSColor.tertiaryLabelColor,
         ]
         let visibleGlyphs = lm.glyphRange(forBoundingRect: visibleRect, in: tc)
         let visibleChars = lm.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
@@ -545,15 +547,14 @@ struct SplitDiffTextView: NSViewRepresentable {
         @objc private func leftScrolled() { mirror(from: leftScroll, to: rightScroll) }
         @objc private func rightScrolled() { mirror(from: rightScroll, to: leftScroll) }
 
-        /// 纵向同步：把 from 的 y 偏移镜像到 to（横向各自独立）。
+        /// 纵向 + 横向同步：把 from 的偏移镜像到 to（左右滑动两列一起动，行号槽固定不动）。
         private func mirror(from: NSScrollView?, to: NSScrollView?) {
             guard !syncing, let from, let to else { return }
             syncing = true
-            let y = from.contentView.bounds.origin.y
-            var p = to.contentView.bounds.origin
-            if abs(p.y - y) > 0.5 {
-                p.y = y
-                to.contentView.scroll(to: p)
+            let origin = from.contentView.bounds.origin
+            let cur = to.contentView.bounds.origin
+            if abs(cur.x - origin.x) > 0.5 || abs(cur.y - origin.y) > 0.5 {
+                to.contentView.scroll(to: origin)
                 to.reflectScrolledClipView(to.contentView)
             }
             syncing = false
@@ -584,6 +585,12 @@ struct SplitDiffTextView: NSViewRepresentable {
                           let lv = self.leftView, let rv = self.rightView else { return }
                     lv.applyBuilt(l, font: font)
                     rv.applyBuilt(r, font: font)
+                    // 两列行号槽统一按全局最大行号定宽，避免左右槽宽不一造成错位
+                    let maxNum = diff.hunks.flatMap(\.lines).reduce(0) {
+                        max($0, max($1.oldNumber ?? 0, $1.newNumber ?? 0))
+                    }
+                    (self.leftScroll?.verticalRulerView as? DiffGutterRuler)?.refresh(maxLineNumber: maxNum)
+                    (self.rightScroll?.verticalRulerView as? DiffGutterRuler)?.refresh(maxLineNumber: maxNum)
                     self.parent.onSelectChangedLines([])
                 }
             }
