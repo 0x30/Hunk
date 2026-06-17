@@ -1182,9 +1182,11 @@ final class RepoViewModel: ObservableObject {
         for other in openTabs where other != path && buffers[other]?.dirty != true {
             performCloseTab(other)
         }
-        if editorPath != path {
-            selection = .file(path: path)
+        // 统一标签栏:「关闭其他」也清掉 diff/提交/搜索等视图标签
+        for tab in openViewTabs {
+            closeViewTab(tab)
         }
+        selection = .file(path: path)
     }
 
     func closeTabsToTheRight(of path: String) {
@@ -1195,10 +1197,48 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    // MARK: 视图标签的批量关闭（右键菜单：diff / 提交 / 比较 / 搜索）
+
+    /// 关闭除该视图标签外的全部标签（含文件标签）；有未保存修改的文件标签保留。
+    func closeOtherTabs(keepingViewTab keep: ViewTab) {
+        stashActiveBuffer()
+        for path in openTabs where buffers[path]?.dirty != true {
+            performCloseTab(path)
+        }
+        for tab in openViewTabs where tab != keep {
+            closeViewTab(tab)
+        }
+        activateViewTab(keep)
+    }
+
+    /// 关闭该视图标签右侧的视图标签。
+    func closeViewTabsToTheRight(of tab: ViewTab) {
+        guard let index = openViewTabs.firstIndex(of: tab) else { return }
+        for other in Array(openViewTabs.suffix(from: index + 1)) {
+            closeViewTab(other)
+        }
+    }
+
+    /// 关闭全部标签（文件 + 视图）；有未保存修改的文件标签保留。
+    func closeAllTabs() {
+        stashActiveBuffer()
+        for path in openTabs where buffers[path]?.dirty != true {
+            performCloseTab(path)
+        }
+        for tab in openViewTabs {
+            closeViewTab(tab)
+        }
+    }
+
+    /// ⌘W:关闭当前激活的标签——文件标签 / diff·提交·比较·搜索视图标签一视同仁;
+    /// 真没有任何标签时才关窗。
     func closeActiveTab() {
-        if let path = editorPath {
+        switch activeDetail {
+        case .file(let path):
             closeTab(path)
-        } else {
+        case .view(let tab):
+            closeViewTab(tab)
+        case .none:
             NSApp.keyWindow?.performClose(nil)
         }
     }

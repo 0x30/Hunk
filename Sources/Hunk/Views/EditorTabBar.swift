@@ -141,6 +141,21 @@ private struct ViewTabItem: View {
         }
         .modifier(TabChrome(isActive: isActive, onTap: { vm.activateViewTab(tab) }) { EmptyView() })
         .onHover { hovering = $0 }
+        .help(title)
+        .contextMenu {
+            Button(tr("关闭", "Close")) { vm.closeViewTab(tab) }
+            Button(tr("关闭其他", "Close Others")) { vm.closeOtherTabs(keepingViewTab: tab) }
+            if vm.openViewTabs.last != tab {
+                Button(tr("关闭右侧", "Close to the Right")) { vm.closeViewTabsToTheRight(of: tab) }
+            }
+            Divider()
+            Button(tr("关闭全部", "Close All")) { vm.closeAllTabs() }
+            // diff 标签:可在文件列表中定位对应文件
+            if case .diff(let path, _) = tab, !vm.workspaceTree.isEmpty {
+                Divider()
+                Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
+            }
+        }
     }
 }
 
@@ -220,6 +235,7 @@ private struct EditorTabItem: View {
             Button(tr("关闭其他", "Close Others")) { vm.closeOtherTabs(keeping: path) }
             Button(tr("关闭已保存", "Close Saved")) { vm.closeSavedTabs() }
             Button(tr("关闭右侧", "Close to the Right")) { vm.closeTabsToTheRight(of: path) }
+            Button(tr("关闭全部", "Close All")) { vm.closeAllTabs() }
             if !vm.isUntitled(path) {
                 Divider()
                 if !vm.workspaceTree.isEmpty {
