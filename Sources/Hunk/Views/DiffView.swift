@@ -24,7 +24,7 @@ struct DiffDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if supportsLineStaging, !vm.selectedLineIDs.isEmpty {
+            if supportsLineStaging {
                 selectionBar
             }
             Divider()
@@ -137,15 +137,18 @@ struct DiffDetailView: View {
         .help(help)
     }
 
-    /// 选中行后出现的操作条。
+    /// 行级暂存操作条：一直显示，未选行时置灰禁用（不再随选择突然出现/消失）。
     private var selectionBar: some View {
-        HStack(spacing: 12) {
+        let hasSelection = !vm.selectedLineIDs.isEmpty
+        return HStack(spacing: 12) {
             Label(
-                tr("已选 \(vm.selectedLineIDs.count) 行", "\(vm.selectedLineIDs.count) line(s) selected"),
-                systemImage: "checkmark.square.fill"
+                hasSelection
+                    ? tr("已选 \(vm.selectedLineIDs.count) 行", "\(vm.selectedLineIDs.count) line(s) selected")
+                    : tr("未选择行", "No lines selected"),
+                systemImage: hasSelection ? "checkmark.square.fill" : "square.dashed"
             )
             .font(.callout)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(hasSelection ? Color.accentColor : Color.secondary)
 
             Button {
                 if vm.diffArea == .staged {
@@ -158,6 +161,7 @@ struct DiffDetailView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
+            .disabled(!hasSelection)
 
             Button(tr("清除选择", "Clear Selection")) {
                 vm.selectedLineIDs = []
@@ -165,6 +169,7 @@ struct DiffDetailView: View {
             .buttonStyle(.plain)
             .font(.callout)
             .foregroundStyle(.secondary)
+            .disabled(!hasSelection)
 
             Spacer()
 
@@ -176,7 +181,7 @@ struct DiffDetailView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(Color.accentColor.opacity(0.08))
+        .background(hasSelection ? Color.accentColor.opacity(0.08) : Color(nsColor: .windowBackgroundColor).opacity(0.5))
     }
 
     // MARK: - 内容
