@@ -391,7 +391,9 @@ public final class Repository: @unchecked Sendable {
     // MARK: - Blame
 
     public struct BlameInfo: Sendable {
+        public let hash: String
         public let author: String
+        public let email: String
         public let summary: String
         public let date: Date?
         public let isUncommitted: Bool
@@ -411,11 +413,16 @@ public final class Repository: @unchecked Sendable {
         else { return nil }
 
         var author = ""
+        var email = ""
         var summary = ""
         var date: Date?
         for entry in lines.dropFirst() {
             if entry.hasPrefix("author ") {
                 author = String(entry.dropFirst("author ".count))
+            } else if entry.hasPrefix("author-mail ") {
+                // 形如 <a@b.com>，去掉尖括号
+                email = String(entry.dropFirst("author-mail ".count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
             } else if entry.hasPrefix("author-time ") {
                 date = Double(entry.dropFirst("author-time ".count)).map { Date(timeIntervalSince1970: $0) }
             } else if entry.hasPrefix("summary ") {
@@ -423,10 +430,58 @@ public final class Repository: @unchecked Sendable {
             }
         }
         return BlameInfo(
+            hash: hash,
             author: author,
+            email: email,
             summary: summary,
             date: date,
             isUncommitted: hash.allSatisfy { $0 == "0" }
+        )
+    }
+
+    // MARK: - 提交详情（blame 悬浮卡）
+
+    public struct CommitDetail: Sendable, Hashable {
+        public let hash: String
+        public let shortHash: String
+        public let author: String
+        public let email: String
+        public let date: Date
+        public let subject: String
+        public let body: String        // 完整多行消息正文（不含 subject）
+        public let filesChanged: Int
+    }
+
+    /// 单个提交的详情：作者/邮箱/时间/标题/完整正文 + 改动文件数。
+    /// 用 1F 分隔字段、1E 结束格式段，正文可含换行而不破坏解析；其后是 --name-status 文件列表。
+    public func commitDetail(hash: String) async throws -> CommitDetail? {
+        let sep = "\u{1f}", end = "\u{1e}"
+        let format = ["%H", "%h", "%an", "%ae", "%at", "%s", "%b"].joined(separator: sep) + end
+        // --name-only：diff 区只列文件名（不是完整 patch），消息后紧跟文件清单
+        let result = try await git.run(
+            ["show", "--name-only", "--format=\(format)", hash],
+            allowedExitCodes: [0, 128]
+        )
+        guard result.exitCode == 0 else { return nil }
+
+        let parts = result.stdout.components(separatedBy: end)
+        let fields = parts[0].components(separatedBy: sep)
+        guard fields.count >= 7 else { return nil }
+        let fileBlock = parts.count > 1 ? parts[1] : ""
+        let fileCount = fileBlock
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .count
+
+        return CommitDetail(
+            hash: fields[0],
+            shortHash: fields[1],
+            author: fields[2],
+            email: fields[3],
+            date: Date(timeIntervalSince1970: Double(fields[4]) ?? 0),
+            subject: fields[5],
+            body: fields[6].trimmingCharacters(in: .whitespacesAndNewlines),
+            filesChanged: fileCount
         )
     }
 
@@ -518,7 +573,10 @@ public final class Repository: @unchecked Sendable {
             else { continue }
             let path = String(line[..<firstColon])
             guard let number = Int(line[line.index(after: firstColon)..<secondColon]) else { continue }
-            let text = String(line[line.index(after: secondColon)...])
+            // 命中行只存有界前缀：minified/压缩文件一行可达数 MB，整行存进结果模型会撑爆内存
+            // （UI 本就只显示前 240 字符）。截到 500 足够展示与高亮。
+            var text = String(line[line.index(after: secondColon)...])
+            if text.count > 500 { text = String(text.prefix(500)) }
             hits.append(GrepHit(path: path, line: number, text: text))
         }
         return hits
