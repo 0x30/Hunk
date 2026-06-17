@@ -159,6 +159,11 @@ struct TerminalPanel: View {
                     font: settings.editorNSFont
                 )
                 .id(session.id)  // 切换会话时重挂对应的终端视图
+                // 留点内边距,别让文字贴着窗口边/分隔线。padding 区域露出的是
+                // 面板底色(同 .textBackgroundColor),与终端自身背景无缝衔接。
+                .padding(.leading, 10)
+                .padding(.trailing, 4)
+                .padding(.vertical, 6)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
