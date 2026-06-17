@@ -47,19 +47,22 @@ struct Line {
     let widthRatio: CGFloat
     let color: NSColor
     let glyph: String?  // "+" / "-" / nil
+    let ghost: String?  // 低透明度暗藏的「假代码」文字（凑近/大尺寸才显形）
 }
 
 let grey = NSColor(calibratedRed: 0.36, green: 0.40, blue: 0.48, alpha: 1)
 let red = NSColor(calibratedRed: 0.92, green: 0.34, blue: 0.30, alpha: 1)
 let green = NSColor(calibratedRed: 0.27, green: 0.74, blue: 0.35, alpha: 1)
 
+// 6 条行条 = 一段 diff：grey 上下文 / 红删一行 / 绿增三行（TODO 两行 + Hello AI）/ grey 上下文。
+// 红绿条上暗藏低透明度文字，藏着 Hello world → Hello AI 的彩蛋；小尺寸只见色条，凑近才显形。
 let lines: [Line] = [
-    Line(widthRatio: 0.62, color: grey, glyph: nil),
-    Line(widthRatio: 0.44, color: grey, glyph: nil),
-    Line(widthRatio: 0.55, color: red, glyph: "-"),
-    Line(widthRatio: 0.74, color: green, glyph: "+"),
-    Line(widthRatio: 0.50, color: green, glyph: "+"),
-    Line(widthRatio: 0.40, color: grey, glyph: nil),
+    Line(widthRatio: 0.62, color: grey, glyph: nil, ghost: nil),
+    Line(widthRatio: 0.48, color: red, glyph: "-", ghost: "Hello world"),
+    Line(widthRatio: 0.78, color: green, glyph: "+", ghost: "// TODO: An era ends,"),
+    Line(widthRatio: 0.60, color: green, glyph: "+", ghost: "another begins."),
+    Line(widthRatio: 0.40, color: green, glyph: "+", ghost: "Hello AI"),
+    Line(widthRatio: 0.44, color: grey, glyph: nil, ghost: nil),
 ]
 
 let barHeight: CGFloat = 64
@@ -91,6 +94,17 @@ for line in lines {
                 xRadius: armThickness / 2, yRadius: armThickness / 2
             ).fill()
         }
+    }
+
+    // 暗藏的「假代码」文字：低透明度，凑近 / 大尺寸才显形，小尺寸只见色条
+    if let ghost = line.ghost {
+        let ghostFont = NSFont.monospacedSystemFont(ofSize: 30, weight: .regular)
+        let s = NSAttributedString(string: ghost, attributes: [
+            .font: ghostFont,
+            .foregroundColor: NSColor.white.withAlphaComponent(0.24),
+        ])
+        let size = s.size()
+        s.draw(at: NSPoint(x: rect.minX + barHeight + 2, y: rect.midY - size.height / 2))
     }
     y -= barHeight + barGap
 }
