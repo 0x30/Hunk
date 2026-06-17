@@ -24,6 +24,16 @@ final class RepoViewModel: ObservableObject {
     @Published var isGitRepo = false
     /// 单文件模式（无文件树；tab 右键只保留复制路径 / Finder）
     @Published var isStandaloneFile = false
+    /// 工作区根：打开的是「装了多个 git 项目的文件夹」时，记录这个父目录。
+    /// 非空且 discoveredRepos 非空 ⇒ 侧边栏出现仓库切换器。单仓库/普通目录时为 nil。
+    @Published var workspaceRoot: URL?
+    /// 工作区里扫描到的子仓库（标准化绝对路径，已排序）。
+    @Published var discoveredRepos: [URL] = []
+    /// 当前激活的工作区子仓库（nil = 正在看「整个文件夹」总览）。
+    @Published var activeWorkspaceRepo: URL?
+
+    /// 是否处于多仓库工作区（决定是否显示切换器）。
+    var isWorkspace: Bool { workspaceRoot != nil && !discoveredRepos.isEmpty }
     @Published var changes: [FileChange] = []
     @Published var branches: [Branch] = []
     @Published var stashes: [Stash] = []
@@ -447,23 +457,121 @@ final class RepoViewModel: ObservableObject {
         Diagnostics.log("open repo \(url.path)")
         // 非 git 目录也能打开：discover 失败就以 url 本身作根（无 git 功能），不报错
         let repository = try? await Repository.discover(at: url)
+        if repository == nil {
+            // 不是仓库：先看是不是「装了多个 git 项目的文件夹」——扫子目录找 .git
+            let subs = await Task.detached(priority: .userInitiated) {
+                RepoViewModel.discoverRepos(in: url)
+            }.value
+            if !subs.isEmpty {
+                Diagnostics.log("工作区模式：\(url.lastPathComponent) 含 \(subs.count) 个 git 仓库")
+                workspaceRoot = url
+                discoveredRepos = subs
+                persistRecent(url)             // 记住父目录，重开仍进工作区
+                // 默认激活第一个仓库（完整 git UI），切换器可换别的或看整个文件夹
+                let first = try? await Repository.discover(at: subs[0])
+                activeWorkspaceRepo = subs[0]
+                await activateRoot(subs[0], repository: first)
+                return
+            }
+        }
+        // 单仓库 / 普通非 git 目录：清掉工作区状态
+        workspaceRoot = nil
+        discoveredRepos = []
+        activeWorkspaceRepo = nil
         let root = repository?.root ?? url
+        persistRecent(root)
+        await activateRoot(root, repository: repository)
+    }
+
+    /// 工作区内切换激活仓库（保留切换器与 discoveredRepos）。
+    func selectRepo(_ url: URL) async {
+        guard activeWorkspaceRepo != url else { return }
+        let repository = try? await Repository.discover(at: url)
+        activeWorkspaceRepo = url
+        await activateRoot(url, repository: repository)
+    }
+
+    /// 工作区：切到「整个文件夹」总览（无 git、平铺文件树）。
+    func selectWorkspaceOverview() async {
+        guard let ws = workspaceRoot, activeWorkspaceRepo != nil else { return }
+        activeWorkspaceRepo = nil
+        await activateRoot(ws, repository: nil)
+    }
+
+    /// 切到某个根并刷新。repository 非空=git 仓库，否则按非 git 目录处理。
+    /// 不动 workspaceRoot/discoveredRepos/activeWorkspaceRepo——由调用方维护。
+    private func activateRoot(_ root: URL, repository: Repository?) async {
         repo = repository
         isGitRepo = repository != nil
         isStandaloneFile = false
-        repoRoot = root
+        repoRoot = repository?.root ?? root
         selection = nil
         diff = nil
         editorPath = nil
+        // 换根：编辑器 tab/缓冲都是按旧根的相对路径，必须清掉避免错位
+        openTabs = []
+        buffers = [:]
+        blameCache = [:]
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
         fileTreeDidInitialExpand = false
-        defaults.set(root.path, forKey: "lastRepo")
-        var recents = defaults.stringArray(forKey: "recentRepos") ?? []
-        recents.removeAll { $0 == root.path }
-        recents.insert(root.path, at: 0)
-        defaults.set(Array(recents.prefix(8)), forKey: "recentRepos")
         await refresh()
+    }
+
+    /// 写入「最近打开」与 lastRepo。
+    private func persistRecent(_ url: URL) {
+        defaults.set(url.path, forKey: "lastRepo")
+        var recents = defaults.stringArray(forKey: "recentRepos") ?? []
+        recents.removeAll { $0 == url.path }
+        recents.insert(url.path, at: 0)
+        defaults.set(Array(recents.prefix(8)), forKey: "recentRepos")
+    }
+
+    /// 总览模式下，某个文件树目录是否是扫描到的子仓库（用于树里加角标 + 右键「作为仓库打开」）。
+    func discoveredRepoURL(forTreePath path: String) -> URL? {
+        guard repo == nil, let ws = workspaceRoot else { return nil }  // 仅总览模式
+        let abs = ws.appendingPathComponent(path).standardizedFileURL
+        return discoveredRepos.first { $0.path == abs.path }
+    }
+
+    /// 扫描文件夹找出其中的 git 仓库（深度 ≤ maxDepth）。遇到 .git 即记为仓库根、不再下钻。
+    /// 跳过 node_modules 等噪声目录。纯文件系统探测，放后台线程跑。
+    nonisolated static func discoverRepos(in root: URL, maxDepth: Int = 2, limit: Int = 100) -> [URL] {
+        let skip: Set<String> = [
+            ".git", "node_modules", ".build", "build", "target", "dist", ".next",
+            "DerivedData", ".venv", "venv", "__pycache__", ".gradle", "Pods", ".idea", ".cache",
+        ]
+        let fm = FileManager.default
+        var found: [URL] = []
+
+        func scan(_ dir: URL, depth: Int) {
+            if found.count >= limit { return }
+            // 含 .git（目录或文件，后者用于 worktree/submodule）即视为仓库根，不再下钻
+            if fm.fileExists(atPath: dir.appendingPathComponent(".git").path) {
+                found.append(dir.standardizedFileURL)
+                return
+            }
+            guard depth < maxDepth else { return }
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+            ) else { return }
+            for entry in entries {
+                let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard isDir, !skip.contains(entry.lastPathComponent) else { continue }
+                scan(entry, depth: depth + 1)
+            }
+        }
+
+        // root 本身已确认不是仓库（调用前 discover 失败），从子目录开始扫
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+        for entry in entries {
+            let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir, !skip.contains(entry.lastPathComponent) else { continue }
+            scan(entry, depth: 1)
+        }
+        return found.sorted { $0.path < $1.path }
     }
 
     func closeRepo() {
@@ -471,6 +579,9 @@ final class RepoViewModel: ObservableObject {
         isGitRepo = false
         isStandaloneFile = false
         repoRoot = nil
+        workspaceRoot = nil
+        discoveredRepos = []
+        activeWorkspaceRepo = nil
         changes = []
         selection = nil
         diff = nil
@@ -801,6 +912,9 @@ final class RepoViewModel: ObservableObject {
         repo = nil
         isGitRepo = false
         isStandaloneFile = true
+        workspaceRoot = nil
+        discoveredRepos = []
+        activeWorkspaceRepo = nil
         repoRoot = url.deletingLastPathComponent()  // 目录作根（无 git），让主界面显示编辑器
         sidebarVisible = false                       // 单文件无文件树，收起侧边栏只看文件
         workspaceFiles = []

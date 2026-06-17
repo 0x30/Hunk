@@ -6,7 +6,7 @@ struct SidebarView: View {
     @EnvironmentObject var settings: SettingsStore
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             switch vm.sidebarTab {
             case .files:
                 FilesView()
@@ -29,6 +29,11 @@ struct SidebarView: View {
                     }
                 }
             }
+            // 多仓库工作区：底部一条仓库切换芯片（VS Code 式，不占文件树空间）
+            if vm.isWorkspace {
+                Divider()
+                WorkspaceStatusBar()
+            }
         }
         .toolbar(removing: .sidebarToggle)
         // 导航图标在侧边栏标题区，紧贴交通灯（Xcode 式）
@@ -37,6 +42,75 @@ struct SidebarView: View {
                 SidebarNavButtons()
             }
         }
+    }
+}
+
+/// 多仓库工作区的底部状态条：一条芯片显示当前激活的仓库（或「整个文件夹」），
+/// 点击弹出下拉，列「整个文件夹」总览 + 扫描到的各子仓库（带 ✓）来切换。不占文件树空间。
+private struct WorkspaceStatusBar: View {
+    @EnvironmentObject var vm: RepoViewModel
+
+    /// 子仓库相对工作区根的显示名（如 foo、group/bar）。
+    private func displayName(_ url: URL) -> String {
+        guard let ws = vm.workspaceRoot else { return url.lastPathComponent }
+        let prefix = ws.path.hasSuffix("/") ? ws.path : ws.path + "/"
+        return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.lastPathComponent
+    }
+
+    /// 当前激活范围的显示名。
+    private var activeName: String {
+        if let active = vm.activeWorkspaceRepo { return displayName(active) }
+        return vm.workspaceRoot?.lastPathComponent ?? tr("整个文件夹", "Whole folder")
+    }
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await vm.selectWorkspaceOverview() }
+            } label: {
+                Label(
+                    tr("整个文件夹（\(vm.workspaceRoot?.lastPathComponent ?? "")）",
+                       "Whole folder (\(vm.workspaceRoot?.lastPathComponent ?? ""))"),
+                    systemImage: vm.activeWorkspaceRepo == nil ? "checkmark" : "folder"
+                )
+            }
+            Divider()
+            ForEach(vm.discoveredRepos, id: \.self) { url in
+                Button {
+                    Task { await vm.selectRepo(url) }
+                } label: {
+                    Label(displayName(url),
+                          systemImage: vm.activeWorkspaceRepo == url ? "checkmark" : "arrow.triangle.branch")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: vm.activeWorkspaceRepo == nil ? "folder" : "arrow.triangle.branch")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text(activeName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text("\(vm.discoveredRepos.count)")
+                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .help(tr("此文件夹含 \(vm.discoveredRepos.count) 个 git 仓库",
+                             "\(vm.discoveredRepos.count) git repositories in this folder"))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .help(tr("切换仓库", "Switch repository"))
     }
 }
 
@@ -132,28 +206,46 @@ struct BranchMenu: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        Button {
-            vm.showBranchPanel.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    HStack(spacing: 2) {
-                        Text(vm.currentBranch)
-                            .font(.system(size: 10.5))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .semibold))
+        if vm.isGitRepo {
+            // git 仓库：仓库名 + 当前分支 + 下拉箭头，点击出分支面板
+            Button {
+                vm.showBranchPanel.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 2) {
+                            Text(vm.currentBranch)
+                                .font(.system(size: 10.5))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 7, weight: .semibold))
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
                 }
             }
+            .help(tr("分支：切换 / 新建", "Branches: switch / create"))
+        } else {
+            // 非 git（整个文件夹总览 / 普通目录 / 单文件）：没有分支概念，
+            // 只静态显示当前文件夹名——不可点、不弹分支面板、无下拉箭头。
+            HStack(spacing: 5) {
+                Image(systemName: "folder")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .help(tr("非 git 目录（无分支）", "Non-git folder (no branches)"))
         }
-        .help(tr("分支：切换 / 新建", "Branches: switch / create"))
     }
 }
 

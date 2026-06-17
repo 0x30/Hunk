@@ -84,7 +84,7 @@ struct ContentView: View {
         }
         // 分支面板：窗口内居中浮层
         .overlay(alignment: .top) {
-            if vm.showBranchPanel {
+            if vm.showBranchPanel && vm.isGitRepo {
                 ZStack(alignment: .top) {
                     Color.clear
                         .contentShape(Rectangle())

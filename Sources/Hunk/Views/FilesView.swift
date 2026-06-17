@@ -189,6 +189,11 @@ private struct FileTreeRow: View {
         vm.changes.first { $0.path == node.path }
     }
 
+    /// 总览模式下：该目录若是扫描到的子仓库，返回其绝对 URL（用于角标 + 右键「作为仓库打开」）。
+    private var repoURL: URL? {
+        node.isDirectory ? vm.discoveredRepoURL(forTreePath: node.path) : nil
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             // 展开箭头（目录）/ 占位（文件）
@@ -212,6 +217,14 @@ private struct FileTreeRow: View {
             Text(node.name)
                 .lineLimit(1)
 
+            // 子仓库角标：总览模式下标出这个目录是个 git 仓库
+            if repoURL != nil {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .help(tr("git 仓库 · 右键作为仓库打开", "git repository · right-click to open as repo"))
+            }
+
             Spacer(minLength: 4)
 
             if let kind = change?.unstaged ?? change?.staged {
@@ -232,6 +245,13 @@ private struct FileTreeRow: View {
             }
         }
         .contextMenu {
+            // 总览模式下，子仓库目录可一键作为仓库打开（切换激活仓库）
+            if let repoURL {
+                Button(tr("作为仓库打开", "Open as Repository")) {
+                    Task { await vm.selectRepo(repoURL) }
+                }
+                Divider()
+            }
             Button(tr("新建文件…", "New File…")) {
                 vm.promptNewFile(in: node.isDirectory
                                  ? node.path
