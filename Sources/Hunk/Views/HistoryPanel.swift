@@ -503,5 +503,32 @@ struct HistoryDetailView: View {
         .onTapGesture {
             vm.selectHistoryFile(file)
         }
+        .contextMenu {
+            // 文件历史对删除的文件也成立（git log 仍能追溯），始终提供
+            Button(tr("查看文件历史", "View File History")) {
+                vm.showFileHistory(file.path)
+            }
+            // 工作区里仍存在的文件才提供定位/打开（删除的、后来改名或删掉的都不显示）
+            if existsInWorktree(file) {
+                Divider()
+                if !vm.workspaceTree.isEmpty {
+                    Button(tr("在文件列表中显示", "Reveal in Files")) {
+                        vm.closeHistoryDetail()
+                        vm.revealInFiles(file.path)
+                    }
+                }
+                Button(tr("在 Finder 中显示", "Reveal in Finder")) {
+                    vm.revealInFinder(file.path)
+                }
+            }
+            Divider()
+            Button(tr("复制路径", "Copy Path")) { vm.copyPath(file.path) }
+        }
+    }
+
+    /// 该提交里的文件如今是否还在工作区（删除 / 后来改名删掉的就没有）。
+    private func existsInWorktree(_ file: Repository.CommitFileChange) -> Bool {
+        file.kind != .deleted
+            && FileManager.default.fileExists(atPath: vm.editorFileURL(file.path).path)
     }
 }
