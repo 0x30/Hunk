@@ -425,6 +425,136 @@ final class OverscrollTextView: NSTextView {
         }
         super.paste(sender)
     }
+
+    // MARK: - 标识符级单词边界（abc.efg 拆成 abc / efg）
+
+    // 系统默认把 `abc.efg`、`3.14` 这类当成一个整词（句点算词内字符），
+    // 双击 / ⌥←→ / ⌥⇧←→ 会一次吞掉整段。代码里更想按标识符切：
+    // 词 = 字母/数字/下划线（含 CJK 等非 ASCII 文字），其余标点皆为分隔符。
+    // 重写选词与按词移动/扩选/删除，让它们都用这套边界。
+
+    /// 连续两次按词扩选之间保持的锚点；其它任何改选区的动作都会清空它（见 setSelectedRanges）。
+    private static let wordAnchorKey = "OverscrollTextView.wordAnchor"
+
+    private static func isWordChar(_ ch: unichar) -> Bool {
+        if ch == 0x5F { return true }                       // _
+        if let scalar = Unicode.Scalar(ch) {
+            return CharacterSet.alphanumerics.contains(scalar)
+        }
+        return true                                          // 代理对半个码元：当词内,别切进 emoji 中间
+    }
+
+    /// 从 index 向右到下一个词尾：先跳过分隔符,再跳过词字符。
+    private func nextWordBoundary(from index: Int, in s: NSString) -> Int {
+        var i = max(0, min(index, s.length))
+        let n = s.length
+        while i < n, !Self.isWordChar(s.character(at: i)) { i += 1 }
+        while i < n, Self.isWordChar(s.character(at: i)) { i += 1 }
+        return i
+    }
+
+    /// 从 index 向左到上一个词首：先跳过分隔符,再跳过词字符。
+    private func prevWordBoundary(from index: Int, in s: NSString) -> Int {
+        var i = max(0, min(index, s.length))
+        while i > 0, !Self.isWordChar(s.character(at: i - 1)) { i -= 1 }
+        while i > 0, Self.isWordChar(s.character(at: i - 1)) { i -= 1 }
+        return i
+    }
+
+    /// 包含某位置的「同类字符段」范围:词字符段或分隔符段(双击选词用)。
+    private func wordRange(at index: Int, in s: NSString) -> NSRange {
+        let n = s.length
+        guard n > 0 else { return NSRange(location: 0, length: 0) }
+        let pos = min(index, n - 1)
+        let cls = Self.isWordChar(s.character(at: pos))
+        var start = pos, end = pos + 1
+        while start > 0, Self.isWordChar(s.character(at: start - 1)) == cls { start -= 1 }
+        while end < n, Self.isWordChar(s.character(at: end)) == cls { end += 1 }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// 双击 / 按词拖选:用标识符边界覆盖系统默认选词。
+    override func selectionRange(forProposedRange proposedCharRange: NSRange,
+                                 granularity: NSSelectionGranularity) -> NSRange {
+        guard granularity == .selectByWord else {
+            return super.selectionRange(forProposedRange: proposedCharRange, granularity: granularity)
+        }
+        let s = string as NSString
+        guard s.length > 0 else { return proposedCharRange }
+        let lower = wordRange(at: proposedCharRange.location, in: s)
+        let upperIndex = NSMaxRange(proposedCharRange) > proposedCharRange.location
+            ? NSMaxRange(proposedCharRange) - 1 : proposedCharRange.location
+        let upper = wordRange(at: upperIndex, in: s)
+        let start = min(lower.location, upper.location)
+        let end = max(NSMaxRange(lower), NSMaxRange(upper))
+        return NSRange(location: start, length: end - start)
+    }
+
+    // 锚点跟踪:只有连续按词扩选才保留锚点,其它改选区动作经此漏斗清空。
+    private var wordAnchor: Int?
+    private var inWordExtend = false
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting flag: Bool) {
+        if !inWordExtend { wordAnchor = nil }
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: flag)
+    }
+
+    private func moveCaretByWord(forward: Bool) {
+        let s = string as NSString
+        let sel = selectedRange()
+        // 有选区时,移动从对应一端的边缘出发;无选区从光标出发
+        let from = forward ? NSMaxRange(sel) : sel.location
+        let target = forward ? nextWordBoundary(from: from, in: s) : prevWordBoundary(from: from, in: s)
+        setSelectedRange(NSRange(location: target, length: 0))
+        scrollRangeToVisible(selectedRange())
+    }
+
+    private func extendSelectionByWord(forward: Bool) {
+        let s = string as NSString
+        let sel = selectedRange()
+        let anchor: Int
+        if let a = wordAnchor {
+            anchor = a
+        } else {
+            anchor = forward ? sel.location : NSMaxRange(sel)   // 新一轮:锚定移动方向的反端
+            wordAnchor = anchor
+        }
+        let active = sel.length == 0 ? anchor : (anchor == sel.location ? NSMaxRange(sel) : sel.location)
+        let target = forward ? nextWordBoundary(from: active, in: s) : prevWordBoundary(from: active, in: s)
+        let lower = min(anchor, target)
+        let upper = max(anchor, target)
+        inWordExtend = true
+        setSelectedRange(NSRange(location: lower, length: upper - lower))
+        inWordExtend = false
+        scrollRangeToVisible(selectedRange())
+    }
+
+    private func deleteByWord(forward: Bool) {
+        let s = string as NSString
+        let sel = selectedRange()
+        guard sel.length == 0 else { super.deleteBackward(nil); return }  // 有选区交还系统
+        let target = forward ? nextWordBoundary(from: sel.location, in: s)
+                             : prevWordBoundary(from: sel.location, in: s)
+        let range = forward
+            ? NSRange(location: sel.location, length: target - sel.location)
+            : NSRange(location: target, length: sel.location - target)
+        guard range.length > 0, shouldChangeText(in: range, replacementString: "") else { return }
+        textStorage?.replaceCharacters(in: range, with: "")
+        didChangeText()
+        setSelectedRange(NSRange(location: range.location, length: 0))
+    }
+
+    // ⌥←→ 走 Right/Left 绑定(LTR 下 Right=Forward);Forward/Backward 一并覆盖以防其它绑定。
+    override func moveWordRight(_ sender: Any?) { moveCaretByWord(forward: true) }
+    override func moveWordLeft(_ sender: Any?) { moveCaretByWord(forward: false) }
+    override func moveWordForward(_ sender: Any?) { moveCaretByWord(forward: true) }
+    override func moveWordBackward(_ sender: Any?) { moveCaretByWord(forward: false) }
+    override func moveWordRightAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: true) }
+    override func moveWordLeftAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: false) }
+    override func moveWordForwardAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: true) }
+    override func moveWordBackwardAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: false) }
+    override func deleteWordForward(_ sender: Any?) { deleteByWord(forward: true) }
+    override func deleteWordBackward(_ sender: Any?) { deleteByWord(forward: false) }
 }
 
 // MARK: - 行号 gutter
