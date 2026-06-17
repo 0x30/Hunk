@@ -10,6 +10,12 @@ struct PlainTextEditor: NSViewRepresentable {
     var conflicts: [ConflictBlock] = []
     @Binding var scrollToLine: Int?
     var blameText: String?
+    /// 当前光标行所属提交 hash（committed 行才有）；行内注解悬浮/点击弹提交卡用。
+    var blameHash: String?
+    /// 取提交详情（喂给悬浮卡）。
+    var commitDetailProvider: (String) async -> Repository.CommitDetail? = { _ in nil }
+    /// 「查看此提交」：在历史详情打开。
+    var onViewCommit: (Repository.CommitDetail) -> Void = { _ in }
     var onEdit: () -> Void
     var onCursorLineChange: (Int) -> Void = { _ in }
     /// 光标/选中变化：(行, 列, 选中行数)，喂给底部状态栏
@@ -69,17 +75,39 @@ struct PlainTextEditor: NSViewRepresentable {
         scrollView.rulersVisible = true
         context.coordinator.ruler = ruler
 
-        // 光标行尾的 blame 注解
-        let blameLabel = NSTextField(labelWithString: "")
+        // 光标行尾的 blame 注解（可悬浮/点击弹出提交卡）
+        let blameLabel = BlameLabel()
         blameLabel.font = .systemFont(ofSize: 11)
         blameLabel.textColor = .tertiaryLabelColor
-        blameLabel.backgroundColor = .clear
+        blameLabel.drawsBackground = false
         blameLabel.isBezeled = false
         blameLabel.isEditable = false
         blameLabel.isSelectable = false
         blameLabel.isHidden = true
         textView.addSubview(blameLabel)
         context.coordinator.blameLabel = blameLabel
+
+        // blame 提交卡浮窗控制器：悬浮预览 + 点击钉住
+        let popover = CommitPopoverController()
+        popover.fetch = { [weak coordinator = context.coordinator] hash in
+            guard let coordinator else { return nil }
+            return await coordinator.parent.commitDetailProvider(hash)
+        }
+        popover.onViewCommit = { [weak coordinator = context.coordinator] detail in
+            coordinator?.parent.onViewCommit(detail)
+        }
+        context.coordinator.commitPopover = popover
+        blameLabel.onHover = { [weak blameLabel, weak popover] inside in
+            guard let blameLabel, let popover, let hash = blameLabel.commitHash else {
+                popover?.hoverExited(); return
+            }
+            if inside { popover.hoverEntered(hash: hash, relativeTo: blameLabel.bounds, of: blameLabel) }
+            else { popover.hoverExited() }
+        }
+        blameLabel.onClick = { [weak blameLabel, weak popover] in
+            guard let blameLabel, let popover, let hash = blameLabel.commitHash else { return }
+            popover.clicked(hash: hash, relativeTo: blameLabel.bounds, of: blameLabel)
+        }
 
         context.coordinator.textView = textView
         NotificationCenter.default.addObserver(
@@ -159,7 +187,8 @@ struct PlainTextEditor: NSViewRepresentable {
         var parent: PlainTextEditor
         weak var textView: NSTextView?
         weak var ruler: LineNumberRulerView?
-        weak var blameLabel: NSTextField?
+        weak var blameLabel: BlameLabel?
+        var commitPopover: CommitPopoverController?
         var lastConflicts: [ConflictBlock] = []
         var lastThemeName: String?
         var lastFileName: String?
@@ -222,12 +251,15 @@ struct PlainTextEditor: NSViewRepresentable {
             if line != lastCursorLine {
                 lastCursorLine = line
                 blameLabel?.isHidden = true  // 移动后先隐藏，等新结果
+                commitPopover?.close()       // 注解锚点要移动了，收起旧浮窗
                 parent.onCursorLineChange(line)
             }
             positionBlameLabel()
         }
 
         func updateBlame(text: String?) {
+            // hash 随行变化，先同步给注解（点击/悬浮时读它）
+            blameLabel?.commitHash = parent.blameHash
             guard text != lastBlameText else { return }
             lastBlameText = text
             guard let blameLabel else { return }
@@ -238,6 +270,7 @@ struct PlainTextEditor: NSViewRepresentable {
                 positionBlameLabel()
             } else {
                 blameLabel.isHidden = true
+                commitPopover?.close()
             }
         }
 
@@ -712,4 +745,134 @@ final class LineNumberRulerView: NSRulerView {
             }
         }
     }
+}
+
+// MARK: - 行内 blame 注解（可悬浮/点击弹提交卡）
+
+/// 光标行尾的 blame 文字标签：committed 行（commitHash 非空）可悬浮预览、点击钉住提交卡。
+final class BlameLabel: NSTextField {
+    var commitHash: String? {
+        didSet { window?.invalidateCursorRects(for: self) }
+    }
+    var onHover: ((Bool) -> Void)?
+    var onClick: (() -> Void)?
+    private var tracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeInActiveApp],
+                                  owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
+    override func mouseDown(with event: NSEvent) {
+        if commitHash != nil { onClick?() } else { super.mouseDown(with: event) }
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var acceptsFirstResponder: Bool { false }
+    override func resetCursorRects() {
+        if commitHash != nil { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+}
+
+// MARK: - 提交卡浮窗控制器（悬浮预览 + 点击钉住）
+
+/// 管理一个 NSPopover 承载 CommitCard：
+/// 悬浮 0.35s 出预览（移开自动收，鼠标桥接进卡片不收）；点击钉住（外点才关）。
+/// 仅在主线程使用（由 NSTextViewDelegate 回调驱动）。
+final class CommitPopoverController {
+    private let popover = NSPopover()
+    private(set) var pinned = false
+    private var currentHash: String?
+    private var showWork: DispatchWorkItem?
+    private var closeWork: DispatchWorkItem?
+    private var mouseInCard = false
+
+    var fetch: ((String) async -> Repository.CommitDetail?)?
+    var onViewCommit: ((Repository.CommitDetail) -> Void)?
+
+    init() {
+        popover.behavior = .transient   // 外点 / 切窗自动关
+        popover.animates = false
+    }
+
+    func hoverEntered(hash: String, relativeTo rect: NSRect, of view: NSView) {
+        cancelClose()
+        guard !pinned else { return }
+        if popover.isShown, currentHash == hash { return }
+        showWork?.cancel()
+        let work = DispatchWorkItem { [weak self, weak view] in
+            guard let self, let view, view.window != nil else { return }
+            self.present(hash: hash, relativeTo: rect, of: view, pin: false)
+        }
+        showWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    func hoverExited() {
+        showWork?.cancel(); showWork = nil
+        guard !pinned else { return }
+        scheduleClose()
+    }
+
+    func clicked(hash: String, relativeTo rect: NSRect, of view: NSView) {
+        showWork?.cancel(); showWork = nil
+        cancelClose()
+        if popover.isShown, currentHash == hash {
+            pinned = true   // 预览已开着同一个 → 直接钉住，不重弹
+            return
+        }
+        present(hash: hash, relativeTo: rect, of: view, pin: true)
+    }
+
+    func close() {
+        showWork?.cancel(); showWork = nil
+        cancelClose()
+        pinned = false
+        currentHash = nil
+        mouseInCard = false
+        if popover.isShown { popover.performClose(nil) }
+    }
+
+    private func present(hash: String, relativeTo rect: NSRect, of view: NSView, pin: Bool) {
+        currentHash = hash
+        pinned = pin
+        let card = CommitCard(
+            hash: hash,
+            fetch: { [weak self] h in
+                guard let fetch = self?.fetch else { return nil }
+                return await fetch(h)
+            },
+            onViewCommit: { [weak self] detail in self?.onViewCommit?(detail) },
+            onHoverChange: { [weak self] inside in
+                guard let self else { return }
+                self.mouseInCard = inside
+                if inside { self.cancelClose() }
+                else if !self.pinned { self.scheduleClose() }
+            },
+            onClose: { [weak self] in self?.close() }
+        )
+        let host = NSHostingController(rootView: card)
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        guard view.window != nil, !popover.isShown else { return }
+        popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+    }
+
+    private func scheduleClose() {
+        cancelClose()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if !self.mouseInCard, !self.pinned { self.close() }
+        }
+        closeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    private func cancelClose() { closeWork?.cancel(); closeWork = nil }
 }

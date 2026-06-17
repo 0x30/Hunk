@@ -23,6 +23,15 @@ struct EditorView: View {
                     conflicts: vm.conflictBlocks,
                     scrollToLine: $vm.scrollToLine,
                     blameText: vm.blameText,
+                    blameHash: vm.blameHash,
+                    commitDetailProvider: { hash in await vm.commitDetail(hash: hash) },
+                    onViewCommit: { detail in
+                        vm.openHistoryDetail(.commit(Repository.Commit(
+                            hash: detail.hash, shortHash: detail.shortHash,
+                            author: detail.author, subject: detail.subject,
+                            date: detail.date, refs: []
+                        )))
+                    },
                     onEdit: {
                         vm.editorDirty = true
                         vm.reparseConflicts()

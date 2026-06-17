@@ -6,8 +6,11 @@ import HunkCore
 /// 展示这一次提交的完整信息（含多行消息，行内注解一行装不下的就靠它）。
 /// 自身不画卡片底色——交给宿主 NSPopover / SwiftUI popover 的材质 chrome。
 struct CommitCard: View {
-    @EnvironmentObject var vm: RepoViewModel
     let hash: String
+    /// 取提交详情（VM 缓存包一层即可）。
+    var fetch: (String) async -> Repository.CommitDetail?
+    /// 点「查看此提交」：在历史详情打开它。
+    var onViewCommit: (Repository.CommitDetail) -> Void
     /// 悬浮桥接：鼠标进/出卡片时回调，预览态据此决定是否自动收起。
     var onHoverChange: (Bool) -> Void = { _ in }
     /// 关闭请求（点「查看此提交」后收起浮窗）。
@@ -45,7 +48,7 @@ struct CommitCard: View {
         .frame(width: 360, alignment: .leading)
         .onHover { onHoverChange($0) }
         .task(id: hash) {
-            detail = await vm.commitDetail(hash: hash)
+            detail = await fetch(hash)
             loadFailed = detail == nil
         }
     }
@@ -129,14 +132,7 @@ struct CommitCard: View {
                 .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
-                    vm.openHistoryDetail(.commit(Repository.Commit(
-                        hash: d.hash,
-                        shortHash: d.shortHash,
-                        author: d.author,
-                        subject: d.subject,
-                        date: d.date,
-                        refs: []
-                    )))
+                    onViewCommit(d)
                     onClose()
                 } label: {
                     Label(tr("查看此提交", "View commit"), systemImage: "arrow.up.forward.square")
