@@ -88,9 +88,8 @@ enum MemoryGuard {
             } else if mb >= softLimitMB {
                 if !warned {
                     warned = true
-                    Diagnostics.log("⚠️ 越过软阈值 \(softLimitMB)MB，清理高亮缓存")
+                    Diagnostics.log("⚠️ 越过软阈值 \(softLimitMB)MB")
                 }
-                MainActor.assumeIsolated { DiffHighlighter.invalidate() }
             } else {
                 warned = false
             }

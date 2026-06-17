@@ -83,7 +83,6 @@ private struct AppearanceSettings: View {
                 }
                 .onChange(of: settings.themeID) { _, _ in
                     ThemeStore.shared.loadActive()
-                    DiffHighlighter.invalidate()  // 配色变了，清 diff 高亮缓存
                 }
 
                 Text(tr("选择深色主题时，整个应用会一并切换为深色外观。",
