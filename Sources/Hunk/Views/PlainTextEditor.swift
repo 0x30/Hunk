@@ -355,6 +355,14 @@ struct PlainTextEditor: NSViewRepresentable {
             let range = NSRange(location: lineRanges[line].location, length: 0)
             textView.scrollRangeToVisible(range)
             textView.setSelectedRange(range)
+            // 跳转后自动把焦点交给编辑器（全局搜索选中结果 / 冲突跳转）：光标停在目标行，
+            // 可直接打字、上下浏览，不用再点一下编辑器。async 让它在本次布局结束后再夺取，
+            // 避免被同一轮的其它焦点变更覆盖。
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, let window = textView.window else { return }
+                window.makeFirstResponder(textView)
+                textView.scrollRangeToVisible(textView.selectedRange())
+            }
         }
 
         /// 每一行的 NSRange（含行内容，不含换行符）。
