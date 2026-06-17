@@ -188,13 +188,20 @@ struct HunkApp: App {
         .handlesExternalEvents(matching: [])
         .commands { AppCommands() }
 
-        Settings {
+        // 设置窗口用普通 Window(而非 Settings 场景):Settings 场景是 macOS 专有的
+        // 「偏好设置」窗口,圆角/标题栏/红绿灯与侧栏的融合都和普通窗口不同,NavigationSplitView
+        // 盖不住。改用 Window 后,设置窗口与主窗口同型,外观完全一致;⌘, 由下方 .appSettings 命令打开。
+        Window(tr("设置", "Settings"), id: settingsWindowID) {
             SettingsView()
                 .environmentObject(settings)
                 .id(settings.language)
         }
+        .windowResizability(.contentSize)
     }
 }
+
+/// 设置窗口的场景 id（⌘, 与「设置…」菜单项据此 openWindow）
+let settingsWindowID = "hunk.settings"
 
 /// ⌘⇧N 空白欢迎窗口的哨兵值前缀（带 UUID 保证每次都开新窗）
 let welcomeWindowSentinel = "hunk://welcome"
@@ -265,6 +272,13 @@ private struct AppCommands: Commands {
                 }
                 NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
             }
+        }
+        // 设置窗口改用普通 Window 后,需自己提供「设置…」菜单项与 ⌘,（原 Settings 场景自带）
+        CommandGroup(replacing: .appSettings) {
+            Button(tr("设置…", "Settings…")) {
+                openWindow(id: settingsWindowID)
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
         CommandGroup(after: .appInfo) {
             Button(tr("检查更新…", "Check for Updates…")) {

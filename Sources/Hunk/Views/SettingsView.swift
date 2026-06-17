@@ -1,32 +1,65 @@
 import SwiftUI
 
-/// 设置窗口（⌘,）：Xcode 风格——左侧分类列表，右侧内容面板。
+/// 设置窗口（⌘,）：与主窗口同构——左侧 NavigationSplitView 侧栏(设置分类),
+/// 右侧详情内容。统一标题栏、顶部分隔线、侧栏材质到顶都由 NavigationSplitView 原生提供。
 struct SettingsView: View {
     private enum Pane: String, CaseIterable, Identifiable {
         case appearance, editor, extensions
         var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .appearance: return tr("外观", "Appearance")
+            case .editor: return tr("编辑器", "Editor")
+            case .extensions: return tr("扩展", "Extensions")
+            }
+        }
+        var systemImage: String {
+            switch self {
+            case .appearance: return "paintbrush"
+            case .editor: return "square.and.pencil"
+            case .extensions: return "puzzlepiece.extension"
+            }
+        }
     }
 
-    @State private var pane: Pane = .appearance
+    @State private var pane: Pane? = .appearance
+    // 分类浏览历史（Xcode 式前进/后退）。cursor 指向当前项;suppressHistory 区分
+    // 「用户在侧栏点选」与「前进后退触发的 pane 变更」,避免后者又被记一笔历史。
+    @State private var history: [Pane] = [.appearance]
+    @State private var cursor = 0
+    @State private var suppressHistory = false
+
+    private var canGoBack: Bool { cursor > 0 }
+    private var canGoForward: Bool { cursor < history.count - 1 }
+
+    private func goBack() {
+        guard canGoBack else { return }
+        cursor -= 1
+        suppressHistory = true
+        pane = history[cursor]
+    }
+    private func goForward() {
+        guard canGoForward else { return }
+        cursor += 1
+        suppressHistory = true
+        pane = history[cursor]
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             List(selection: $pane) {
-                Label(tr("外观", "Appearance"), systemImage: "paintbrush")
-                    .tag(Pane.appearance)
-                Label(tr("编辑器", "Editor"), systemImage: "square.and.pencil")
-                    .tag(Pane.editor)
-                Label(tr("扩展", "Extensions"), systemImage: "puzzlepiece.extension")
-                    .tag(Pane.extensions)
+                ForEach(Pane.allCases) { item in
+                    Label(item.label, systemImage: item.systemImage)
+                        .tag(item)
+                }
             }
-            .listStyle(.sidebar)
-            .frame(width: 178)
-
-            Divider()
-
+            .navigationSplitViewColumnWidth(min: 215, ideal: 235, max: 320)
+            .modifier(HideSidebarToggle())   // 设置窗口不需要折叠侧栏按钮
+        } detail: {
             Group {
                 switch pane {
-                case .appearance:
+                case .appearance, nil:
                     AppearanceSettings()
                 case .editor:
                     EditorSettings()
@@ -36,10 +69,52 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 740, height: 500)
+        .navigationSplitViewStyle(.balanced)
+        // 仿 Xcode/系统设置:前进/后退作为 toolbar 按钮(系统给一个玻璃胶囊),
+        // 标题用 navigationTitle——它是窗口标题、渲染成纯文本(不带胶囊),系统会把它
+        // 排在工具栏按钮之后。若把标题也做成 toolbar 项,macOS 26 会把它并进按钮的胶囊里。
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button(action: goBack) {
+                    Image(systemName: "chevron.backward")
+                }
+                .disabled(!canGoBack)
+                .help(tr("后退", "Back"))
+
+                Button(action: goForward) {
+                    Image(systemName: "chevron.forward")
+                }
+                .disabled(!canGoForward)
+                .help(tr("前进", "Forward"))
+            }
+        }
+        .navigationTitle(pane?.label ?? tr("设置", "Settings"))
+        .onChange(of: pane) { _, newValue in
+            guard let newValue else { return }
+            if suppressHistory { suppressHistory = false; return }
+            guard history[cursor] != newValue else { return }
+            // 用户在侧栏新点了一项:截掉当前位置之后的「前进」分支,再追加并前移光标
+            if cursor + 1 < history.count {
+                history.removeSubrange((cursor + 1)...)
+            }
+            history.append(newValue)
+            cursor = history.count - 1
+        }
+        .frame(minWidth: 720, idealWidth: 760, minHeight: 480, idealHeight: 520)
         // ESC 关闭设置窗口（⌘W 由全局命令兜底处理）
         .onExitCommand {
             NSApp.keyWindow?.performClose(nil)
+        }
+    }
+}
+
+/// 隐藏侧栏折叠按钮——必须作用在侧栏自身(List)上,作用在 NavigationSplitView 根上无效。
+private struct HideSidebarToggle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .sidebarToggle)
+        } else {
+            content
         }
     }
 }
