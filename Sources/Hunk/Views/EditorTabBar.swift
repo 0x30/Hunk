@@ -31,14 +31,65 @@ struct EditorTabBar: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
+                    // 搜索标签排最前；激活时（showGlobalSearch）文件标签都不高亮
+                    if vm.searchTabOpen {
+                        SearchTabItem(isActive: vm.showGlobalSearch)
+                    }
                     ForEach(vm.openTabs, id: \.self) { path in
-                        EditorTabItem(path: path, isActive: path == vm.editorPath)
+                        EditorTabItem(path: path, isActive: !vm.showGlobalSearch && path == vm.editorPath)
                     }
                 }
             }
         }
         .frame(height: 32)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// 搜索作为编辑器里的一个标签：标题随模式与关键字变化（查找/替换: kw）。
+private struct SearchTabItem: View {
+    @EnvironmentObject var vm: RepoViewModel
+    let isActive: Bool
+    @State private var hovering = false
+
+    private var title: String {
+        let kw = vm.globalSearchQuery.trimmingCharacters(in: .whitespaces)
+        let label = vm.globalSearchReplace ? tr("替换", "Replace") : tr("查找", "Find")
+        return kw.isEmpty ? label : "\(label): \(kw)"
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: vm.globalSearchReplace ? "arrow.triangle.2.circlepath" : "magnifyingglass")
+                .font(.system(size: 10))
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            Text(title)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .foregroundStyle(isActive ? .primary : .secondary)
+            Button {
+                vm.closeSearchTab()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .opacity(hovering ? 1 : 0)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 14, height: 14)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(isActive ? Color(nsColor: .textBackgroundColor) : .clear)
+        .overlay(alignment: .top) {
+            if isActive { Rectangle().fill(Color.accentColor).frame(height: 2) }
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.5)).frame(width: 1, height: 16)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { vm.activateSearchTab() }
+        .onHover { hovering = $0 }
     }
 }
 
@@ -130,19 +181,24 @@ struct EditorArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !vm.openTabs.isEmpty {
+            if !vm.openTabs.isEmpty || vm.searchTabOpen {
                 EditorTabBar()
                 Divider()
             }
-            if FileIcon.isImage(activePath) {
+            if vm.showGlobalSearch {
+                SearchPanelView()
+            } else if FileIcon.isImage(activePath) {
                 ImagePreviewView(path: activePath)
             } else if vm.blameViewPath == activePath {
                 FileBlameView(path: activePath)
             } else {
                 EditorView(path: activePath, showConflictBar: showConflictBar)
             }
-            Divider()
-            EditorStatusBar()
+            // 搜索激活时不显示编辑器底部状态栏（光标行列对搜索无意义）
+            if !vm.showGlobalSearch {
+                Divider()
+                EditorStatusBar()
+            }
         }
         .confirmationDialog(
             tr("「\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")」有未保存的修改",

@@ -334,15 +334,13 @@ private struct AppCommands: Commands {
         }
         CommandGroup(after: .textEditing) {
             Button(tr("全局搜索…", "Search in Repository…")) {
-                vm?.globalSearchReplace = false
-                vm?.showGlobalSearch = true
+                vm?.openSearchTab(replace: false)
             }
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .disabled(vm?.repoRoot == nil)
 
             Button(tr("全局替换…", "Replace in Repository…")) {
-                vm?.globalSearchReplace = true
-                vm?.showGlobalSearch = true
+                vm?.openSearchTab(replace: true)
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(vm?.repoRoot == nil)

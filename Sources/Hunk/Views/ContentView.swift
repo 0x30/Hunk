@@ -77,11 +77,6 @@ struct ContentView: View {
                 QuickOpenView()
             }
         }
-        .overlay {
-            if vm.showGlobalSearch {
-                GlobalSearchView()
-            }
-        }
         // 分支面板：窗口内居中浮层
         .overlay(alignment: .top) {
             if vm.showBranchPanel && vm.isGitRepo {
@@ -251,7 +246,10 @@ struct DetailView: View {
     @EnvironmentObject var vm: RepoViewModel
 
     var body: some View {
-        if vm.historyDetail != nil {
+        if vm.showGlobalSearch {
+            // 搜索作为编辑器里的一个标签：复用 EditorArea 的标签栏（文件标签 + 搜索标签）
+            EditorArea(activePath: vm.editorPath ?? "")
+        } else if vm.historyDetail != nil {
             HistoryDetailView()
         } else {
             selectionDetail

@@ -71,7 +71,8 @@ final class RepoViewModel: ObservableObject {
         didSet {
             guard selection != oldValue else { return }
             editingChangedFile = false
-            if selection != nil { historyDetail = nil }
+            // 选了文件/变更 → 搜索标签失活（让出详情区给所选内容），但标签仍保留
+            if selection != nil { historyDetail = nil; showGlobalSearch = false }
             loadDetailTask?.cancel()
             loadDetailTask = Task { await loadDetail() }
         }
@@ -114,12 +115,16 @@ final class RepoViewModel: ObservableObject {
     /// 新建文件后请求编辑器抢键盘焦点（⌘N 后无需再点一下即可输入）；编辑器消费后清空。
     @Published var pendingEditorFocus = false
     @Published var blameText: String?
+    /// 当前光标行所属提交的 hash（committed 行才有）；供行内注解悬浮卡取详情。
+    @Published var blameHash: String?
     /// blame 视图：非空且等于当前文件时，编辑区显示整文件 blame 块
     @Published var blameViewPath: String?
     @Published var fileBlame: [Repository.BlameLine] = []
     private var buffers: [String: EditorBuffer] = [:]
     private var blameTask: Task<Void, Never>?
-    private var blameCache: [String: String] = [:]
+    private var blameCache: [String: (text: String, hash: String?)] = [:]
+    /// 提交详情缓存（blame 悬浮卡），按 hash 去重，避免重复 git show。
+    private var commitDetailCache: [String: Repository.CommitDetail] = [:]
 
     // MARK: 操作状态
 
@@ -132,7 +137,28 @@ final class RepoViewModel: ObservableObject {
     @Published var pendingFolderDrop: URL?
     @Published var showQuickOpen = false
     @Published var showBranchPanel = false
+    /// 搜索作为编辑器里的一个 tab：searchTabOpen=标签存在；showGlobalSearch=该标签当前激活（显示搜索内容）。
+    /// 点结果打开文件只是「失活」(showGlobalSearch=false)，标签仍在，可随时点回。
     @Published var showGlobalSearch = false
+    @Published var searchTabOpen = false
+    /// 全局搜索状态提到视图模型，标签开/关、失活/激活都不丢查询与结果。
+    @Published var globalSearchQuery = ""
+    @Published var globalSearchHits: [Repository.GrepHit] = []
+    @Published var globalSearchExact = false
+
+    /// 打开（或聚焦）搜索标签：⌘⇧F 查找 / ⌘⇧R 替换。
+    func openSearchTab(replace: Bool) {
+        globalSearchReplace = replace
+        searchTabOpen = true
+        showGlobalSearch = true
+    }
+    /// 点搜索标签：重新激活（显示搜索内容）。
+    func activateSearchTab() { showGlobalSearch = true }
+    /// 关闭搜索标签（标签上的 × / 面板里的 × / ⎋）。
+    func closeSearchTab() {
+        searchTabOpen = false
+        showGlobalSearch = false
+    }
     /// 全局面板进入「替换」模式（⌘⇧R）：强制精确匹配、显示替换字段。
     @Published var globalSearchReplace = false
 
@@ -536,6 +562,10 @@ final class RepoViewModel: ObservableObject {
         openTabs = []
         buffers = [:]
         blameCache = [:]
+        // 换根关掉搜索标签（结果是旧仓库的，作废）
+        searchTabOpen = false
+        showGlobalSearch = false
+        globalSearchHits = []
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
         fileTreeDidInitialExpand = false
@@ -613,6 +643,9 @@ final class RepoViewModel: ObservableObject {
         openTabs = []
         buffers = [:]
         blameCache = [:]
+        searchTabOpen = false
+        showGlobalSearch = false
+        globalSearchHits = []
         defaults.removeObject(forKey: "lastRepo")
     }
 
@@ -899,6 +932,7 @@ final class RepoViewModel: ObservableObject {
             editorIsBinary = true
             conflictBlocks = []
             blameText = nil
+            blameHash = nil
             return
         }
         editorIsBinary = false
@@ -993,6 +1027,7 @@ final class RepoViewModel: ObservableObject {
     }
 
     func selectTab(_ path: String) {
+        showGlobalSearch = false  // 点文件标签必然让搜索标签失活（即便是当前文件也要切回编辑器）
         guard path != editorPath else { return }
         selection = .file(path: path)
     }
@@ -1131,6 +1166,7 @@ final class RepoViewModel: ObservableObject {
 
     func requestBlame(line: Int) {
         blameTask?.cancel()
+        blameHash = nil
         guard let repo, let path = editorPath, !isUntitled(path) else { return }
         if editorDirty {
             blameText = tr("未保存的更改", "Unsaved changes")
@@ -1138,7 +1174,8 @@ final class RepoViewModel: ObservableObject {
         }
         let key = "\(path)#\(line)"
         if let cached = blameCache[key] {
-            blameText = cached
+            blameText = cached.text
+            blameHash = cached.hash
             return
         }
         blameText = nil
@@ -1148,10 +1185,12 @@ final class RepoViewModel: ObservableObject {
             let info = try? await repo.blame(path: path, line: line)
             guard !Task.isCancelled, let self else { return }
             let text: String
+            var hash: String?
             if let info {
                 if info.isUncommitted {
                     text = tr("未提交的更改", "Uncommitted changes")
                 } else {
+                    hash = info.hash
                     var parts = [info.author]
                     if let date = info.date {
                         parts.append(relativeTime(date))
@@ -1163,10 +1202,20 @@ final class RepoViewModel: ObservableObject {
                 text = ""
             }
             await MainActor.run {
-                self.blameCache[key] = text
+                self.blameCache[key] = (text: text, hash: hash)
                 self.blameText = text.isEmpty ? nil : text
+                self.blameHash = hash
             }
         }
+    }
+
+    /// 取提交详情（blame 悬浮卡用），带进程内缓存。
+    func commitDetail(hash: String) async -> Repository.CommitDetail? {
+        if let cached = commitDetailCache[hash] { return cached }
+        guard let repo else { return nil }
+        guard let detail = try? await repo.commitDetail(hash: hash) else { return nil }
+        commitDetailCache[hash] = detail
+        return detail
     }
 
     func reparseConflicts() {
