@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import HunkCore
 
 /// 提交悬浮卡：blame 行内注解 / 全文 blame 视图悬浮或点击时弹出，
@@ -15,6 +16,10 @@ struct CommitCard: View {
     var onHoverChange: (Bool) -> Void = { _ in }
     /// 关闭请求（点「查看此提交」后收起浮窗）。
     var onClose: () -> Void = {}
+    /// 是否显示「查看此提交」按钮（内嵌到提交详情头部时关掉——已经在看了）。
+    var showViewButton: Bool = true
+    /// 固定宽度（popover 用 360）；nil = 撑满可用宽度（内嵌横幅用）。
+    var fixedWidth: CGFloat? = 360
 
     @State private var detail: Repository.CommitDetail?
     @State private var loadFailed = false
@@ -45,7 +50,7 @@ struct CommitCard: View {
                 .padding(16)
             }
         }
-        .frame(width: 360, alignment: .leading)
+        .frame(maxWidth: fixedWidth ?? .infinity, alignment: .leading)
         .onHover { onHoverChange($0) }
         .task(id: hash) {
             detail = await fetch(hash)
@@ -58,7 +63,7 @@ struct CommitCard: View {
         VStack(alignment: .leading, spacing: 0) {
             // 头部：头像 + 作者/邮箱 + 短哈希（可复制）
             HStack(spacing: 10) {
-                avatar(d.author)
+                avatar(author: d.author, email: d.email)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(d.author)
                         .font(.system(size: 13.5, weight: .medium))
@@ -131,22 +136,43 @@ struct CommitCard: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
                 Spacer()
-                Button {
-                    onViewCommit(d)
-                    onClose()
-                } label: {
-                    Label(tr("查看此提交", "View commit"), systemImage: "arrow.up.forward.square")
-                        .font(.system(size: 12))
+                if showViewButton {
+                    Button {
+                        onViewCommit(d)
+                        onClose()
+                    } label: {
+                        Label(tr("查看此提交", "View commit"), systemImage: "arrow.up.forward.square")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
             }
             .padding(.top, 11)
         }
         .padding(14)
     }
 
-    /// 头像圆片：按 hash 派生稳定色相（与 blame 视图块色一致的思路），显示作者首字母。
-    private func avatar(_ author: String) -> some View {
+    /// 头像：优先 Gravatar（按邮箱），没有则回退到首字母色块。
+    @ViewBuilder
+    private func avatar(author: String, email: String) -> some View {
+        if let url = Self.gravatarURL(email: email) {
+            AsyncImage(url: url) { phase in
+                if case .success(let image) = phase {
+                    image.resizable().scaledToFill()
+                } else {
+                    // 加载中 / 无 Gravatar（d=404 → 失败）都回退首字母
+                    initialAvatar(author)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .clipShape(Circle())
+        } else {
+            initialAvatar(author)
+        }
+    }
+
+    /// 首字母色块：按 hash 派生稳定色相（与 blame 视图块色一致的思路）。
+    private func initialAvatar(_ author: String) -> some View {
         let initial = author.first.map { String($0).uppercased() } ?? "?"
         let hue = Double(abs(hash.hashValue % 360)) / 360.0
         let tint = Color(hue: hue, saturation: 0.5, brightness: 0.7)
@@ -155,5 +181,14 @@ struct CommitCard: View {
             .foregroundStyle(.white)
             .frame(width: 30, height: 30)
             .background(Circle().fill(tint))
+    }
+
+    /// Gravatar 头像地址：邮箱小写去空白后 MD5；d=404 让「没有头像」直接失败以触发回退。
+    private static func gravatarURL(email: String) -> URL? {
+        let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        let hex = Insecure.MD5.hash(data: Data(normalized.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return URL(string: "https://www.gravatar.com/avatar/\(hex)?d=404&s=80")
     }
 }
