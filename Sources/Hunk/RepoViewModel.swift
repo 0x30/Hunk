@@ -133,6 +133,8 @@ final class RepoViewModel: ObservableObject {
     @Published var showQuickOpen = false
     @Published var showBranchPanel = false
     @Published var showGlobalSearch = false
+    /// 全局面板进入「替换」模式（⌘⇧R）：强制精确匹配、显示替换字段。
+    @Published var globalSearchReplace = false
 
     // MARK: 内嵌终端（⌘J）
 
@@ -257,6 +259,25 @@ final class RepoViewModel: ObservableObject {
             // 等编辑器装载新文件后再滚动定位
             try? await Task.sleep(nanoseconds: 250_000_000)
             scrollToLine = hit.line - 1
+        }
+    }
+
+    /// 全仓库字面量替换（⌘⇧R，区分大小写）：写回文件后刷新状态，改动进工作区交 git 复核。
+    func replaceAllInRepo(query: String, replacement: String) async {
+        guard let repo else { return }
+        do {
+            let result = try await repo.replaceAll(query, with: replacement)
+            showGlobalSearch = false
+            globalSearchReplace = false
+            await refresh()
+            if result.filesChanged == 0 {
+                notice = tr("没有可替换的内容", "Nothing to replace")
+            } else {
+                notice = tr("已在 \(result.filesChanged) 个文件替换 \(result.occurrences) 处",
+                            "Replaced \(result.occurrences) occurrence(s) in \(result.filesChanged) file(s)")
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。

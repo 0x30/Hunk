@@ -498,15 +498,16 @@ public final class Repository: @unchecked Sendable {
         public var id: String { "\(path):\(line)" }
     }
 
-    /// 全仓库内容搜索（git grep，含未跟踪文件，忽略二进制与大小写）。
-    public func grep(_ query: String, limit: Int = 400) async throws -> [GrepHit] {
+    /// 全仓库内容搜索（git grep，含未跟踪文件，忽略二进制）。
+    /// exact=true：区分大小写的字面量匹配（`-F`），与全仓库替换的语义一致；
+    /// exact=false：不区分大小写的正则（默认，搜索更宽松）。
+    public func grep(_ query: String, exact: Bool = false, limit: Int = 400) async throws -> [GrepHit] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
-        let result = try await git.run(
-            ["grep", "-n", "-I", "--untracked", "--ignore-case",
-             "--max-count=50", "-e", trimmed, "--", "."],
-            allowedExitCodes: [0, 1]  // 1 = 无匹配
-        )
+        var args = ["grep", "-n", "-I", "--untracked", "--max-count=50"]
+        if exact { args.append("-F") } else { args.append("--ignore-case") }
+        args += ["-e", trimmed, "--", "."]
+        let result = try await git.run(args, allowedExitCodes: [0, 1])  // 1 = 无匹配
         guard result.exitCode == 0 else { return [] }
 
         var hits: [GrepHit] = []
@@ -521,6 +522,47 @@ public final class Repository: @unchecked Sendable {
             hits.append(GrepHit(path: path, line: number, text: text))
         }
         return hits
+    }
+
+    public struct ReplaceResult: Sendable {
+        public let filesChanged: Int
+        public let occurrences: Int
+    }
+
+    /// 全仓库字面量替换（区分大小写，非正则）：先用 `git grep -l` 列出含匹配的文件，
+    /// 再逐个读盘做精确字符串替换写回。只动确有匹配的文件，写回后由调用方刷新状态走 git 复核。
+    /// query 与替换搜索保持一致（trim 后作为针），replacement 原样使用（可为空=删除）。
+    public func replaceAll(_ query: String, with replacement: String, limit: Int = 5000) async throws -> ReplaceResult {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty, needle != replacement else { return ReplaceResult(filesChanged: 0, occurrences: 0) }
+
+        // -l 只列文件名，区分大小写字面量匹配，含未跟踪、跳过二进制
+        let listResult = try await git.run(
+            ["grep", "-l", "-I", "--untracked", "-F", "-e", needle, "--", "."],
+            allowedExitCodes: [0, 1]
+        )
+        guard listResult.exitCode == 0 else { return ReplaceResult(filesChanged: 0, occurrences: 0) }
+
+        var filesChanged = 0
+        var occurrences = 0
+        for raw in listResult.stdout.split(separator: "\n").prefix(limit) {
+            let path = String(raw)
+            guard !path.isEmpty else { continue }
+            let url = fileURL(for: path)
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let parts = content.components(separatedBy: needle)
+            let count = parts.count - 1
+            guard count > 0 else { continue }
+            let updated = parts.joined(separator: replacement)
+            do {
+                try updated.write(to: url, atomically: true, encoding: .utf8)
+                filesChanged += 1
+                occurrences += count
+            } catch {
+                continue  // 单个文件写失败不影响其余
+            }
+        }
+        return ReplaceResult(filesChanged: filesChanged, occurrences: occurrences)
     }
 
     // MARK: - 文件列表

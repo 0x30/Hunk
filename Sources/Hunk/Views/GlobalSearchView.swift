@@ -5,11 +5,26 @@ import HunkCore
 struct GlobalSearchView: View {
     @EnvironmentObject var vm: RepoViewModel
     @State private var query = ""
+    @State private var replacement = ""
     @State private var hits: [Repository.GrepHit] = []
     @State private var selectedIndex = 0
     @State private var searching = false
     @State private var searchTask: Task<Void, Never>?
-    @FocusState private var focused: Bool
+    @State private var exactMatch = false
+    @State private var confirmReplace = false
+    @FocusState private var focusField: Field?
+
+    private enum Field { case search, replace }
+
+    /// 替换模式强制精确匹配（区分大小写、字面量），保证「搜得到的就是会被替换的」。
+    private var effectiveExact: Bool { vm.globalSearchReplace || exactMatch }
+    /// 当前结果涉及的文件数（替换确认用）。
+    private var fileCount: Int { Set(hits.map(\.path)).count }
+    private var needle: String { query.trimmingCharacters(in: .whitespaces) }
+    /// 可执行替换：精确匹配、有针、有结果、且替换串与针不同。
+    private var canReplace: Bool {
+        effectiveExact && !needle.isEmpty && !hits.isEmpty && needle != replacement
+    }
 
     /// 按文件分组（保持 git grep 的输出顺序）。
     private var groups: [(path: String, hits: [Repository.GrepHit])] {
@@ -30,33 +45,78 @@ struct GlobalSearchView: View {
                 .onTapGesture { vm.showGlobalSearch = false }
 
             VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "text.magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField(tr("在仓库中搜索…", "Search in repository…"), text: $query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15))
-                        .focused($focused)
-                        .onSubmit { openSelected() }
-                        .onKeyPress(.downArrow) {
-                            selectedIndex = min(selectedIndex + 1, max(0, hits.count - 1))
-                            return .handled
-                        }
-                        .onKeyPress(.upArrow) {
-                            selectedIndex = max(selectedIndex - 1, 0)
-                            return .handled
-                        }
-                        .onKeyPress(.escape) {
-                            vm.showGlobalSearch = false
-                            return .handled
-                        }
-                    if searching {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else if !hits.isEmpty {
-                        Text(tr("\(hits.count) 个结果", "\(hits.count) result(s)"))
-                            .font(.caption)
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: vm.globalSearchReplace ? "arrow.triangle.2.circlepath" : "text.magnifyingglass")
                             .foregroundStyle(.secondary)
+                        TextField(tr("在仓库中搜索…", "Search in repository…"), text: $query)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15))
+                            .focused($focusField, equals: .search)
+                            .onSubmit { onSearchSubmit() }
+                            .onKeyPress(.downArrow) {
+                                selectedIndex = min(selectedIndex + 1, max(0, hits.count - 1))
+                                return .handled
+                            }
+                            .onKeyPress(.upArrow) {
+                                selectedIndex = max(selectedIndex - 1, 0)
+                                return .handled
+                            }
+                            .onKeyPress(.escape) {
+                                vm.showGlobalSearch = false
+                                return .handled
+                            }
+
+                        // 精确匹配开关（区分大小写、字面量）；替换模式强制开启并锁定
+                        Button {
+                            exactMatch.toggle()
+                            scheduleSearch(query)
+                        } label: {
+                            Text("Aa")
+                                .font(.system(size: 12, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4)
+                                    .fill(effectiveExact ? Color.accentColor.opacity(0.25) : .clear))
+                                .overlay(RoundedRectangle(cornerRadius: 4)
+                                    .strokeBorder(.separator.opacity(effectiveExact ? 0 : 0.5)))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(effectiveExact ? Color.accentColor : .secondary)
+                        .disabled(vm.globalSearchReplace)
+                        .help(tr("精确匹配（区分大小写）", "Match exactly (case-sensitive)"))
+
+                        if searching {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if !hits.isEmpty {
+                            Text(tr("\(hits.count) 个结果", "\(hits.count) result(s)"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    // 替换模式：替换字段 + 全部替换
+                    if vm.globalSearchReplace {
+                        HStack(spacing: 8) {
+                            Image(systemName: "pencil")
+                                .foregroundStyle(.secondary)
+                            TextField(tr("替换为…", "Replace with…"), text: $replacement)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 15))
+                                .focused($focusField, equals: .replace)
+                                .onSubmit { if canReplace { confirmReplace = true } }
+                                .onKeyPress(.escape) {
+                                    vm.showGlobalSearch = false
+                                    return .handled
+                                }
+                            Button(tr("全部替换", "Replace All")) {
+                                confirmReplace = true
+                            }
+                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canReplace)
+                        }
                     }
                 }
                 .padding(12)
@@ -96,9 +156,32 @@ struct GlobalSearchView: View {
             .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
             .padding(.top, 90)
         }
-        .onAppear { focused = true }
+        .onAppear { focusField = .search }
         .onChange(of: query) { _, newQuery in
             scheduleSearch(newQuery)
+        }
+        .confirmationDialog(
+            tr("在 \(fileCount) 个文件中替换全部「\(needle)」？",
+               "Replace all “\(needle)” in \(fileCount) file(s)?"),
+            isPresented: $confirmReplace,
+            titleVisibility: .visible
+        ) {
+            Button(tr("全部替换", "Replace All"), role: .destructive) {
+                let q = needle, r = replacement
+                Task { await vm.replaceAllInRepo(query: q, replacement: r) }
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(tr("将直接改写文件（含未跟踪文件）。已跟踪文件可用 git 撤销，未跟踪文件无法撤销。",
+                    "Files will be modified on disk (including untracked). Tracked files can be reverted via git; untracked files cannot."))
+        }
+    }
+
+    private func onSearchSubmit() {
+        if vm.globalSearchReplace {
+            focusField = .replace
+        } else {
+            openSelected()
         }
     }
 
@@ -176,10 +259,11 @@ struct GlobalSearchView: View {
             return
         }
         searching = true
+        let exact = effectiveExact
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled, let repo = vm.repo else { return }
-            let result = (try? await repo.grep(trimmed)) ?? []
+            let result = (try? await repo.grep(trimmed, exact: exact)) ?? []
             guard !Task.isCancelled else { return }
             hits = result
             searching = false
