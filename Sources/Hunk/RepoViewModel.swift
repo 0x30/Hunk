@@ -14,6 +14,14 @@ enum SidebarSelection: Hashable {
     case file(path: String)
 }
 
+/// 右侧详情区当前激活的标签（统一标签系统：编辑文件 / 工作区 diff / 提交详情 / 搜索）。
+enum ActiveDetail: Hashable {
+    case file(String)
+    case diff
+    case commit
+    case search
+}
+
 @MainActor
 final class RepoViewModel: ObservableObject {
 
@@ -71,12 +79,24 @@ final class RepoViewModel: ObservableObject {
         didSet {
             guard selection != oldValue else { return }
             editingChangedFile = false
-            // 选了文件/变更 → 搜索标签失活（让出详情区给所选内容），但标签仍保留
-            if selection != nil { historyDetail = nil; showGlobalSearch = false }
+            // 选择驱动「激活的详情标签」：文件→文件标签；变更→diff 标签(并记下其路径)。
+            // 不再清 historyDetail / 搜索——它们是各自独立的标签，切到文件/diff 时仍保留。
+            switch selection {
+            case .file(let p): activeDetail = .file(p)
+            case .change(let p, _): diffPath = p; activeDetail = .diff
+            case nil: break
+            }
             loadDetailTask?.cancel()
             loadDetailTask = Task { await loadDetail() }
         }
     }
+
+    /// 当前激活的详情标签（统一标签系统的「选中」）。变更时同步搜索可见标志。
+    @Published var activeDetail: ActiveDetail? {
+        didSet { showGlobalSearch = (activeDetail == .search) }
+    }
+    /// 打开的「工作区 diff」标签的文件路径（nil = 没有 diff 标签）；区域用 diffArea。
+    @Published var diffPath: String?
 
     // MARK: Diff 详情
 
@@ -137,30 +157,66 @@ final class RepoViewModel: ObservableObject {
     @Published var pendingFolderDrop: URL?
     @Published var showQuickOpen = false
     @Published var showBranchPanel = false
-    /// 搜索作为编辑器里的一个 tab：searchTabOpen=标签存在；showGlobalSearch=该标签当前激活（显示搜索内容）。
-    /// 点结果打开文件只是「失活」(showGlobalSearch=false)，标签仍在，可随时点回。
+    /// 搜索标签：searchTabOpen=标签存在；显示与否由 activeDetail==.search 决定（showGlobalSearch 同步它）。
     @Published var showGlobalSearch = false
     @Published var searchTabOpen = false
     /// 全局搜索状态提到视图模型，标签开/关、失活/激活都不丢查询与结果。
     @Published var globalSearchQuery = ""
     @Published var globalSearchHits: [Repository.GrepHit] = []
     @Published var globalSearchExact = false
+    /// 全局面板进入「替换」模式（⌘⇧R）：强制精确匹配、显示替换字段。
+    @Published var globalSearchReplace = false
+
+    // MARK: - 统一标签：激活 / 打开 / 关闭
+
+    /// 关闭某类标签后，回退到一个仍存在的标签（文件优先，其次 diff/提交/搜索）。
+    private func fallbackActive() -> ActiveDetail? {
+        if let p = editorPath, openTabs.contains(p) { return .file(p) }
+        if let first = openTabs.first { return .file(first) }
+        if diffPath != nil { return .diff }
+        if historyDetail != nil { return .commit }
+        if searchTabOpen { return .search }
+        return nil
+    }
+
+    /// 打开/聚焦工作区 diff 标签（点变更列表）。
+    func openDiffTab(path: String, area: ChangeArea) {
+        diffPath = path
+        diffArea = area
+        if selection != .change(path: path, area: area) {
+            selection = .change(path: path, area: area)  // didSet → activeDetail=.diff + loadDetail
+        } else {
+            activeDetail = .diff
+        }
+    }
+    /// 点 diff 标签：重新激活（必要时重载该文件的 diff）。
+    func activateDiffTab() {
+        guard let p = diffPath else { return }
+        if selection != .change(path: p, area: diffArea) {
+            selection = .change(path: p, area: diffArea)
+        } else {
+            activeDetail = .diff
+        }
+    }
+    func closeDiffTab() {
+        diffPath = nil
+        if activeDetail == .diff { activeDetail = fallbackActive() }
+    }
+
+    /// 点提交标签：重新激活（historyDetail 已持有内容）。
+    func activateCommitTab() { if historyDetail != nil { activeDetail = .commit } }
 
     /// 打开（或聚焦）搜索标签：⌘⇧F 查找 / ⌘⇧R 替换。
     func openSearchTab(replace: Bool) {
         globalSearchReplace = replace
         searchTabOpen = true
-        showGlobalSearch = true
+        activeDetail = .search
     }
-    /// 点搜索标签：重新激活（显示搜索内容）。
-    func activateSearchTab() { showGlobalSearch = true }
-    /// 关闭搜索标签（标签上的 × / 面板里的 × / ⎋）。
+    func activateSearchTab() { activeDetail = .search }
     func closeSearchTab() {
         searchTabOpen = false
-        showGlobalSearch = false
+        if activeDetail == .search { activeDetail = fallbackActive() }
     }
-    /// 全局面板进入「替换」模式（⌘⇧R）：强制精确匹配、显示替换字段。
-    @Published var globalSearchReplace = false
 
     // MARK: 内嵌终端（⌘J）
 
@@ -279,7 +335,7 @@ final class RepoViewModel: ObservableObject {
 
     /// 打开全局搜索结果：跳到对应文件并滚动选中该行。
     func openSearchResult(_ hit: Repository.GrepHit) {
-        showGlobalSearch = false
+        // 打开文件标签(让搜索标签失活、保留);revealInFiles 会设 selection=.file → activeDetail=.file
         revealInFiles(hit.path)
         Task {
             // 等编辑器装载新文件后再滚动定位
@@ -566,6 +622,8 @@ final class RepoViewModel: ObservableObject {
         searchTabOpen = false
         showGlobalSearch = false
         globalSearchHits = []
+        diffPath = nil
+        activeDetail = nil
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
         fileTreeDidInitialExpand = false
@@ -646,6 +704,8 @@ final class RepoViewModel: ObservableObject {
         searchTabOpen = false
         showGlobalSearch = false
         globalSearchHits = []
+        diffPath = nil
+        activeDetail = nil
         defaults.removeObject(forKey: "lastRepo")
     }
 
@@ -1028,8 +1088,9 @@ final class RepoViewModel: ObservableObject {
     }
 
     func selectTab(_ path: String) {
-        showGlobalSearch = false  // 点文件标签必然让搜索标签失活（即便是当前文件也要切回编辑器）
-        guard path != editorPath else { return }
+        // 点文件标签：激活该文件标签（即便已是当前文件，也要从 diff/搜索/提交切回编辑器）
+        activeDetail = .file(path)
+        guard selection != .file(path: path) else { return }
         selection = .file(path: path)
     }
 
@@ -1044,18 +1105,26 @@ final class RepoViewModel: ObservableObject {
 
     func performCloseTab(_ path: String) {
         guard let index = openTabs.firstIndex(of: path) else { return }
+        let wasActive = activeDetail == .file(path)
         openTabs.remove(at: index)
         buffers[path] = nil
-        if editorPath == path {
-            if openTabs.isEmpty {
-                editorPath = nil
-                editorText = ""
-                editorDirty = false
-                selection = nil
-            } else {
-                let neighbor = openTabs[min(index, openTabs.count - 1)]
-                selection = .file(path: neighbor)
+        guard editorPath == path else { return }  // 关的不是当前编辑文件:列表移除即可
+        if openTabs.isEmpty {
+            editorPath = nil
+            editorText = ""
+            editorDirty = false
+            if wasActive {  // 正显示它:回退到 diff/提交/搜索 标签或空
+                let fb = fallbackActive()
+                activeDetail = fb
+                if fb == nil { selection = nil }
+            }
+        } else {
+            let neighbor = openTabs[min(index, openTabs.count - 1)]
+            if wasActive {
+                selection = .file(path: neighbor)  // didSet → 激活并加载邻居
                 openEditor(path: neighbor)
+            } else {
+                editorPath = neighbor  // 在看 diff/提交/搜索:只把指向挪到邻居,不切显示
             }
         }
     }
@@ -1513,6 +1582,7 @@ final class RepoViewModel: ObservableObject {
         historyFiles = []
         historyDiff = nil
         historyDiffPath = nil
+        activeDetail = .commit  // 激活提交标签
         Task {
             guard let repo else { return }
             do {
@@ -1537,6 +1607,7 @@ final class RepoViewModel: ObservableObject {
         historyDetail = nil
         historyDiff = nil
         historyDiffPath = nil
+        if activeDetail == .commit { activeDetail = fallbackActive() }
     }
 
     func selectHistoryFile(_ file: Repository.CommitFileChange) {

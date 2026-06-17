@@ -89,8 +89,9 @@ struct DiffDetailView: View {
                     }
                     if change?.unstaged != .deleted {
                         headerIconButton("pencil", help: tr("编辑文件", "Edit File")) {
-                            vm.editingChangedFile = true
+                            // 统一标签系统:编辑 = 打开并激活该文件的编辑器标签(与 diff 标签并存)
                             vm.openEditor(path: path)
+                            vm.selectTab(path)
                         }
                     }
                 }

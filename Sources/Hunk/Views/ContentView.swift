@@ -241,38 +241,69 @@ private struct HideToolbarTitle: ViewModifier {
     }
 }
 
-/// 详情区：根据选择展示 diff / 编辑器 / 图片预览 / 空态。
+/// 详情区:统一标签系统——顶部标签栏(文件/diff/提交/搜索) + 当前激活标签的内容。
 struct DetailView: View {
     @EnvironmentObject var vm: RepoViewModel
 
+    private var hasTabs: Bool {
+        !vm.openTabs.isEmpty || vm.diffPath != nil || vm.historyDetail != nil || vm.searchTabOpen
+    }
+
     var body: some View {
-        if vm.showGlobalSearch {
-            // 搜索作为编辑器里的一个标签：复用 EditorArea 的标签栏（文件标签 + 搜索标签）
-            EditorArea(activePath: vm.editorPath ?? "")
-        } else if vm.historyDetail != nil {
-            HistoryDetailView()
-        } else {
-            selectionDetail
+        VStack(spacing: 0) {
+            if hasTabs {
+                EditorTabBar()
+                Divider()
+            }
+            content
+        }
+        // 关闭未保存文件的确认(从标签 × 触发,与具体激活内容无关,放这一层常驻)
+        .confirmationDialog(
+            tr("「\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")」有未保存的修改",
+               "“\(vm.pendingCloseTab.map { vm.displayName(for: $0) } ?? "")” has unsaved changes"),
+            isPresented: Binding(
+                get: { vm.pendingCloseTab != nil },
+                set: { if !$0 { vm.pendingCloseTab = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("保存并关闭", "Save & Close")) {
+                if let path = vm.pendingCloseTab { vm.pendingCloseTab = nil; vm.saveAndCloseTab(path) }
+            }
+            Button(tr("放弃更改", "Discard Changes"), role: .destructive) {
+                if let path = vm.pendingCloseTab { vm.pendingCloseTab = nil; vm.performCloseTab(path) }
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) { vm.pendingCloseTab = nil }
         }
     }
 
     @ViewBuilder
-    private var selectionDetail: some View {
-        switch vm.selection {
-        case nil:
-            EmptyDetailView()
-        case .change(let path, let area):
-            if area == .conflicted {
-                EditorArea(activePath: path, showConflictBar: true)
-            } else if FileIcon.isImage(path) {
-                ImagePreviewView(path: path)
-            } else if vm.editingChangedFile {
-                EditorArea(activePath: path)
-            } else {
-                DiffDetailView(path: path)
-            }
+    private var content: some View {
+        switch vm.activeDetail {
         case .file(let path):
             EditorArea(activePath: path, showConflictBar: !vm.conflictBlocks.isEmpty && vm.editorPath == path)
+        case .diff:
+            diffContent(path: vm.diffPath ?? "")
+        case .commit:
+            HistoryDetailView()
+        case .search:
+            SearchPanelView()
+        case nil:
+            EmptyDetailView()
+        }
+    }
+
+    /// diff 标签的内容:冲突/图片/「编辑模式」分别走对应视图,否则才是 diff。
+    @ViewBuilder
+    private func diffContent(path: String) -> some View {
+        if vm.diffArea == .conflicted {
+            EditorArea(activePath: path, showConflictBar: true)
+        } else if FileIcon.isImage(path) {
+            ImagePreviewView(path: path)
+        } else if vm.editingChangedFile {
+            EditorArea(activePath: path)
+        } else {
+            DiffDetailView(path: path)
         }
     }
 }
