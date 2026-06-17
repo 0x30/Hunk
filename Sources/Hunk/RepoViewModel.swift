@@ -14,12 +14,28 @@ enum SidebarSelection: Hashable {
     case file(path: String)
 }
 
-/// 右侧详情区当前激活的标签（统一标签系统：编辑文件 / 工作区 diff / 提交详情 / 搜索）。
+/// 非文件类的「视图标签」：工作区 diff / 提交 / 比较 / 搜索。各自独立，可同时开多个
+/// （文件标签仍在 openTabs[String] 里，这些另存一份列表 openViewTabs）。
+enum ViewTab: Hashable, Identifiable {
+    case diff(String, ChangeArea)
+    case commit(Repository.Commit)
+    case compare(String, String)
+    case search
+
+    var id: String {
+        switch self {
+        case .diff(let p, let a): return "diff:\(a):\(p)"
+        case .commit(let c): return "commit:\(c.hash)"
+        case .compare(let b, let t): return "compare:\(b)..\(t)"
+        case .search: return "search"
+        }
+    }
+}
+
+/// 右侧详情区当前激活的标签：文件编辑 或 某个视图标签。
 enum ActiveDetail: Hashable {
     case file(String)
-    case diff
-    case commit
-    case search
+    case view(ViewTab)
 }
 
 @MainActor
@@ -83,7 +99,10 @@ final class RepoViewModel: ObservableObject {
             // 不再清 historyDetail / 搜索——它们是各自独立的标签，切到文件/diff 时仍保留。
             switch selection {
             case .file(let p): activeDetail = .file(p)
-            case .change(let p, _): diffPath = p; activeDetail = .diff
+            case .change(let p, let a):
+                let t = ViewTab.diff(p, a)
+                if !openViewTabs.contains(t) { openViewTabs.append(t) }
+                activeDetail = .view(t)
             case nil: break
             }
             loadDetailTask?.cancel()
@@ -93,10 +112,10 @@ final class RepoViewModel: ObservableObject {
 
     /// 当前激活的详情标签（统一标签系统的「选中」）。变更时同步搜索可见标志。
     @Published var activeDetail: ActiveDetail? {
-        didSet { showGlobalSearch = (activeDetail == .search) }
+        didSet { showGlobalSearch = (activeDetail == .view(.search)) }
     }
-    /// 打开的「工作区 diff」标签的文件路径（nil = 没有 diff 标签）；区域用 diffArea。
-    @Published var diffPath: String?
+    /// 非文件类标签（diff/提交/比较/搜索），可同时存在多个，各自独立。
+    @Published var openViewTabs: [ViewTab] = []
 
     // MARK: Diff 详情
 
@@ -169,54 +188,57 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 统一标签：激活 / 打开 / 关闭
 
-    /// 关闭某类标签后，回退到一个仍存在的标签（文件优先，其次 diff/提交/搜索）。
-    private func fallbackActive() -> ActiveDetail? {
-        if let p = editorPath, openTabs.contains(p) { return .file(p) }
-        if let first = openTabs.first { return .file(first) }
-        if diffPath != nil { return .diff }
-        if historyDetail != nil { return .commit }
-        if searchTabOpen { return .search }
-        return nil
+    /// 关闭当前标签后，激活并加载一个仍存在的标签（当前文件优先，其次任意文件，再其次视图标签）。
+    private func activateFallback() {
+        if let p = editorPath, openTabs.contains(p) { selectTab(p); return }
+        if let first = openTabs.first { selectTab(first); return }
+        if let v = openViewTabs.last { activateViewTab(v); return }
+        activeDetail = nil
+        selection = nil
     }
 
-    /// 打开/聚焦工作区 diff 标签（点变更列表）。
-    func openDiffTab(path: String, area: ChangeArea) {
-        diffPath = path
-        diffArea = area
-        if selection != .change(path: path, area: area) {
-            selection = .change(path: path, area: area)  // didSet → activeDetail=.diff + loadDetail
-        } else {
-            activeDetail = .diff
+    /// 点视图标签:重新激活（diff/提交 需要重载对应内容；搜索直接显示）。
+    func activateViewTab(_ tab: ViewTab) {
+        switch tab {
+        case .diff(let p, let a):
+            if selection != .change(path: p, area: a) {
+                selection = .change(path: p, area: a)  // didSet → activeDetail=.view(.diff) + loadDetail
+            } else {
+                activeDetail = .view(tab)
+            }
+        case .commit(let c):
+            openHistoryDetail(.commit(c))
+        case .compare(let b, let t):
+            openHistoryDetail(.compare(base: b, target: t))
+        case .search:
+            activeDetail = .view(.search)
         }
-    }
-    /// 点 diff 标签：重新激活（必要时重载该文件的 diff）。
-    func activateDiffTab() {
-        guard let p = diffPath else { return }
-        if selection != .change(path: p, area: diffArea) {
-            selection = .change(path: p, area: diffArea)
-        } else {
-            activeDetail = .diff
-        }
-    }
-    func closeDiffTab() {
-        diffPath = nil
-        if activeDetail == .diff { activeDetail = fallbackActive() }
     }
 
-    /// 点提交标签：重新激活（historyDetail 已持有内容）。
-    func activateCommitTab() { if historyDetail != nil { activeDetail = .commit } }
+    /// 关闭某视图标签。
+    func closeViewTab(_ tab: ViewTab) {
+        let wasActive = activeDetail == .view(tab)
+        openViewTabs.removeAll { $0 == tab }
+        if case .search = tab { searchTabOpen = false }
+        if wasActive {
+            // 关的是当前显示的标签:提交/比较内容作废,然后回退激活别的标签
+            switch tab {
+            case .commit, .compare: historyDetail = nil
+            default: break
+            }
+            activateFallback()
+        }
+    }
 
     /// 打开（或聚焦）搜索标签：⌘⇧F 查找 / ⌘⇧R 替换。
     func openSearchTab(replace: Bool) {
         globalSearchReplace = replace
         searchTabOpen = true
-        activeDetail = .search
+        if !openViewTabs.contains(.search) { openViewTabs.append(.search) }
+        activeDetail = .view(.search)
     }
-    func activateSearchTab() { activeDetail = .search }
-    func closeSearchTab() {
-        searchTabOpen = false
-        if activeDetail == .search { activeDetail = fallbackActive() }
-    }
+    func activateSearchTab() { activeDetail = .view(.search) }
+    func closeSearchTab() { closeViewTab(.search) }
 
     // MARK: 内嵌终端（⌘J）
 
@@ -622,7 +644,7 @@ final class RepoViewModel: ObservableObject {
         searchTabOpen = false
         showGlobalSearch = false
         globalSearchHits = []
-        diffPath = nil
+        openViewTabs = []
         activeDetail = nil
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
@@ -704,7 +726,7 @@ final class RepoViewModel: ObservableObject {
         searchTabOpen = false
         showGlobalSearch = false
         globalSearchHits = []
-        diffPath = nil
+        openViewTabs = []
         activeDetail = nil
         defaults.removeObject(forKey: "lastRepo")
     }
@@ -1113,11 +1135,7 @@ final class RepoViewModel: ObservableObject {
             editorPath = nil
             editorText = ""
             editorDirty = false
-            if wasActive {  // 正显示它:回退到 diff/提交/搜索 标签或空
-                let fb = fallbackActive()
-                activeDetail = fb
-                if fb == nil { selection = nil }
-            }
+            if wasActive { activateFallback() }  // 正显示它:回退到视图标签或空
         } else {
             let neighbor = openTabs[min(index, openTabs.count - 1)]
             if wasActive {
@@ -1582,7 +1600,14 @@ final class RepoViewModel: ObservableObject {
         historyFiles = []
         historyDiff = nil
         historyDiffPath = nil
-        activeDetail = .commit  // 激活提交标签
+        // 作为视图标签打开/聚焦(可多个提交标签并存)
+        let tab: ViewTab
+        switch detail {
+        case .commit(let c): tab = .commit(c)
+        case .compare(let b, let t): tab = .compare(b, t)
+        }
+        if !openViewTabs.contains(tab) { openViewTabs.append(tab) }
+        activeDetail = .view(tab)
         Task {
             guard let repo else { return }
             do {
@@ -1604,10 +1629,12 @@ final class RepoViewModel: ObservableObject {
     }
 
     func closeHistoryDetail() {
+        // 关掉当前显示的提交/比较视图标签
+        if case .view(let v) = activeDetail, case .commit = v { closeViewTab(v); return }
+        if case .view(let v) = activeDetail, case .compare = v { closeViewTab(v); return }
         historyDetail = nil
         historyDiff = nil
         historyDiffPath = nil
-        if activeDetail == .commit { activeDetail = fallbackActive() }
     }
 
     func selectHistoryFile(_ file: Repository.CommitFileChange) {

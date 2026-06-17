@@ -39,14 +39,9 @@ struct EditorTabBar: View {
                     ForEach(vm.openTabs, id: \.self) { path in
                         EditorTabItem(path: path, isActive: vm.activeDetail == .file(path))
                     }
-                    if vm.diffPath != nil {
-                        DiffTabItem(isActive: vm.activeDetail == .diff)
-                    }
-                    if vm.historyDetail != nil {
-                        CommitTabItem(isActive: vm.activeDetail == .commit)
-                    }
-                    if vm.searchTabOpen {
-                        SearchTabItem(isActive: vm.activeDetail == .search)
+                    // diff / 提交 / 比较 / 搜索:各自独立，可同时多个
+                    ForEach(vm.openViewTabs) { tab in
+                        ViewTabItem(tab: tab, isActive: vm.activeDetail == .view(tab))
                     }
                 }
             }
@@ -81,46 +76,31 @@ private struct TabChrome<Trailing: View>: ViewModifier {
     }
 }
 
-/// 工作区 diff 标签。
-private struct DiffTabItem: View {
+/// 统一的视图标签项:diff / 提交 / 比较 / 搜索,按 ViewTab 类型给图标与标题。
+private struct ViewTabItem: View {
     @EnvironmentObject var vm: RepoViewModel
+    let tab: ViewTab
     let isActive: Bool
     @State private var hovering = false
 
-    private var name: String { vm.diffPath.map { vm.displayName(for: $0) } ?? tr("差异", "Diff") }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "plus.forwardslash.minus")
-                .font(.system(size: 10))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
-            Text(name)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .foregroundStyle(isActive ? .primary : .secondary)
-            closeButton(hovering: hovering) { vm.closeDiffTab() }
-        }
-        .modifier(TabChrome(isActive: isActive, onTap: { vm.activateDiffTab() }) { EmptyView() })
-        .onHover { hovering = $0 }
-    }
-}
-
-/// 提交 / 比较详情标签。
-private struct CommitTabItem: View {
-    @EnvironmentObject var vm: RepoViewModel
-    let isActive: Bool
-    @State private var hovering = false
-
-    private var title: String {
-        switch vm.historyDetail {
-        case .commit(let c): return c.subject
-        case .compare(let base, let target): return "\(shortRef(base)) ↔ \(shortRef(target))"
-        case nil: return ""
-        }
-    }
     private var icon: String {
-        if case .compare = vm.historyDetail { return "arrow.left.arrow.right" }
-        return "circle.dotted"
+        switch tab {
+        case .diff: return "plus.forwardslash.minus"
+        case .commit: return "circle.dotted"
+        case .compare: return "arrow.left.arrow.right"
+        case .search: return vm.globalSearchReplace ? "arrow.triangle.2.circlepath" : "magnifyingglass"
+        }
+    }
+    private var title: String {
+        switch tab {
+        case .diff(let p, _): return vm.displayName(for: p)
+        case .commit(let c): return "\(c.shortHash) · \(c.subject)"
+        case .compare(let b, let t): return "\(shortRef(b)) ↔ \(shortRef(t))"
+        case .search:
+            let kw = vm.globalSearchQuery.trimmingCharacters(in: .whitespaces)
+            let label = vm.globalSearchReplace ? tr("替换", "Replace") : tr("查找", "Find")
+            return kw.isEmpty ? label : "\(label): \(kw)"
+        }
     }
     private func shortRef(_ r: String) -> String {
         r.count > 12 && r.allSatisfy(\.isHexDigit) ? String(r.prefix(8)) : r
@@ -135,37 +115,9 @@ private struct CommitTabItem: View {
                 .font(.system(size: 12))
                 .lineLimit(1)
                 .foregroundStyle(isActive ? .primary : .secondary)
-            closeButton(hovering: hovering) { vm.closeHistoryDetail() }
+            closeButton(hovering: hovering) { vm.closeViewTab(tab) }
         }
-        .modifier(TabChrome(isActive: isActive, onTap: { vm.activateCommitTab() }) { EmptyView() })
-        .onHover { hovering = $0 }
-    }
-}
-
-/// 搜索标签：标题随模式与关键字变化（查找/替换: kw）。
-private struct SearchTabItem: View {
-    @EnvironmentObject var vm: RepoViewModel
-    let isActive: Bool
-    @State private var hovering = false
-
-    private var title: String {
-        let kw = vm.globalSearchQuery.trimmingCharacters(in: .whitespaces)
-        let label = vm.globalSearchReplace ? tr("替换", "Replace") : tr("查找", "Find")
-        return kw.isEmpty ? label : "\(label): \(kw)"
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: vm.globalSearchReplace ? "arrow.triangle.2.circlepath" : "magnifyingglass")
-                .font(.system(size: 10))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
-            Text(title)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .foregroundStyle(isActive ? .primary : .secondary)
-            closeButton(hovering: hovering) { vm.closeSearchTab() }
-        }
-        .modifier(TabChrome(isActive: isActive, onTap: { vm.activateSearchTab() }) { EmptyView() })
+        .modifier(TabChrome(isActive: isActive, onTap: { vm.activateViewTab(tab) }) { EmptyView() })
         .onHover { hovering = $0 }
     }
 }

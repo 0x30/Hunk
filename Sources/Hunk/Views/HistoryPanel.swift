@@ -337,6 +337,18 @@ struct HistoryDetailView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            // 提交详情:顶部一条富信息横幅（复用提交悬浮卡——作者/哈希/时间/完整消息/文件数）
+            if case .commit(let commit) = vm.historyDetail {
+                CommitCard(
+                    hash: commit.hash,
+                    fetch: { await vm.commitDetail(hash: $0) },
+                    onViewCommit: { _ in },
+                    showViewButton: false,
+                    fixedWidth: nil
+                )
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
+                Divider()
+            }
             HStack(spacing: 0) {
                 fileList
                     .frame(width: 250)
@@ -374,14 +386,10 @@ struct HistoryDetailView: View {
             case .commit(let commit):
                 Image(systemName: "circle.dotted")
                     .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(commit.subject)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    Text("\(commit.shortHash) · \(commit.author) · \(commit.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(appLocale)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                // 详情在下方横幅展示，这里只留紧凑标识
+                Text(tr("提交 \(commit.shortHash)", "Commit \(commit.shortHash)"))
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
             case .compare(let base, let target):
                 Image(systemName: "arrow.left.arrow.right")
                     .foregroundStyle(.secondary)

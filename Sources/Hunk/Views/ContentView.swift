@@ -246,7 +246,7 @@ struct DetailView: View {
     @EnvironmentObject var vm: RepoViewModel
 
     private var hasTabs: Bool {
-        !vm.openTabs.isEmpty || vm.diffPath != nil || vm.historyDetail != nil || vm.searchTabOpen
+        !vm.openTabs.isEmpty || !vm.openViewTabs.isEmpty
     }
 
     var body: some View {
@@ -282,11 +282,11 @@ struct DetailView: View {
         switch vm.activeDetail {
         case .file(let path):
             EditorArea(activePath: path, showConflictBar: !vm.conflictBlocks.isEmpty && vm.editorPath == path)
-        case .diff:
-            diffContent(path: vm.diffPath ?? "")
-        case .commit:
+        case .view(.diff(let p, _)):
+            diffContent(path: p)
+        case .view(.commit), .view(.compare):
             HistoryDetailView()
-        case .search:
+        case .view(.search):
             SearchPanelView()
         case nil:
             EmptyDetailView()
