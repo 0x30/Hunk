@@ -346,6 +346,14 @@ private struct AppCommands: Commands {
                 NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: item)
             }
             .keyboardShortcut("f", modifiers: .command)
+
+            Button(tr("替换", "Replace")) {
+                // 触发编辑器查找条的「替换」模式（NSTextView usesFindBar）
+                let item = NSMenuItem()
+                item.tag = Int(NSTextFinder.Action.showReplaceInterface.rawValue)
+                NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: item)
+            }
+            .keyboardShortcut("r", modifiers: .command)
         }
         CommandGroup(after: .toolbar) {
             Button(tr("文件", "Files")) {
@@ -391,10 +399,10 @@ private struct AppCommands: Commands {
 
             Divider()
 
+            // 刷新保留为菜单项,不再占用 ⌘R（已让给编辑器替换）
             Button(tr("刷新", "Refresh")) {
                 if let vm { Task { await vm.refresh() } }
             }
-            .keyboardShortcut("r", modifiers: .command)
             .disabled(vm == nil)
 
             Button(tr("提交", "Commit")) {
