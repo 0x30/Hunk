@@ -180,7 +180,9 @@ struct DiffDetailView: View {
 
             Spacer()
 
-            Text(tr("⇧点击/⇧↑↓ 扩选 · ⌘点击多选 · ⌘A 全选 · ⎋ 清除", "⇧-click/⇧↑↓ extend · ⌘-click multi · ⌘A all · ⎋ clear"))
+            Text(settings.splitDiff
+                 ? tr("⇧点击/⇧↑↓ 扩选 · ⌘点击多选 · ⌘A 全选 · ⎋ 清除", "⇧-click/⇧↑↓ extend · ⌘-click multi · ⌘A all · ⎋ clear")
+                 : tr("拖选行 · 双击选词 · ⌘C 复制 · ⌘A 全选", "Drag to select · double-click a word · ⌘C copy · ⌘A all"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -198,71 +200,32 @@ struct DiffDetailView: View {
                 placeholder(symbol: "doc.zipper", text: tr("二进制文件，无法显示差异", "Binary file — diff not shown"))
             } else if diff.hunks.isEmpty {
                 placeholder(symbol: "equal.circle", text: tr("没有内容差异（可能是权限或模式变更）", "No content changes (possibly mode change)"))
+            } else if settings.splitDiff {
+                // 分栏视图：两列只读 NSTextView，各自可选可复制，选区驱动行级暂存
+                SplitDiffTextView(
+                    diff: diff,
+                    filePath: path,
+                    fontSize: settings.editorFontSize - 1,
+                    themeID: settings.themeID,
+                    selectable: supportsLineStaging,
+                    settings: settings,
+                    onSelectChangedLines: { ids in
+                        if supportsLineStaging { vm.selectedLineIDs = ids }
+                    }
+                )
             } else {
-                let gapTable = gaps(for: diff)
-                let order = rowOrder
-                let indexByKey = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element.key, $0.offset) })
-                let range = visualRange
-                ScrollViewReader { proxy in
-                    ScrollView([.vertical]) {
-                        LazyVStack(spacing: 0, pinnedViews: []) {
-                            ForEach(Array(diff.hunks.enumerated()), id: \.element.id) { hunkIndex, hunk in
-                                if let gap = gapTable[hunkIndex] {
-                                    gapView(gap)
-                                }
-                                HunkHeaderRow(hunk: hunk, supportsStaging: supportsLineStaging, isUntracked: isUntracked)
-                                if settings.splitDiff {
-                                    ForEach(hunk.splitRows) { row in
-                                        let key = "s-\(hunkIndex)-\(row.id)"
-                                        SplitDiffRow(
-                                            row: row, filePath: path, selectable: supportsLineStaging,
-                                            inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
-                                            onLineTap: handleLineTap
-                                        )
-                                        .id(key)
-                                    }
-                                } else {
-                                    ForEach(hunk.lines) { line in
-                                        let key = "u-\(line.id)"
-                                        UnifiedDiffRow(
-                                            line: line, filePath: path, selectable: supportsLineStaging,
-                                            inSelectionRange: indexByKey[key].map { range?.contains($0) ?? false } ?? false,
-                                            onLineTap: handleLineTap
-                                        )
-                                        .id(key)
-                                    }
-                                }
-                            }
-                            if let trailing = gapTable[diff.hunks.count] {
-                                gapView(trailing)
-                            }
-                        }
-                        // 文件或布局切换时整体重建，避免 LazyVStack 按旧 id 复用缓存行
-                        .id("\(path)|\(settings.splitDiff ? "split" : "unified")")
-                        .padding(.bottom, 20)
+                // 统一视图：只读 NSTextView 编辑器——原生选择/复制/双击/拖选，选区驱动行级暂存
+                DiffTextView(
+                    diff: diff,
+                    filePath: path,
+                    fontSize: settings.editorFontSize - 1,
+                    themeID: settings.themeID,
+                    selectable: supportsLineStaging,
+                    settings: settings,
+                    onSelectChangedLines: { ids in
+                        if supportsLineStaging { vm.selectedLineIDs = ids }
                     }
-                    .focusable()
-                    .focusEffectDisabled()
-                    .focused($diffFocused)
-                    .onKeyPress(keys: [.upArrow, .downArrow], phases: .down) { press in
-                        moveCursor(press.key == .downArrow ? 1 : -1,
-                                   extend: press.modifiers.contains(.shift),
-                                   proxy: proxy)
-                        return .handled
-                    }
-                    .onKeyPress(keys: [KeyEquivalent("a")], phases: .down) { press in
-                        guard press.modifiers.contains(.command), supportsLineStaging else { return .ignored }
-                        vm.selectedLineIDs = Set(diff.changedLineIDs)
-                        return .handled
-                    }
-                    .onKeyPress(.escape) {
-                        guard !vm.selectedLineIDs.isEmpty else { return .ignored }
-                        vm.selectedLineIDs = []
-                        anchorRow = nil
-                        cursorRow = nil
-                        return .handled
-                    }
-                }
+                )
             }
         } else {
             placeholder(symbol: "equal.circle", text: tr("没有差异", "No differences"))
@@ -704,35 +667,22 @@ struct ReadOnlyDiffView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if settings.splitDiff {
+                SplitDiffTextView(
+                    diff: diff, filePath: diff.path,
+                    fontSize: settings.editorFontSize - 1,
+                    themeID: settings.themeID,
+                    selectable: false, settings: settings,
+                    onSelectChangedLines: { _ in }
+                )
             } else {
-                ScrollView([.vertical]) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(diff.hunks) { hunk in
-                            HStack {
-                                Text("@@ -\(hunk.oldStart),\(hunk.oldCount) +\(hunk.newStart),\(hunk.newCount) @@ \(hunk.sectionHeading)")
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 4)
-                            .background(Color(nsColor: .windowBackgroundColor))
-
-                            if settings.splitDiff {
-                                ForEach(hunk.splitRows) { row in
-                                    SplitDiffRow(row: row, filePath: diff.path, selectable: false)
-                                }
-                            } else {
-                                ForEach(hunk.lines) { line in
-                                    UnifiedDiffRow(line: line, filePath: diff.path, selectable: false)
-                                }
-                            }
-                        }
-                    }
-                    .id("\(diff.path)|\(settings.splitDiff)")
-                    .padding(.bottom, 20)
-                }
+                DiffTextView(
+                    diff: diff, filePath: diff.path,
+                    fontSize: settings.editorFontSize - 1,
+                    themeID: settings.themeID,
+                    selectable: false, settings: settings,
+                    onSelectChangedLines: { _ in }
+                )
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
