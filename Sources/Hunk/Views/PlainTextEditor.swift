@@ -25,11 +25,14 @@ struct PlainTextEditor: NSViewRepresentable {
     /// 为真时编辑器挂载后抢键盘焦点（⌘N 新建文件）；消费后回调清空。
     var requestFocus: Bool = false
     var onFocusHandled: () -> Void = {}
+    /// 行高倍数(由设置传入)。作为显式参数而非在内部读全局——这样改设置时它是真正的
+    /// SwiftUI 依赖,会触发 updateNSView 重新应用;否则编辑器收不到变更。
+    var lineHeight: Double = 1.3
 
-    /// 行高:按设置里的倍数(默认 1.3)。等宽字体默认行距偏紧,调大更透气。
-    static func lineParagraphStyle() -> NSParagraphStyle {
+    /// 行高:按倍数生成段落样式。等宽字体默认行距偏紧,调大更透气。
+    static func lineParagraphStyle(_ multiple: Double) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineHeightMultiple = SettingsStore.shared.editorLineHeight
+        p.lineHeightMultiple = multiple
         return p
     }
 
@@ -73,8 +76,8 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.usesFindBar = true
         textView.textContainerInset = NSSize(width: 6, height: 8)
         textView.font = SettingsStore.shared.editorNSFont
-        textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle()
-        textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle()
+        textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
+        textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
         textView.delegate = context.coordinator
 
         // 行号 gutter
@@ -167,10 +170,10 @@ struct PlainTextEditor: NSViewRepresentable {
         } else if coordinator.lastLanguageOverride != languageOverride {
             // 手动切换语言后重新着色
             coordinator.highlightNow()
-        } else if coordinator.lastLineHeight != SettingsStore.shared.editorLineHeight {
+        } else if coordinator.lastLineHeight != lineHeight {
             // 行高设置改变后重新应用段落样式
-            textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle()
-            textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle()
+            textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
+            textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
             coordinator.highlightNow()
         }
 
@@ -337,12 +340,12 @@ struct PlainTextEditor: NSViewRepresentable {
             textView.insertionPointColor = theme.editorForeground ?? .labelColor
             ruler?.invalidateLineIndex()
 
-            lastLineHeight = settings.editorLineHeight
+            lastLineHeight = parent.lineHeight
             storage.beginEditing()
             storage.setAttributes([
                 .font: settings.editorNSFont,
                 .foregroundColor: theme.editorForeground ?? NSColor.labelColor,
-                .paragraphStyle: PlainTextEditor.lineParagraphStyle(),
+                .paragraphStyle: PlainTextEditor.lineParagraphStyle(parent.lineHeight),
             ], range: fullRange)
 
             lastLanguageOverride = parent.languageOverride

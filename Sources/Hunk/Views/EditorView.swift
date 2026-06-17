@@ -44,7 +44,8 @@ struct EditorView: View {
                     },
                     languageOverride: vm.editorLanguageOverride,
                     requestFocus: vm.pendingEditorFocus,
-                    onFocusHandled: { vm.pendingEditorFocus = false }
+                    onFocusHandled: { vm.pendingEditorFocus = false },
+                    lineHeight: settings.editorLineHeight
                 )
                 .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
             }

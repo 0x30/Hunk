@@ -98,7 +98,7 @@ struct DiffTextView: NSViewRepresentable {
 
         /// 内容签名变了才重建（diff/主题/字号）。
         func rebuildIfNeeded(_ p: DiffTextView) {
-            let key = "\(p.filePath)|\(p.themeID)|\(p.fontSize)|\(p.diff.hashValue)"
+            let key = "\(p.filePath)|\(p.themeID)|\(p.fontSize)|\(p.settings.editorLineHeight)|\(p.diff.hashValue)"
             guard key != contentKey else { return }
             contentKey = key
             rebuild(p)
@@ -114,11 +114,12 @@ struct DiffTextView: NSViewRepresentable {
             let token = buildToken
             let diff = p.diff
             let filePath = p.filePath
+            let lineHeight = p.settings.editorLineHeight
             DispatchQueue.global(qos: .userInitiated).async {
                 let built = DiffTextBuilder.build(diff: diff, filePath: filePath, font: font, tokenColors: colors)
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let textView = self.textView, token == self.buildToken else { return }
-                    textView.applyBuilt(built, font: font)
+                    textView.applyBuilt(built, font: font, lineHeight: lineHeight)
                     // 重建后清掉旧选区映射
                     self.parent.onSelectChangedLines([])
                 }
@@ -148,9 +149,16 @@ final class SelectableDiffTextView: NSTextView {
     fileprivate var delColor = NSColor.systemRed.withAlphaComponent(0.13)
     fileprivate var fillerColor = NSColor.gray.withAlphaComponent(0.06)
 
-    fileprivate func applyBuilt(_ built: DiffTextBuilder.Result, font: NSFont) {
+    fileprivate func applyBuilt(_ built: DiffTextBuilder.Result, font: NSFont, lineHeight: Double) {
         lineSpans = built.spans
-        textStorage?.setAttributedString(built.attributed)
+        // 行高:与编辑器同源,套到整段。空行/换行也用得上,故同时设 defaultParagraphStyle。
+        let style = NSMutableParagraphStyle()
+        style.lineHeightMultiple = lineHeight
+        let attributed = NSMutableAttributedString(attributedString: built.attributed)
+        attributed.addAttribute(.paragraphStyle, value: style,
+                                range: NSRange(location: 0, length: attributed.length))
+        defaultParagraphStyle = style
+        textStorage?.setAttributedString(attributed)
         self.font = font
         setSelectedRange(NSRange(location: 0, length: 0))
         needsDisplay = true
@@ -561,7 +569,7 @@ struct SplitDiffTextView: NSViewRepresentable {
         }
 
         func rebuildIfNeeded(_ p: SplitDiffTextView) {
-            let key = "\(p.filePath)|\(p.themeID)|\(p.fontSize)|\(p.diff.hashValue)"
+            let key = "\(p.filePath)|\(p.themeID)|\(p.fontSize)|\(p.settings.editorLineHeight)|\(p.diff.hashValue)"
             guard key != contentKey else { return }
             contentKey = key
             rebuild(p)
@@ -574,6 +582,7 @@ struct SplitDiffTextView: NSViewRepresentable {
                 TokenType.allCases.map { ($0, NSColor(p.settings.tokenColor(for: $0))) })
             buildToken += 1; let token = buildToken
             let diff = p.diff; let filePath = p.filePath
+            let lineHeight = p.settings.editorLineHeight
             leftSel = []; rightSel = []
             DispatchQueue.global(qos: .userInitiated).async {
                 let l = DiffTextBuilder.buildSplit(diff: diff, side: .left, filePath: filePath,
@@ -583,8 +592,8 @@ struct SplitDiffTextView: NSViewRepresentable {
                 DispatchQueue.main.async { [weak self] in
                     guard let self, token == self.buildToken,
                           let lv = self.leftView, let rv = self.rightView else { return }
-                    lv.applyBuilt(l, font: font)
-                    rv.applyBuilt(r, font: font)
+                    lv.applyBuilt(l, font: font, lineHeight: lineHeight)
+                    rv.applyBuilt(r, font: font, lineHeight: lineHeight)
                     // 两列行号槽统一按全局最大行号定宽，避免左右槽宽不一造成错位
                     let maxNum = diff.hunks.flatMap(\.lines).reduce(0) {
                         max($0, max($1.oldNumber ?? 0, $1.newNumber ?? 0))
