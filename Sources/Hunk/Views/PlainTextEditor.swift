@@ -79,6 +79,8 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
         textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
         textView.delegate = context.coordinator
+        // 惰性布局：只排版可见区域，大文件不再一次性全文布局（卡死主因之一）
+        textView.layoutManager?.allowsNonContiguousLayout = true
 
         // 行号 gutter
         let ruler = LineNumberRulerView(textView: textView)
@@ -144,7 +146,13 @@ struct PlainTextEditor: NSViewRepresentable {
             coordinator.lastFileName = fileName
             let selected = textView.selectedRange()
             textView.string = text
-            let length = (text as NSString).length
+            coordinator.invalidateLineCache()
+            let nsText = text as NSString
+            let length = nsText.length
+            // 大文件 或 含超长行(SQL dump 常见)→ 关软换行改水平滚动:超长行软换行布局是卡死主因。
+            // length>1MB 时短路,不再扫超长行;小文件才扫一遍(O(n) 很快)。
+            let largeFile = length > 1_000_000 || Coordinator.hasLongLine(nsText, threshold: 20_000)
+            coordinator.applyWrapping(largeFile: largeFile, scrollView: scrollView)
             textView.setSelectedRange(NSRange(location: isNewDocument ? 0 : min(selected.location, length), length: 0))
             // 防抖高亮（与打字路径一致）：快速切文件时合并成一次，不再每次切换都
             // 在主线程同步整文件 tokenize+全量上色——那是「切换卡死」的主因之一。
@@ -214,6 +222,8 @@ struct PlainTextEditor: NSViewRepresentable {
         private var lastBlameText: String?
         private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
+        private var cachedLineRanges: [NSRange]?
+        private var isHighlighting = false
 
         init(parent: PlainTextEditor) {
             self.parent = parent
@@ -224,6 +234,7 @@ struct PlainTextEditor: NSViewRepresentable {
             parent.text = textView.string
             parent.onEdit()
             ruler?.invalidateLineIndex()
+            invalidateLineCache()
             scheduleHighlight()
         }
 
@@ -323,6 +334,9 @@ struct PlainTextEditor: NSViewRepresentable {
         }
 
         func highlightNow() {
+            guard !isHighlighting else { return }  // 防重入：断开 updateNSView↔选择↔重算 的循环
+            isHighlighting = true
+            defer { isHighlighting = false }
             guard let textView, let storage = textView.textStorage else { return }
             let string = textView.string
             let nsString = string as NSString
@@ -369,7 +383,7 @@ struct PlainTextEditor: NSViewRepresentable {
         /// 为冲突块上背景色：当前侧绿色、传入侧蓝色、标记行灰色。
         private func applyConflictBackgrounds(storage: NSTextStorage, nsString: NSString) {
             guard !parent.conflicts.isEmpty else { return }
-            let lineRanges = Self.lineRanges(of: nsString)
+            let lineRanges = lineRangesCached()
 
             func range(forLines from: Int, _ to: Int) -> NSRange? {
                 guard from <= to, from >= 0, to < lineRanges.count else { return nil }
@@ -416,8 +430,7 @@ struct PlainTextEditor: NSViewRepresentable {
 
         func scroll(toLine line: Int) {
             guard let textView else { return }
-            let nsString = textView.string as NSString
-            let lineRanges = Self.lineRanges(of: nsString)
+            let lineRanges = lineRangesCached()
             guard line >= 0, line < lineRanges.count else { return }
             let range = NSRange(location: lineRanges[line].location, length: 0)
             textView.scrollRangeToVisible(range)
@@ -430,6 +443,44 @@ struct PlainTextEditor: NSViewRepresentable {
                 window.makeFirstResponder(textView)
                 textView.scrollRangeToVisible(textView.selectedRange())
             }
+        }
+
+        /// 缓存版行范围：文本变化（textDidChange / 切换文件）时失效，避免高亮/滚动/选择反复全文扫描。
+        private func lineRangesCached() -> [NSRange] {
+            if let c = cachedLineRanges { return c }
+            guard let textView else { return [] }
+            let r = Self.lineRanges(of: textView.string as NSString)
+            cachedLineRanges = r
+            return r
+        }
+
+        func invalidateLineCache() { cachedLineRanges = nil }
+
+        /// 大文件关软换行（超长行软换行布局是卡死主因，改水平滚动）；常规文件软换行。
+        func applyWrapping(largeFile: Bool, scrollView: NSScrollView) {
+            guard let textView, let container = textView.textContainer else { return }
+            let wrap = !largeFile
+            if container.widthTracksTextView == wrap { return }  // 模式没变，跳过
+            textView.isHorizontallyResizable = largeFile
+            container.widthTracksTextView = wrap
+            container.size = largeFile
+                ? NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+                : NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+            scrollView.hasHorizontalScroller = largeFile
+        }
+
+        /// 是否含超长行（某行超过 threshold 个 UTF-16 单元）。逐行只搜到下一个换行，整体 O(n)。
+        static func hasLongLine(_ s: NSString, threshold: Int) -> Bool {
+            var loc = 0
+            let len = s.length
+            while loc < len {
+                let r = s.range(of: "\n", options: [], range: NSRange(location: loc, length: len - loc))
+                let end = r.location == NSNotFound ? len : r.location
+                if end - loc > threshold { return true }
+                if r.location == NSNotFound { break }
+                loc = r.location + 1
+            }
+            return false
         }
 
         /// 每一行的 NSRange（含行内容，不含换行符）。

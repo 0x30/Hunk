@@ -14,7 +14,15 @@ struct EditorView: View {
                 ConflictBar()
                 Divider()
             }
-            if vm.editorIsBinary {
+            if vm.editorLoading {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text(tr("正在加载大文件…", "Loading large file…"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if vm.editorIsBinary {
                 HexView(url: vm.editorFileURL(path))
             } else {
                 PlainTextEditor(

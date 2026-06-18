@@ -144,6 +144,7 @@ final class RepoViewModel: ObservableObject {
     @Published var editorDirty = false
     /// 当前编辑文件是二进制（含 NUL）→ 显示 hex 查看器而非纯文本编辑器
     @Published var editorIsBinary = false
+    @Published var editorLoading = false   // 大文件异步读盘期间为 true
     /// 底部状态栏：光标行列（1 基）+ 选中行数
     @Published var editorCursorLine = 1
     @Published var editorCursorColumn = 1
@@ -1019,6 +1020,7 @@ final class RepoViewModel: ObservableObject {
             editorCursorLine = 1; editorCursorColumn = 1; editorSelectedLines = 0
         }
         stashActiveBuffer()
+        editorLoading = false
 
         if !openTabs.contains(path) {
             openTabs.append(path)
@@ -1050,22 +1052,42 @@ final class RepoViewModel: ObservableObject {
         if let buffer = buffers[path] {
             editorText = buffer.text
             editorDirty = buffer.dirty
+            editorPath = path
+            blameText = nil
+            blameHash = nil
+            reparseConflicts()
         } else if isUntitled(path) {
             editorText = ""
             editorDirty = false
+            editorPath = path
+            blameText = nil
+            blameHash = nil
+            reparseConflicts()
         } else {
+            // 异步读盘：大文件同步读会顿住主线程。先清空 + 标记加载，后台读完再回主线程填入。
             let url = editorFileURL(path)
-            do {
-                editorText = try String(contentsOf: url, encoding: .utf8)
-            } catch {
-                editorText = (try? String(contentsOf: url, encoding: .isoLatin1)) ?? ""
-            }
+            editorText = ""
             editorDirty = false
+            editorPath = path
+            blameText = nil
+            blameHash = nil
+            conflictBlocks = []
+            editorLoading = true
+            let targetPath = path
+            Task {
+                let content = await Task.detached(priority: .userInitiated) {
+                    (try? String(contentsOf: url, encoding: .utf8))
+                        ?? (try? String(contentsOf: url, encoding: .isoLatin1)) ?? ""
+                }.value
+                await MainActor.run {
+                    // 读盘期间用户可能切了文件，只有仍是目标文件才填入
+                    guard self.editorPath == targetPath else { return }
+                    self.editorText = content
+                    self.editorLoading = false
+                    self.reparseConflicts()
+                }
+            }
         }
-        editorPath = path
-        blameText = nil
-        blameHash = nil
-        reparseConflicts()
     }
 
     /// 编辑器读盘用的 URL：绝对路径（单文件模式 / 仓库外文件）直接用，相对路径走仓库根。
