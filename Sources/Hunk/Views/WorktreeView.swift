@@ -7,75 +7,66 @@ import HunkCore
 struct WorktreeRow: View {
     @EnvironmentObject var vm: RepoViewModel
     let worktree: Worktree
-    @State private var hovering = false
-
     private var canRemove: Bool { !worktree.isMain && !worktree.isCurrent }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "folder")
-                .foregroundStyle(worktree.isCurrent ? Color.accentColor : .secondary)
-                .font(.system(size: 11))
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(worktree.name)
-                        .lineLimit(1)
-                        .font(.callout)
-                        .fontWeight(worktree.isCurrent ? .semibold : .regular)
-                    if worktree.isMain {
-                        TagLabel(tr("主", "main"))
+        // 整行即按钮：左键当前窗口切换（当前工作树内部 guard 不动作）；操作全在右键菜单
+        Button {
+            vm.switchToWorktree(worktree)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .foregroundStyle(worktree.isCurrent ? Color.accentColor : .secondary)
+                    .font(.system(size: 11))
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(worktree.name)
+                            .lineLimit(1)
+                            .font(.callout)
+                            .fontWeight(worktree.isCurrent ? .semibold : .regular)
+                            .foregroundStyle(.primary)
+                        if worktree.isCurrent {
+                            TagLabel(tr("当前", "current"))
+                        } else if worktree.isMain {
+                            TagLabel(tr("主", "main"))
+                        }
+                        if worktree.isLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.tertiary)
+                                .help(tr("已锁定", "Locked"))
+                        }
+                        if worktree.isPrunable {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.orange)
+                                .help(tr("孤立的工作树（目录已不存在）", "Orphaned worktree (directory missing)"))
+                        }
                     }
-                    if worktree.isLocked {
-                        Image(systemName: "lock.fill")
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.branch")
                             .font(.system(size: 8))
                             .foregroundStyle(.tertiary)
-                            .help(tr("已锁定", "Locked"))
-                    }
-                    if worktree.isPrunable {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.orange)
-                            .help(tr("孤立的工作树（目录已不存在）", "Orphaned worktree (directory missing)"))
+                        Text(worktree.refName)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
-                    Text(worktree.refName)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
+                Spacer(minLength: 4)
             }
-            Spacer(minLength: 4)
-            // 当前工作树标 ✓；其余悬停时浮现「与当前对比 / 在新窗口打开」
-            if worktree.isCurrent {
-                Image(systemName: "checkmark")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            } else if hovering {
-                HStack(spacing: 2) {
-                    WTRowIcon("arrow.left.arrow.right",
-                              help: tr("与当前对比", "Compare with current")) {
-                        vm.compareWorktree(worktree)
-                    }
-                    WTRowIcon("macwindow.badge.plus",
-                              help: tr("在新窗口打开", "Open in New Window")) {
-                        vm.openWorktree(worktree)
-                    }
-                }
-                .foregroundStyle(.secondary)
-            }
+            .padding(.vertical, 1)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 1)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .help(worktree.path)
+        .buttonStyle(.borderless)
+        .help(worktree.isCurrent
+              ? worktree.path
+              : tr("点击切换到此工作树 · \(worktree.path)", "Click to switch · \(worktree.path)"))
         .contextMenu {
             if !worktree.isCurrent {
                 Button(tr("在新窗口打开", "Open in New Window")) { vm.openWorktree(worktree) }
                 Button(tr("与当前对比", "Compare with Current")) { vm.compareWorktree(worktree) }
+                Divider()
             }
             Button(tr("在 Finder 中显示", "Reveal in Finder")) {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree.path)])
@@ -91,27 +82,6 @@ struct WorktreeRow: View {
                 }
             }
         }
-    }
-}
-
-/// 工作树行悬停操作的小图标按钮（List 行内必须用 .borderless，否则点击被选中吞掉）。
-private struct WTRowIcon: View {
-    let systemName: String
-    let help: String
-    let action: () -> Void
-    init(_ systemName: String, help: String, action: @escaping () -> Void) {
-        self.systemName = systemName
-        self.help = help
-        self.action = action
-    }
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .frame(width: 18, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .help(help)
     }
 }
 

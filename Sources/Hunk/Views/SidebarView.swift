@@ -379,9 +379,15 @@ struct BranchPopover: View {
                         .padding(.bottom, 2)
 
                         ForEach(filtered) { branch in
-                            BranchPopoverRow(branch: branch) {
-                                vm.checkout(branch)
+                            // 被其他工作树占用的分支无法在此 checkout：点击改为切换到那个工作树
+                            let occupying = vm.branchToWorktree[branch.name]
+                            BranchPopoverRow(branch: branch, occupyingWorktreeName: occupying?.name) {
                                 isPresented = false
+                                if let occupying {
+                                    vm.switchToWorktree(occupying)
+                                } else {
+                                    vm.checkout(branch)
+                                }
                             } onCompare: {
                                 isPresented = false
                                 vm.compareBranch(branch)
@@ -435,6 +441,7 @@ struct BranchPopover: View {
 
 private struct BranchPopoverRow: View {
     let branch: Branch
+    var occupyingWorktreeName: String? = nil
     let action: () -> Void
     let onCompare: () -> Void
     let onMerge: () -> Void
@@ -460,6 +467,14 @@ private struct BranchPopoverRow: View {
                 Text(branch.name)
                     .font(.system(size: 13))
                     .lineLimit(1)
+                // 被其他工作树占用：分支名后挂一个工作树标记
+                if let occupyingWorktreeName {
+                    Image(systemName: "folder")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .help(tr("已被工作树「\(occupyingWorktreeName)」检出，点击切换过去",
+                                 "Checked out in worktree “\(occupyingWorktreeName)”; click to switch"))
+                }
                 Spacer()
                 // 悬停浮现操作：对比 / 合并进当前分支 / 删除
                 if hovering {

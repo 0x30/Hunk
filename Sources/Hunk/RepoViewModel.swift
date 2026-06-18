@@ -1563,6 +1563,23 @@ final class RepoViewModel: ObservableObject {
     /// 已被某个工作树占用的分支名（新建工作树时这些分支不可再选）。
     var branchesInUse: Set<String> { Set(worktrees.compactMap(\.branch)) }
 
+    /// 在当前窗口切换到该工作树目录（左键点击行）。
+    func switchToWorktree(_ wt: Worktree) {
+        guard !wt.isCurrent else { return }
+        Task { await open(URL(fileURLWithPath: wt.path)) }
+    }
+
+    /// 被「其他」工作树(非当前)占用的分支 → 持有它的工作树。
+    /// 这些分支无法在当前工作树 checkout（git 限制：一个分支只能被一个工作树检出），
+    /// 分支面板据此把「切换分支」改为「切到那个工作树」。
+    var branchToWorktree: [String: Worktree] {
+        var map: [String: Worktree] = [:]
+        for wt in worktrees where !wt.isCurrent {
+            if let b = wt.branch { map[b] = wt }
+        }
+        return map
+    }
+
     /// 在新窗口打开工作树目录（SwiftUI 对相同路径会聚焦已存在窗口，天然防重复）。
     func openWorktree(_ wt: Worktree) {
         guard !wt.isCurrent else { return }
