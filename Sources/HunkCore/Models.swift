@@ -88,6 +88,33 @@ public struct Stash: Identifiable, Hashable, Sendable {
     public var ref: String { "stash@{\(index)}" }
 }
 
+/// 一个 git 工作树（git worktree）。主工作树 + 若干链接工作树。
+public struct Worktree: Identifiable, Hashable, Sendable {
+    public let path: String          // 工作树绝对路径
+    public let branch: String?       // 检出的分支短名；分离 HEAD 时为 nil
+    public let head: String          // HEAD 短 hash（分离 HEAD 也有值）
+    public let isMain: Bool          // 是否主工作树（git worktree list 第一条）
+    public let isCurrent: Bool       // 是否当前窗口打开的这个
+    public let isLocked: Bool        // 是否被锁定
+    public let isPrunable: Bool      // 孤立、可被 prune
+
+    public init(path: String, branch: String?, head: String, isMain: Bool,
+                isCurrent: Bool, isLocked: Bool = false, isPrunable: Bool = false) {
+        self.path = path
+        self.branch = branch
+        self.head = head
+        self.isMain = isMain
+        self.isCurrent = isCurrent
+        self.isLocked = isLocked
+        self.isPrunable = isPrunable
+    }
+
+    public var id: String { path }
+    public var name: String { (path as NSString).lastPathComponent }
+    /// 分支名，分离 HEAD 时退回短 hash。
+    public var refName: String { branch ?? head }
+}
+
 /// 当前分支相对上游的同步状态。
 public struct SyncStatus: Hashable, Sendable {
     public let upstream: String?  // 如 origin/main；nil 表示没有上游
@@ -99,4 +126,21 @@ public struct SyncStatus: Hashable, Sendable {
         self.ahead = ahead
         self.behind = behind
     }
+}
+
+/// 一个 git 标签。`isAnnotated` 区分附注标签(-a，有 tagger/消息)与轻量标签。
+public struct Tag: Identifiable, Hashable, Sendable {
+    public let name: String
+    public let target: String       // 指向的提交短 hash
+    public let isAnnotated: Bool
+    public let subject: String       // 附注标签的消息标题；轻量标签为目标提交标题
+
+    public init(name: String, target: String, isAnnotated: Bool, subject: String) {
+        self.name = name
+        self.target = target
+        self.isAnnotated = isAnnotated
+        self.subject = subject
+    }
+
+    public var id: String { name }
 }

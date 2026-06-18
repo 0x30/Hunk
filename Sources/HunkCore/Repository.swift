@@ -159,6 +159,17 @@ public final class Repository: @unchecked Sendable {
         try await git.run(args)
     }
 
+    /// 撤销最近一次提交，改动保留在暂存区（git reset --soft HEAD~1）。
+    public func undoLastCommit() async throws {
+        try await git.run(["reset", "--soft", "HEAD~1"])
+    }
+
+    /// 最近一次提交的完整消息（%B，含多行正文）。
+    public func lastCommitMessage() async throws -> String {
+        let result = try await git.run(["log", "-1", "--format=%B"], allowedExitCodes: [0, 128])
+        return result.stdout.trimmingCharacters(in: .newlines)
+    }
+
     // MARK: - 分支
 
     public func branches() async throws -> [Branch] {
@@ -241,6 +252,137 @@ public final class Repository: @unchecked Sendable {
 
     public func stashDrop(index: Int) async throws {
         try await git.run(["stash", "drop", "stash@{\(index)}"])
+    }
+
+    // MARK: - 工作树（worktree）
+
+    /// 所有工作树（主 + 链接）。porcelain 第一条记录是主工作树。
+    /// 解析 `git worktree list --porcelain`：每条记录由若干 `key value` 行组成，记录间以空行分隔。
+    public func worktrees() async throws -> [Worktree] {
+        let result = try await git.run(["worktree", "list", "--porcelain"], allowedExitCodes: [0, 128])
+        guard result.exitCode == 0 else { return [] }
+
+        let myRoot = root.resolvingSymlinksInPath().path
+        var trees: [Worktree] = []
+        var recordIndex = 0
+
+        // 一条记录的可变累加器
+        var path: String?
+        var head = ""
+        var branch: String?
+        var locked = false
+        var prunable = false
+        var bare = false
+
+        func flush() {
+            defer {
+                path = nil; head = ""; branch = nil
+                locked = false; prunable = false; bare = false
+            }
+            guard let path else { return }
+            let idx = recordIndex
+            recordIndex += 1
+            // 裸仓库条目没有工作目录，不在列表里展示
+            guard !bare else { return }
+            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            trees.append(Worktree(
+                path: path,
+                branch: branch,
+                head: String(head.prefix(7)),
+                isMain: idx == 0,
+                isCurrent: resolved == myRoot,
+                isLocked: locked,
+                isPrunable: prunable
+            ))
+        }
+
+        for raw in result.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if line.isEmpty {
+                flush()
+            } else if line.hasPrefix("worktree ") {
+                flush()  // 上一条记录可能未遇空行（输出末尾）
+                path = String(line.dropFirst("worktree ".count))
+            } else if line.hasPrefix("HEAD ") {
+                head = String(line.dropFirst("HEAD ".count))
+            } else if line.hasPrefix("branch ") {
+                let ref = String(line.dropFirst("branch ".count))
+                branch = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
+            } else if line == "detached" {
+                branch = nil
+            } else if line == "bare" {
+                bare = true
+            } else if line == "locked" || line.hasPrefix("locked ") {
+                locked = true
+            } else if line == "prunable" || line.hasPrefix("prunable ") {
+                prunable = true
+            }
+        }
+        flush()  // 输出末尾无空行时补最后一条
+        return trees
+    }
+
+    /// 新建工作树。`createBranch` 为 true 时同时新建分支（基于当前 HEAD），
+    /// 否则检出一个已有分支（该分支不能已被其他工作树占用）。
+    public func addWorktree(path: String, branch: String, createBranch: Bool) async throws {
+        var args = ["worktree", "add"]
+        if createBranch {
+            args += ["-b", branch, path]
+        } else {
+            args += [path, branch]
+        }
+        try await git.run(args)
+    }
+
+    /// 移除一个工作树（不能移除主工作树）。`force` 用于有未提交更改或已锁定的情况。
+    public func removeWorktree(path: String, force: Bool = false) async throws {
+        var args = ["worktree", "remove"]
+        if force { args.append("--force") }
+        args.append(path)
+        try await git.run(args)
+    }
+
+    // MARK: - 标签（tag）
+
+    /// 所有标签，按创建时间倒序。区分附注标签(annotated)与轻量标签(lightweight)。
+    public func tags() async throws -> [Tag] {
+        // 字段：名 / 对象类型 / 对象短hash / 解引用提交短hash(仅 annotated) / 标题
+        let format = ["%(refname:short)", "%(objecttype)", "%(objectname:short)",
+                      "%(*objectname:short)", "%(contents:subject)"].joined(separator: "%09")
+        let result = try await git.run(
+            ["for-each-ref", "refs/tags", "--sort=-creatordate", "--format=\(format)"],
+            allowedExitCodes: [0, 128]
+        )
+        guard result.exitCode == 0 else { return [] }
+        return result.stdout.split(separator: "\n", omittingEmptySubsequences: true).compactMap { raw in
+            let f = raw.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 5, !f[0].isEmpty else { return nil }
+            let isAnnotated = f[1] == "tag"
+            // 附注标签的目标是解引用后的提交(f[3])，轻量标签直接指向提交(f[2])
+            let target = isAnnotated ? f[3] : f[2]
+            return Tag(name: f[0], target: target, isAnnotated: isAnnotated, subject: f[4])
+        }
+    }
+
+    /// 新建标签。`message` 非空时创建附注标签(-a -m)，否则轻量标签。`ref` 默认 HEAD。
+    public func createTag(name: String, message: String?, ref: String = "HEAD") async throws {
+        var args = ["tag"]
+        if let message, !message.isEmpty {
+            args += ["-a", name, "-m", message, ref]
+        } else {
+            args += [name, ref]
+        }
+        try await git.run(args)
+    }
+
+    /// 删除本地标签。
+    public func deleteTag(_ name: String) async throws {
+        try await git.run(["tag", "-d", name])
+    }
+
+    /// 推送单个标签到 origin。
+    public func pushTag(_ name: String) async throws {
+        try await git.run(["push", "origin", name])
     }
 
     // MARK: - 远端同步

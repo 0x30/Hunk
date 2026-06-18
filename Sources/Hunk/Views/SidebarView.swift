@@ -243,13 +243,24 @@ struct BranchMenu: View {
                 vm.showBranchPanel.toggle()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.branch")
+                    // 链接工作树窗口：图标换成「分屏」并染主题色，与主仓库窗口一眼区分
+                    Image(systemName: vm.isLinkedWorktree ? "square.split.2x1" : "arrow.triangle.branch")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(vm.isLinkedWorktree ? Color.accentColor : .secondary)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                            if vm.isLinkedWorktree {
+                                Text(tr("工作树", "worktree"))
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 0.5)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                            }
+                        }
                         HStack(spacing: 2) {
                             Text(vm.currentBranch)
                                 .font(.system(size: 10.5))
@@ -260,7 +271,10 @@ struct BranchMenu: View {
                     }
                 }
             }
-            .help(tr("分支：切换 / 新建", "Branches: switch / create"))
+            .help(vm.isLinkedWorktree
+                  ? tr("这是「\(vm.mainWorktreeName ?? "")」的工作树 · 分支 \(vm.currentBranch)",
+                       "Worktree of “\(vm.mainWorktreeName ?? "")” · branch \(vm.currentBranch)")
+                  : tr("分支：切换 / 新建", "Branches: switch / create"))
         } else {
             // 非 git（整个文件夹总览 / 普通目录 / 单文件）：没有分支概念，
             // 只静态显示当前文件夹名——不可点、不弹分支面板、无下拉箭头。

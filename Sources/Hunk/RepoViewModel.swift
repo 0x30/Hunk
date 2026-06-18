@@ -61,6 +61,8 @@ final class RepoViewModel: ObservableObject {
     @Published var changes: [FileChange] = []
     @Published var branches: [Branch] = []
     @Published var stashes: [Stash] = []
+    @Published var worktrees: [Worktree] = []
+    @Published var tags: [Tag] = []
     @Published var currentBranch = ""
     @Published var sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
     @Published var headSummary: String?
@@ -757,6 +759,8 @@ final class RepoViewModel: ObservableObject {
             async let status = repo.status()
             async let branches = repo.branches()
             async let stashes = repo.stashes()
+            async let worktrees = repo.worktrees()
+            async let tags = repo.tags()
             async let branch = repo.currentBranch()
             async let sync = repo.syncStatus()
             async let head = repo.headSummary()
@@ -767,6 +771,8 @@ final class RepoViewModel: ObservableObject {
             assignIfChanged(try await status, to: \.changes)
             assignIfChanged(try await branches, to: \.branches)
             assignIfChanged(try await stashes, to: \.stashes)
+            assignIfChanged(try await worktrees, to: \.worktrees)
+            assignIfChanged(try await tags, to: \.tags)
             assignIfChanged(try await branch, to: \.currentBranch)
             assignIfChanged(try await sync, to: \.sync)
             assignIfChanged(try await head, to: \.headSummary)
@@ -805,6 +811,8 @@ final class RepoViewModel: ObservableObject {
         changes = []
         branches = []
         stashes = []
+        worktrees = []
+        tags = []
         history = []
         currentBranch = ""
         sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
@@ -1471,6 +1479,56 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    // MARK: 撤销 / 修改最近提交
+
+    /// 撤销最近提交的确认开关
+    @Published var pendingUndoLastCommit = false
+    /// 「修改提交消息」表单
+    @Published var showRewordCommit = false
+    @Published var rewordMessage = ""
+
+    func promptUndoLastCommit() { pendingUndoLastCommit = true }
+
+    /// 撤销最近一次提交：改动回到暂存区，原消息回填到提交框，便于重新修改后再提交。
+    func confirmUndoLastCommit() {
+        pendingUndoLastCommit = false
+        guard let repo else { return }
+        Task {
+            do {
+                let original = try await repo.lastCommitMessage()
+                try await repo.undoLastCommit()
+                await MainActor.run {
+                    // 提交框为空才回填，避免覆盖用户正在输入的内容
+                    if commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        commitMessage = original
+                    }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            await refresh()
+        }
+    }
+
+    /// 打开「修改提交消息」表单，预填最近提交的消息。
+    func startRewordLastCommit() {
+        guard let repo else { return }
+        Task {
+            let original = (try? await repo.lastCommitMessage()) ?? ""
+            await MainActor.run {
+                rewordMessage = original
+                showRewordCommit = true
+            }
+        }
+    }
+
+    func confirmRewordCommit() {
+        let msg = rewordMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !msg.isEmpty else { return }
+        showRewordCommit = false
+        perform { try await self.repo?.commit(message: msg, amend: true) }
+    }
+
     // MARK: - 贮藏
 
     func stashAll() {
@@ -1487,6 +1545,86 @@ final class RepoViewModel: ObservableObject {
 
     func dropStash(_ stash: Stash) {
         perform { try await self.repo?.stashDrop(index: stash.index) }
+    }
+
+    // MARK: - 工作树
+
+    /// 待确认移除的工作树（非 nil 时弹确认框）
+    @Published var worktreeToRemove: Worktree?
+    /// 新建工作树表单是否展示
+    @Published var showCreateWorktree = false
+
+    /// 当前窗口打开的工作树。
+    var currentWorktree: Worktree? { worktrees.first(where: \.isCurrent) }
+    /// 当前窗口打开的是否为链接工作树（非主工作树）——用于工具栏标志。
+    var isLinkedWorktree: Bool { currentWorktree.map { !$0.isMain } ?? false }
+    /// 主工作树名（链接工作树窗口的标志 tooltip 用）。
+    var mainWorktreeName: String? { worktrees.first(where: \.isMain)?.name }
+    /// 已被某个工作树占用的分支名（新建工作树时这些分支不可再选）。
+    var branchesInUse: Set<String> { Set(worktrees.compactMap(\.branch)) }
+
+    /// 在新窗口打开工作树目录（SwiftUI 对相同路径会聚焦已存在窗口，天然防重复）。
+    func openWorktree(_ wt: Worktree) {
+        guard !wt.isCurrent else { return }
+        openWindowRequest = wt.path
+    }
+
+    /// 把工作树检出的分支（detached 时为其 HEAD）与当前 HEAD 对比，复用比较视图。
+    func compareWorktree(_ wt: Worktree) {
+        guard !wt.isCurrent else { return }
+        openHistoryDetail(.compare(base: wt.refName, target: "HEAD"))
+    }
+
+    func createWorktree(path: String, branch: String, createBranch: Bool) {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        let b = branch.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty, !b.isEmpty else { return }
+        showCreateWorktree = false
+        perform { try await self.repo?.addWorktree(path: p, branch: b, createBranch: createBranch) }
+    }
+
+    func promptRemoveWorktree(_ wt: Worktree) {
+        guard !wt.isMain, !wt.isCurrent else { return }  // 主工作树 / 当前工作树不可移除
+        worktreeToRemove = wt
+    }
+
+    func confirmRemoveWorktree(force: Bool) {
+        guard let wt = worktreeToRemove else { return }
+        worktreeToRemove = nil
+        perform { try await self.repo?.removeWorktree(path: wt.path, force: force) }
+    }
+
+    // MARK: - 标签
+
+    /// 待确认删除的标签
+    @Published var tagToDelete: Tag?
+    /// 新建标签表单是否展示
+    @Published var showCreateTag = false
+
+    func createTag(name: String, message: String?, ref: String = "HEAD") {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        showCreateTag = false
+        perform { try await self.repo?.createTag(name: n, message: message, ref: ref) }
+    }
+
+    func promptDeleteTag(_ tag: Tag) {
+        tagToDelete = tag
+    }
+
+    func confirmDeleteTag() {
+        guard let tag = tagToDelete else { return }
+        tagToDelete = nil
+        perform { try await self.repo?.deleteTag(tag.name) }
+    }
+
+    func pushTag(_ tag: Tag) {
+        perform { try await self.repo?.pushTag(tag.name) }
+    }
+
+    /// 把标签与当前 HEAD 对比，复用比较视图。
+    func compareTag(_ tag: Tag) {
+        openHistoryDetail(.compare(base: tag.name, target: "HEAD"))
     }
 
     // MARK: - 分支

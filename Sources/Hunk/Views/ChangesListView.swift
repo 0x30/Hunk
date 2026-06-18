@@ -98,6 +98,45 @@ struct ChangesListView: View {
                     sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count, collapseKey: "stash") { EmptyView() }
                 }
             }
+
+            if !vm.worktrees.isEmpty {
+                Section {
+                    if !isCollapsed("worktree") {
+                        ForEach(vm.worktrees) { wt in
+                            WorktreeRow(worktree: wt)
+                        }
+                    }
+                } header: {
+                    sectionHeader(tr("工作树", "Worktrees"), count: vm.worktrees.count, collapseKey: "worktree") {
+                        Button {
+                            vm.showCreateWorktree = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.plain)
+                        .help(tr("新建工作树…", "New Worktree…"))
+                    }
+                }
+            }
+
+            // 标签区块始终显示，保证「新建标签」入口在没有标签时也可达
+            Section {
+                if !isCollapsed("tag") {
+                    ForEach(vm.tags) { tag in
+                        TagRow(tag: tag)
+                    }
+                }
+            } header: {
+                sectionHeader(tr("标签", "Tags"), count: vm.tags.count, collapseKey: "tag") {
+                    Button {
+                        vm.showCreateTag = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.plain)
+                    .help(tr("新建标签…", "New Tag…"))
+                }
+            }
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 24)

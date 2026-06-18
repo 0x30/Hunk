@@ -299,6 +299,16 @@ private struct HistoryRow: View {
                     vm.openHistoryDetail(.compare(base: commit.hash, target: upstream))
                 }
             }
+            // 仅最新提交（HEAD）可撤销 / 改消息
+            if commit.refs.contains(where: { $0.contains("HEAD") }) {
+                Divider()
+                Button(tr("撤销此提交（保留更改）", "Undo This Commit (keep changes)")) {
+                    vm.promptUndoLastCommit()
+                }
+                Button(tr("修改提交消息…", "Edit Commit Message…")) {
+                    vm.startRewordLastCommit()
+                }
+            }
             Divider()
             Button(tr("复制提交哈希", "Copy Commit Hash")) {
                 vm.copyPath(commit.hash)

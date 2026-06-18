@@ -218,6 +218,80 @@ struct MainSplitView: View {
         } message: {
             Text((vm.branchesToDelete ?? []).joined(separator: "\n"))
         }
+        // 新建工作树表单
+        .sheet(isPresented: $vm.showCreateWorktree) {
+            CreateWorktreeSheet()
+                .environmentObject(vm)
+        }
+        // 移除工作树的确认框
+        .confirmationDialog(
+            tr("移除工作树「\(vm.worktreeToRemove?.name ?? "")」？",
+               "Remove worktree “\(vm.worktreeToRemove?.name ?? "")”?"),
+            isPresented: Binding(
+                get: { vm.worktreeToRemove != nil },
+                set: { if !$0 { vm.worktreeToRemove = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("移除", "Remove"), role: .destructive) {
+                vm.confirmRemoveWorktree(force: false)
+            }
+            Button(tr("强制移除（丢弃未提交更改）", "Force Remove (discard changes)"), role: .destructive) {
+                vm.confirmRemoveWorktree(force: true)
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.worktreeToRemove = nil
+            }
+        } message: {
+            Text(tr("只移除工作目录，分支与提交保留。",
+                    "Only the working directory is removed; the branch and commits are kept."))
+        }
+        // 新建标签表单
+        .sheet(isPresented: $vm.showCreateTag) {
+            CreateTagSheet()
+                .environmentObject(vm)
+        }
+        // 删除标签的确认框
+        .confirmationDialog(
+            tr("删除标签「\(vm.tagToDelete?.name ?? "")」？",
+               "Delete tag “\(vm.tagToDelete?.name ?? "")”?"),
+            isPresented: Binding(
+                get: { vm.tagToDelete != nil },
+                set: { if !$0 { vm.tagToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("删除", "Delete"), role: .destructive) {
+                vm.confirmDeleteTag()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.tagToDelete = nil
+            }
+        } message: {
+            Text(tr("只删除本地标签；若已推送，远端标签不受影响。",
+                    "Deletes the local tag only; a pushed tag on the remote is unaffected."))
+        }
+        // 撤销最近提交的确认框
+        .confirmationDialog(
+            tr("撤销最近一次提交？", "Undo the most recent commit?"),
+            isPresented: $vm.pendingUndoLastCommit,
+            titleVisibility: .visible
+        ) {
+            Button(tr("撤销提交", "Undo Commit")) {
+                vm.confirmUndoLastCommit()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.pendingUndoLastCommit = false
+            }
+        } message: {
+            Text(tr("提交将被撤销，改动保留在暂存区，原提交消息回填到提交框。",
+                    "The commit is undone; changes stay staged and its message is restored to the commit box."))
+        }
+        // 修改提交消息表单
+        .sheet(isPresented: $vm.showRewordCommit) {
+            RewordCommitSheet()
+                .environmentObject(vm)
+        }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())
