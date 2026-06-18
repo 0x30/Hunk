@@ -303,13 +303,16 @@ private struct HistoryRow: View {
                 }
             }
             if isOnCurrentBranch {
-                // 当前分支上的提交：可还原(生成反向提交)/ 重置 HEAD 到此
+                // 当前分支上的提交：可还原(生成反向提交)/ 重置 HEAD 到此 / 整理其后的提交
                 Divider()
                 Button(tr("还原此提交…", "Revert This Commit…")) {
                     vm.promptRevertCommit(legacyCommit)
                 }
                 Button(tr("重置到此提交…", "Reset to This Commit…")) {
                     vm.promptResetToCommit(legacyCommit)
+                }
+                Button(tr("整理此提交之后的提交…", "Reorganize Commits After This…")) {
+                    vm.startRebaseEditor(after: legacyCommit)
                 }
             } else {
                 // 其他分支的提交：摘取(cherry-pick)到当前分支

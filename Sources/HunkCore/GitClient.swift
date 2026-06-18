@@ -42,9 +42,10 @@ public final class GitClient: @unchecked Sendable {
     public func run(
         _ arguments: [String],
         stdin: Data? = nil,
-        allowedExitCodes: Set<Int32> = [0]
+        allowedExitCodes: Set<Int32> = [0],
+        extraEnv: [String: String] = [:]
     ) async throws -> GitResult {
-        let result = try await raw(arguments, stdin: stdin)
+        let result = try await raw(arguments, stdin: stdin, extraEnv: extraEnv)
         guard allowedExitCodes.contains(result.exitCode) else {
             throw GitError(
                 command: arguments.joined(separator: " "),
@@ -56,12 +57,12 @@ public final class GitClient: @unchecked Sendable {
     }
 
     /// 执行 git 命令，不检查退出码。
-    public func raw(_ arguments: [String], stdin: Data? = nil) async throws -> GitResult {
+    public func raw(_ arguments: [String], stdin: Data? = nil, extraEnv: [String: String] = [:]) async throws -> GitResult {
         let dir = workDirectory
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    continuation.resume(returning: try Self.runSync(arguments, in: dir, stdin: stdin))
+                    continuation.resume(returning: try Self.runSync(arguments, in: dir, stdin: stdin, extraEnv: extraEnv))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -69,13 +70,14 @@ public final class GitClient: @unchecked Sendable {
         }
     }
 
-    private static func runSync(_ arguments: [String], in dir: URL, stdin: Data?) throws -> GitResult {
+    private static func runSync(_ arguments: [String], in dir: URL, stdin: Data?, extraEnv: [String: String]) throws -> GitResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git", "-c", "core.quotepath=false", "-C", dir.path] + arguments
 
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"  // 永不交互式询问凭据
+        for (k, v) in extraEnv { environment[k] = v }  // 如 GIT_SEQUENCE_EDITOR / GIT_EDITOR（交互式变基注入）
         process.environment = environment
 
         let stdoutPipe = Pipe()

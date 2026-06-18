@@ -7,6 +7,11 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 变基进行中(冲突中断):两个标签页都能看到的状态条
+            if vm.rebaseInProgress {
+                RebaseBanner()
+                Divider()
+            }
             switch vm.sidebarTab {
             case .files:
                 FilesView()

@@ -89,6 +89,7 @@ private struct ViewTabItem: View {
         case .commit: return "circle.dotted"
         case .compare: return "arrow.left.arrow.right"
         case .search: return vm.globalSearchReplace ? "arrow.triangle.2.circlepath" : "magnifyingglass"
+        case .rebase: return "line.3.horizontal"
         }
     }
     private var title: String {
@@ -100,6 +101,10 @@ private struct ViewTabItem: View {
             let kw = vm.globalSearchQuery.trimmingCharacters(in: .whitespaces)
             let label = vm.globalSearchReplace ? tr("替换", "Replace") : tr("查找", "Find")
             return kw.isEmpty ? label : "\(label): \(kw)"
+        case .rebase:
+            return vm.rebaseSteps.isEmpty
+                ? tr("整理提交", "Reorganize")
+                : tr("整理提交（\(vm.rebaseSteps.count)）", "Reorganize (\(vm.rebaseSteps.count))")
         }
     }
     private func shortRef(_ r: String) -> String {

@@ -428,6 +428,8 @@ struct DetailView: View {
             HistoryDetailView()
         case .view(.search):
             SearchPanelView()
+        case .view(.rebase):
+            RebaseDetailView()
         case nil:
             EmptyDetailView()
         }

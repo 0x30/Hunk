@@ -198,6 +198,75 @@ public final class Repository: @unchecked Sendable {
         return Set(result.stdout.split(separator: "\n").map(String.init))
     }
 
+    // MARK: - 交互式变基（interactive rebase）
+
+    /// base..HEAD 之间的提交（旧→新顺序），供交互式变基编排。
+    public func commitsToRebase(after base: String) async throws -> [Commit] {
+        let format = "%H%x09%h%x09%an%x09%at%x09%s"
+        let result = try await git.run(
+            ["log", "--reverse", "--format=\(format)", "\(base)..HEAD"],
+            allowedExitCodes: [0, 128]
+        )
+        guard result.exitCode == 0 else { return [] }
+        return result.stdout.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 5 else { return nil }
+            return Commit(hash: f[0], shortHash: f[1], author: f[2], subject: f[4],
+                          date: Date(timeIntervalSince1970: Double(f[3]) ?? 0), refs: [])
+        }
+    }
+
+    /// 执行交互式变基：把编排好的 todo 注入 `git rebase -i base`。
+    /// pick 原样、squash 用 fixup(合并进上一条)、drop 省略该行；
+    /// GIT_SEQUENCE_EDITOR 用我们的 todo 覆盖 git 待办，GIT_EDITOR=true 跳过任何消息编辑不卡住。
+    /// 冲突时以非零退出，交由「合并更改」UI 解决后 `rebaseContinue()`。
+    public func interactiveRebase(onto base: String, todo: [(hash: String, action: RebaseAction)]) async throws {
+        var lines: [String] = []
+        for item in todo {
+            switch item.action {
+            case .pick: lines.append("pick \(item.hash)")
+            case .squash: lines.append("fixup \(item.hash)")
+            case .drop: break
+            }
+        }
+        let todoText = lines.joined(separator: "\n") + "\n"
+        let todoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hunk-rebase-todo-\(UUID().uuidString)")
+        try todoText.write(to: todoURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: todoURL) }
+        try await git.run(
+            ["rebase", "-i", base],
+            allowedExitCodes: [0, 1],
+            extraEnv: [
+                "GIT_SEQUENCE_EDITOR": "cp '\(todoURL.path)'",
+                "GIT_EDITOR": "true",
+            ]
+        )
+    }
+
+    /// 是否有变基正在进行（冲突中断等）。
+    public func rebaseInProgress() async throws -> Bool {
+        let fm = FileManager.default
+        for name in ["rebase-merge", "rebase-apply"] {
+            let r = try await git.run(["rev-parse", "--git-path", name], allowedExitCodes: [0, 128])
+            let p = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !p.isEmpty else { continue }
+            let url = p.hasPrefix("/") ? URL(fileURLWithPath: p) : root.appendingPathComponent(p)
+            if fm.fileExists(atPath: url.path) { return true }
+        }
+        return false
+    }
+
+    /// 继续变基（需先解决并暂存冲突）。GIT_EDITOR=true 跳过续作时的消息编辑。
+    public func rebaseContinue() async throws {
+        try await git.run(["rebase", "--continue"], allowedExitCodes: [0, 1], extraEnv: ["GIT_EDITOR": "true"])
+    }
+
+    /// 中止变基，回到变基前状态。
+    public func rebaseAbort() async throws {
+        try await git.run(["rebase", "--abort"])
+    }
+
     // MARK: - 分支
 
     public func branches() async throws -> [Branch] {

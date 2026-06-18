@@ -128,6 +128,11 @@ public struct SyncStatus: Hashable, Sendable {
     }
 }
 
+/// 交互式变基里一个提交的处理方式。squash 在实现上用 fixup 语义(合并进上一条、沿用其消息)。
+public enum RebaseAction: String, Sendable, CaseIterable {
+    case pick, squash, drop
+}
+
 /// 一个 git 标签。`isAnnotated` 区分附注标签(-a，有 tagger/消息)与轻量标签。
 public struct Tag: Identifiable, Hashable, Sendable {
     public let name: String

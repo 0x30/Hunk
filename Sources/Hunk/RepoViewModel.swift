@@ -21,6 +21,7 @@ enum ViewTab: Hashable, Identifiable {
     case commit(Repository.Commit)
     case compare(String, String)
     case search
+    case rebase  // 交互式变基编排（单例：一个仓库同时只整理一处）
 
     var id: String {
         switch self {
@@ -28,6 +29,7 @@ enum ViewTab: Hashable, Identifiable {
         case .commit(let c): return "commit:\(c.hash)"
         case .compare(let b, let t): return "compare:\(b)..\(t)"
         case .search: return "search"
+        case .rebase: return "rebase"
         }
     }
 }
@@ -216,6 +218,8 @@ final class RepoViewModel: ObservableObject {
             openHistoryDetail(.compare(base: b, target: t))
         case .search:
             activeDetail = .view(.search)
+        case .rebase:
+            activeDetail = .view(.rebase)
         }
     }
 
@@ -224,6 +228,14 @@ final class RepoViewModel: ObservableObject {
         let wasActive = activeDetail == .view(tab)
         openViewTabs.removeAll { $0 == tab }
         if case .search = tab { searchTabOpen = false }
+        if case .rebase = tab {
+            rebaseSteps = []
+            rebaseBase = nil
+            rebaseDetailCommit = nil
+            rebaseDetailFiles = []
+            rebaseDetailDiff = nil
+            rebaseDetailDiffPath = nil
+        }
         if wasActive {
             // 关的是当前显示的标签:提交/比较内容作废,然后回退激活别的标签
             switch tab {
@@ -764,6 +776,7 @@ final class RepoViewModel: ObservableObject {
             async let worktrees = repo.worktrees()
             async let tags = repo.tags()
             async let headReachable = repo.headReachableHashes()
+            async let rebaseInProgress = repo.rebaseInProgress()
             async let branch = repo.currentBranch()
             async let sync = repo.syncStatus()
             async let head = repo.headSummary()
@@ -777,6 +790,7 @@ final class RepoViewModel: ObservableObject {
             assignIfChanged(try await worktrees, to: \.worktrees)
             assignIfChanged(try await tags, to: \.tags)
             assignIfChanged(try await headReachable, to: \.headReachable)
+            assignIfChanged(try await rebaseInProgress, to: \.rebaseInProgress)
             assignIfChanged(try await branch, to: \.currentBranch)
             assignIfChanged(try await sync, to: \.sync)
             assignIfChanged(try await head, to: \.headSummary)
@@ -818,6 +832,7 @@ final class RepoViewModel: ObservableObject {
         worktrees = []
         tags = []
         headReachable = []
+        rebaseInProgress = false
         history = []
         currentBranch = ""
         sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
@@ -1572,6 +1587,105 @@ final class RepoViewModel: ObservableObject {
         guard let commit = commitToCherryPick else { return }
         commitToCherryPick = nil
         perform { try await self.repo?.cherryPick(commit: commit.hash) }
+    }
+
+    // MARK: - 交互式变基
+
+    @Published var rebaseSteps: [RebaseStep] = []
+    @Published var rebaseBase: String?
+    /// 变基冲突中断中（由 refresh 检测 .git/rebase-merge）
+    @Published var rebaseInProgress = false
+
+    // rebase tab 底部「选中提交详情」状态
+    @Published var rebaseDetailCommit: Repository.Commit?
+    @Published var rebaseDetailFiles: [Repository.CommitFileChange] = []
+    @Published var rebaseDetailDiff: FileDiff?
+    @Published var rebaseDetailDiffPath: String?
+
+    /// 打开（或聚焦）交互式变基 tab。
+    func openRebaseTab() {
+        if !openViewTabs.contains(.rebase) { openViewTabs.append(.rebase) }
+        activeDetail = .view(.rebase)
+    }
+
+    /// 整理某提交「之后」到 HEAD 的提交（base..HEAD），并打开变基 tab。
+    func startRebaseEditor(after base: Repository.Commit) {
+        guard let repo else { return }
+        Task {
+            let commits = (try? await repo.commitsToRebase(after: base.hash)) ?? []
+            await MainActor.run {
+                rebaseBase = base.hash
+                rebaseSteps = commits.map { RebaseStep(commit: $0, action: .pick) }
+                rebaseDetailCommit = nil
+                rebaseDetailFiles = []
+                rebaseDetailDiff = nil
+                rebaseDetailDiffPath = nil
+                if rebaseSteps.isEmpty {
+                    notice = tr("该提交之后没有可整理的提交。", "No commits after this one to reorganize.")
+                } else {
+                    openRebaseTab()
+                }
+            }
+        }
+    }
+
+    func moveRebaseStep(from source: IndexSet, to destination: Int) {
+        rebaseSteps.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func setRebaseAction(_ action: RebaseAction, for id: String) {
+        if let i = rebaseSteps.firstIndex(where: { $0.id == id }) {
+            rebaseSteps[i].action = action
+        }
+    }
+
+    /// 在 rebase tab 里选中一个待整理的提交，加载它改动的文件列表。
+    func selectRebaseStep(_ step: RebaseStep) {
+        guard let repo else { return }
+        rebaseDetailCommit = step.commit
+        rebaseDetailFiles = []
+        rebaseDetailDiff = nil
+        rebaseDetailDiffPath = nil
+        Task {
+            do {
+                let files = try await repo.filesChanged(in: step.commit.hash)
+                await MainActor.run {
+                    rebaseDetailFiles = files
+                    if files.count == 1 { selectRebaseDetailFile(files[0]) }
+                }
+            } catch {
+                await MainActor.run { errorMessage = error.localizedDescription }
+            }
+        }
+    }
+
+    /// 在 rebase 详情里选中一个文件，加载它在该提交里的 diff。
+    func selectRebaseDetailFile(_ file: Repository.CommitFileChange) {
+        guard let repo, let commit = rebaseDetailCommit else { return }
+        rebaseDetailDiffPath = file.path
+        Task {
+            do {
+                let d = try await repo.diff(in: commit.hash, path: file.path)
+                await MainActor.run { rebaseDetailDiff = d }
+            } catch {
+                await MainActor.run { errorMessage = error.localizedDescription }
+            }
+        }
+    }
+
+    func runInteractiveRebase() {
+        guard let repo, let base = rebaseBase else { return }
+        let todo = rebaseSteps.map { (hash: $0.commit.hash, action: $0.action) }
+        closeViewTab(.rebase)
+        perform { try await repo.interactiveRebase(onto: base, todo: todo) }
+    }
+
+    func continueRebase() {
+        perform { try await self.repo?.rebaseContinue() }
+    }
+
+    func abortRebase() {
+        perform { try await self.repo?.rebaseAbort() }
     }
 
     // MARK: - 贮藏
