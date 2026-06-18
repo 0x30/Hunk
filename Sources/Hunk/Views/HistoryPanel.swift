@@ -252,6 +252,9 @@ private struct HistoryRow: View {
         return false
     }
 
+    /// 该提交是否在当前分支(HEAD 可达)上。
+    private var isOnCurrentBranch: Bool { vm.headReachable.contains(commit.hash) }
+
     var body: some View {
         HStack(spacing: 6) {
             GraphCanvas(row: row, maxColumns: maxColumns)
@@ -299,13 +302,21 @@ private struct HistoryRow: View {
                     vm.openHistoryDetail(.compare(base: commit.hash, target: upstream))
                 }
             }
-            // 还原：对任意提交生成反向提交（不重写历史，已推送也安全）
-            Divider()
-            Button(tr("还原此提交…", "Revert This Commit…")) {
-                vm.promptRevertCommit(legacyCommit)
-            }
-            Button(tr("重置到此提交…", "Reset to This Commit…")) {
-                vm.promptResetToCommit(legacyCommit)
+            if isOnCurrentBranch {
+                // 当前分支上的提交：可还原(生成反向提交)/ 重置 HEAD 到此
+                Divider()
+                Button(tr("还原此提交…", "Revert This Commit…")) {
+                    vm.promptRevertCommit(legacyCommit)
+                }
+                Button(tr("重置到此提交…", "Reset to This Commit…")) {
+                    vm.promptResetToCommit(legacyCommit)
+                }
+            } else {
+                // 其他分支的提交：摘取(cherry-pick)到当前分支
+                Divider()
+                Button(tr("摘取到当前分支…", "Cherry-pick to Current Branch…")) {
+                    vm.promptCherryPick(legacyCommit)
+                }
             }
             // 仅最新提交（HEAD）可撤销 / 改消息
             if commit.refs.contains(where: { $0.contains("HEAD") }) {

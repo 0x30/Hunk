@@ -63,6 +63,8 @@ final class RepoViewModel: ObservableObject {
     @Published var stashes: [Stash] = []
     @Published var worktrees: [Worktree] = []
     @Published var tags: [Tag] = []
+    /// 当前分支(HEAD)可达的提交 hash 集合，供历史右键区分提交在不在当前分支
+    @Published var headReachable: Set<String> = []
     @Published var currentBranch = ""
     @Published var sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
     @Published var headSummary: String?
@@ -761,6 +763,7 @@ final class RepoViewModel: ObservableObject {
             async let stashes = repo.stashes()
             async let worktrees = repo.worktrees()
             async let tags = repo.tags()
+            async let headReachable = repo.headReachableHashes()
             async let branch = repo.currentBranch()
             async let sync = repo.syncStatus()
             async let head = repo.headSummary()
@@ -773,6 +776,7 @@ final class RepoViewModel: ObservableObject {
             assignIfChanged(try await stashes, to: \.stashes)
             assignIfChanged(try await worktrees, to: \.worktrees)
             assignIfChanged(try await tags, to: \.tags)
+            assignIfChanged(try await headReachable, to: \.headReachable)
             assignIfChanged(try await branch, to: \.currentBranch)
             assignIfChanged(try await sync, to: \.sync)
             assignIfChanged(try await head, to: \.headSummary)
@@ -813,6 +817,7 @@ final class RepoViewModel: ObservableObject {
         stashes = []
         worktrees = []
         tags = []
+        headReachable = []
         history = []
         currentBranch = ""
         sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
@@ -1554,6 +1559,19 @@ final class RepoViewModel: ObservableObject {
         guard let commit = commitToReset else { return }
         commitToReset = nil
         perform { try await self.repo?.reset(to: commit.hash, mode: mode) }
+    }
+
+    /// 待确认摘取(cherry-pick)的提交
+    @Published var commitToCherryPick: Repository.Commit?
+
+    func promptCherryPick(_ commit: Repository.Commit) {
+        commitToCherryPick = commit
+    }
+
+    func confirmCherryPick() {
+        guard let commit = commitToCherryPick else { return }
+        commitToCherryPick = nil
+        perform { try await self.repo?.cherryPick(commit: commit.hash) }
     }
 
     // MARK: - 贮藏

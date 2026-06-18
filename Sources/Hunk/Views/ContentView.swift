@@ -338,6 +338,26 @@ struct MainSplitView: View {
             Text(tr("HEAD 将移到该提交。软/混合会保留其后的改动，硬重置会永久丢弃工作区与暂存区的改动。",
                     "HEAD moves to this commit. Soft/Mixed keep later changes; Hard permanently discards working tree and index."))
         }
+        // 摘取(cherry-pick)提交的确认框
+        .confirmationDialog(
+            tr("摘取「\(vm.commitToCherryPick?.subject ?? "")」到当前分支？",
+               "Cherry-pick “\(vm.commitToCherryPick?.subject ?? "")” to current branch?"),
+            isPresented: Binding(
+                get: { vm.commitToCherryPick != nil },
+                set: { if !$0 { vm.commitToCherryPick = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("摘取", "Cherry-pick")) {
+                vm.confirmCherryPick()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.commitToCherryPick = nil
+            }
+        } message: {
+            Text(tr("会把该提交的改动作为一个新提交应用到当前分支；若有冲突会进入「合并更改」待解决。",
+                    "Applies this commit’s changes as a new commit on the current branch; conflicts appear in Merge Changes."))
+        }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())

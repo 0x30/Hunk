@@ -184,6 +184,20 @@ public final class Repository: @unchecked Sendable {
         try await git.run(["reset", "--\(mode.rawValue)", hash])
     }
 
+    /// 把指定提交摘取（cherry-pick）到当前分支：生成一个改动相同的新提交。
+    /// 冲突时暂停，冲突文件已写入工作区，交由「合并更改」UI 处理（解决后提交完成）。
+    public func cherryPick(commit hash: String) async throws {
+        try await git.run(["cherry-pick", hash], allowedExitCodes: [0, 1])
+    }
+
+    /// 当前分支(HEAD)可达的提交 hash 集合（限量）。历史右键据此区分提交在不在当前分支：
+    /// revert/reset 仅对当前分支的提交有意义，cherry-pick 仅对其他分支的提交有意义。
+    public func headReachableHashes(limit: Int = 2000) async throws -> Set<String> {
+        let result = try await git.run(["rev-list", "--max-count=\(limit)", "HEAD"], allowedExitCodes: [0, 128])
+        guard result.exitCode == 0 else { return [] }
+        return Set(result.stdout.split(separator: "\n").map(String.init))
+    }
+
     // MARK: - 分支
 
     public func branches() async throws -> [Branch] {
