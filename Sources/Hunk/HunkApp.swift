@@ -71,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum CLIOpenRouter {
     /// 冷启动暂存的路径
     private static var pendingPath: String?
+    /// 冷启动是否带了命令行路径——窗口初始化据此避让 restoreLast，避免「恢复上次仓库」抢掉 CLI 文件
+    static var hasPendingPath: Bool { pendingPath != nil }
     /// 等新窗口仓库打开后要定位的文件
     private static var pendingReveal: String?
 
@@ -80,7 +82,6 @@ enum CLIOpenRouter {
         // 解析符号链接（如 /tmp → /private/tmp），与 git 返回的仓库根对齐
         let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let directory = isDirectory.boolValue ? url : url.deletingLastPathComponent()
-        let file = isDirectory.boolValue ? nil : url.path
 
         let vms = RepoViewModel.instances.allObjects
         guard !vms.isEmpty else {
@@ -88,46 +89,43 @@ enum CLIOpenRouter {
             return
         }
 
-        // 1. 某个窗口已打开该仓库（目标在其根目录内）→ 聚焦并定位
-        // 仓库根也走同样的符号链接归一化（git 返回 /private/tmp，URL 解析出 /tmp）
+        // 仓库根也走符号链接归一化（git 返回 /private/tmp，URL 解析出 /tmp）
         func canonicalRoot(_ vm: RepoViewModel) -> String? {
             vm.repoRoot?.resolvingSymlinksInPath().path
         }
-        if let vm = vms.first(where: { vm in
-            guard let root = canonicalRoot(vm) else { return false }
-            return directory.path == root || directory.path.hasPrefix(root + "/")
-        }) {
+        func focus(_ vm: RepoViewModel) {
             vm.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            if let file, let root = canonicalRoot(vm), file.hasPrefix(root + "/") {
+        }
+
+        // 文件夹（VS Code 式）：已打开则聚焦，否则在新窗口打开
+        if isDirectory.boolValue {
+            if let vm = vms.first(where: { canonicalRoot($0) == directory.path }) {
+                focus(vm)
+            } else {
+                let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+                requester.openWindowRequest = directory.path
+            }
+            return
+        }
+
+        // 单文件①：落在某个已打开项目内 → 聚焦那个项目窗口并定位到该文件
+        let file = url.path
+        if let vm = vms.first(where: { vm in
+            guard let root = canonicalRoot(vm) else { return false }
+            return file.hasPrefix(root + "/")
+        }) {
+            focus(vm)
+            if let root = canonicalRoot(vm) {
                 vm.revealInFiles(String(file.dropFirst(root.count + 1)))
             }
             return
         }
 
-        // 文件不在任何 git 仓库 → 单文件查看（复用空白窗口，否则当前/首个窗口，不强开仓库）
-        if let file, !directoryInGitRepo(directory) {
-            let target = vms.first(where: { $0.repoRoot == nil })
-                ?? vms.first(where: { $0.window?.isKeyWindow == true })
-                ?? vms[0]
-            target.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            target.openStandaloneFile(URL(fileURLWithPath: file))
-            return
-        }
-
-        // 2. 有空白窗口（欢迎页）→ 就地打开
-        if let vm = vms.first(where: { $0.repoRoot == nil }) {
-            vm.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            vm.openFromCLI(path)
-            return
-        }
-
-        // 3. 都被占用 → 开新窗口（绝不替换现有窗口的仓库）
-        pendingReveal = file
-        let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
-        requester.openWindowRequest = directory.path
+        // 单文件②：不在任何打开的项目内 → 在当前窗口打开它
+        let target = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+        focus(target)
+        target.openStandaloneFile(url)
     }
 
     /// 同步判断目录是否在 git 仓库内（向上找 .git）；route 是同步的，不能 await discover。
