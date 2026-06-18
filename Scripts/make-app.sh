@@ -71,12 +71,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <array>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>Folder</string>
+            <string>Folder or File</string>
             <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>public.folder</string>
+                <string>public.content</string>
+                <string>public.text</string>
+                <string>public.data</string>
                 <string>public.item</string>
             </array>
         </dict>

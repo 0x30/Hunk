@@ -20,16 +20,13 @@ enum CLIInstaller {
         echo "hunk: 路径不存在: $TARGET" >&2
         exit 1
     fi
-    if /usr/bin/pgrep -xq Hunk; then
-        # 应用已在运行：走轻量通道直接送路径，
-        # 绕开系统打开事件（每次会触发 LaunchServices 整库拷贝，内存尖峰数百 MB）
-        CHANNEL_DIR="$HOME/Library/Application Support/Hunk"
-        /bin/mkdir -p "$CHANNEL_DIR"
-        printf '%s' "$TARGET" > "$CHANNEL_DIR/cli-open"
-        /usr/bin/notifyutil -p app.hunk.cli.open
-    else
-        exec /usr/bin/open -a "Hunk" "$TARGET"
-    fi
+    # 走轻量通道送路径，再普通激活/启动应用。open 不带文件参数：带文件会走系统 odoc
+    # 打开事件，冷启动时 SwiftUI 不建窗口、路径无处落地（且每次触发 LaunchServices
+    # 整库拷贝的内存尖峰）。应用在启动/激活时读取通道并路由（见 consumeChannelFile）。
+    CHANNEL_DIR="$HOME/Library/Application Support/Hunk"
+    /bin/mkdir -p "$CHANNEL_DIR"
+    printf '%s' "$TARGET" > "$CHANNEL_DIR/cli-open"
+    exec /usr/bin/open -a "Hunk"
     """
 
     /// 写临时文件后以管理员权限拷入 /usr/local/bin。

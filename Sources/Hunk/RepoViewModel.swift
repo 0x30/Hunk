@@ -562,10 +562,10 @@ final class RepoViewModel: ObservableObject {
         if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
             Task { await open(URL(fileURLWithPath: initialPath)) }
         } else if restoreLast,
-                  !MainActor.assumeIsolated({ CLIOpenRouter.hasPendingPath }),
+                  !CLIOpenRouter.hasChannelContent,
                   let last = defaults.string(forKey: "lastRepo"),
                   FileManager.default.fileExists(atPath: last) {
-            // 命令行带了路径时不恢复上次仓库，交给 .task 的 openFromCLI 处理，避免竞态
+            // 命令行带了路径时不恢复上次仓库，交给路由处理，避免竞态盖掉 CLI 文件
             Task { await open(URL(fileURLWithPath: last)) }
         }
     }

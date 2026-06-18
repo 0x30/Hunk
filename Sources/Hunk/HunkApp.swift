@@ -50,6 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { RecentMenuController.shared.install() }
             }
         }
+        // hunk 命令行走通道送路径 + 普通激活（open 不带文件）；应用激活时读取通道并路由，
+        // 绕开 odoc 冷启动不建窗口的问题。
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { CLIOpenRouter.consumeChannelFile() }
+        }
     }
 
     /// `hunk` 命令行 / 访达「打开方式」送来的路径
@@ -71,8 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum CLIOpenRouter {
     /// 冷启动暂存的路径
     private static var pendingPath: String?
-    /// 冷启动是否带了命令行路径——窗口初始化据此避让 restoreLast，避免「恢复上次仓库」抢掉 CLI 文件
-    static var hasPendingPath: Bool { pendingPath != nil }
+    /// 冷启动是否带了命令行路径——窗口初始化(非 MainActor 隔离的 @StateObject init)据此避让
+    /// restoreLast，避免「恢复上次仓库」抢掉 CLI 文件。必须用 nonisolated 标志，
+    /// 不能在 init 里跨 actor 读 @MainActor 状态（assumeIsolated 会崩溃）。
+    nonisolated static var hasChannelContent: Bool {
+        ((try? String(contentsOf: channelFile, encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
     /// 等新窗口仓库打开后要定位的文件
     private static var pendingReveal: String?
 
@@ -86,6 +98,7 @@ enum CLIOpenRouter {
         let vms = RepoViewModel.instances.allObjects
         guard !vms.isEmpty else {
             pendingPath = path
+            scheduleColdStartRetry(attempt: 0)
             return
         }
 
@@ -128,16 +141,19 @@ enum CLIOpenRouter {
         target.openStandaloneFile(url)
     }
 
-    /// 同步判断目录是否在 git 仓库内（向上找 .git）；route 是同步的，不能 await discover。
-    private static func directoryInGitRepo(_ dir: URL) -> Bool {
-        var d = dir
-        while d.path != "/", !d.path.isEmpty {
-            if FileManager.default.fileExists(atPath: d.appendingPathComponent(".git").path) { return true }
-            let parent = d.deletingLastPathComponent()
-            if parent.path == d.path { break }
-            d = parent
+    /// 冷启动：odoc 打开事件常早于 SwiftUI 窗口建立，pendingPath 暂存后窗口侧 .task 取不到。
+    /// 轮询等窗口就绪（每 0.25s，最多 ~3s），就绪后重走路由消费暂存的路径。
+    private static func scheduleColdStartRetry(attempt: Int) {
+        guard attempt < 12, pendingPath != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard let p = pendingPath else { return }  // 已被窗口的 .task 消费
+            if !RepoViewModel.instances.allObjects.isEmpty {
+                _ = takePending()
+                route(p)
+            } else {
+                scheduleColdStartRetry(attempt: attempt + 1)
+            }
         }
-        return false
     }
 
     static func takePending() -> String? {
