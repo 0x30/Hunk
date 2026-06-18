@@ -1445,6 +1445,57 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    // MARK: 目录级批量操作（文件树父节点）
+
+    /// 某目录下属于指定区域的变更文件路径。
+    private func changePaths(under dir: String, area: ChangeArea) -> [String] {
+        let prefix = dir.isEmpty ? "" : dir + "/"
+        let list: [FileChange]
+        switch area {
+        case .staged: list = stagedChanges
+        case .unstaged: list = unstagedChanges
+        case .conflicted: list = conflictedChanges
+        }
+        return list.filter { dir.isEmpty || $0.path.hasPrefix(prefix) }.map(\.path)
+    }
+
+    /// 暂存某目录下的全部更改。
+    func stageDirectory(_ dir: String) {
+        let paths = changePaths(under: dir, area: .unstaged)
+        guard !paths.isEmpty else { return }
+        perform { try await self.repo?.stage(paths: paths) }
+    }
+
+    /// 取消暂存某目录下的全部更改。
+    func unstageDirectory(_ dir: String) {
+        let paths = changePaths(under: dir, area: .staged)
+        guard !paths.isEmpty else { return }
+        perform { try await self.repo?.unstage(paths: paths) }
+    }
+
+    /// 待确认丢弃的目录（非 nil 时弹确认框）。
+    @Published var pendingDiscardDir: String?
+
+    func requestDiscardDirectory(_ dir: String) {
+        pendingDiscardDir = dir
+    }
+
+    /// 丢弃某目录下的全部更改：已跟踪的恢复工作区，未跟踪的删除。
+    func confirmDiscardDirectory() {
+        guard let dir = pendingDiscardDir else { return }
+        pendingDiscardDir = nil
+        let prefix = dir.isEmpty ? "" : dir + "/"
+        let targets = unstagedChanges.filter { dir.isEmpty || $0.path.hasPrefix(prefix) }
+        perform { [self] in
+            guard let repo = self.repo else { return }
+            let tracked = targets.filter { $0.unstaged != .untracked }.map(\.path)
+            if !tracked.isEmpty { try await repo.discardWorktree(paths: tracked) }
+            for c in targets where c.unstaged == .untracked {
+                try repo.deleteUntracked(path: c.path)
+            }
+        }
+    }
+
     // MARK: - 行级暂存
 
     func toggleLine(_ id: Int) {

@@ -154,6 +154,22 @@ struct ChangesListView: View {
         } message: {
             Text(tr("此操作不可撤销。", "This action cannot be undone."))
         }
+        .confirmationDialog(
+            tr("丢弃目录「\(vm.pendingDiscardDir.map { ($0 as NSString).lastPathComponent } ?? "")」的全部更改？",
+               "Discard all changes in “\(vm.pendingDiscardDir.map { ($0 as NSString).lastPathComponent } ?? "")”?"),
+            isPresented: Binding(
+                get: { vm.pendingDiscardDir != nil },
+                set: { if !$0 { vm.pendingDiscardDir = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("丢弃全部", "Discard All"), role: .destructive) {
+                vm.confirmDiscardDirectory()
+            }
+        } message: {
+            Text(tr("该目录下所有未暂存的更改将被丢弃，此操作不可撤销。",
+                    "All unstaged changes in this folder will be discarded. This cannot be undone."))
+        }
     }
 
     private var discardTitle: String {
@@ -190,7 +206,11 @@ struct ChangesListView: View {
                 : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedInArea)
             ForEach(rows) { item in
                 if item.node.isDirectory {
-                    directoryRow(item, area: area)
+                    let dirKey = "\(area)|\(item.node.path)"
+                    DirectoryRow(item: item, area: area, collapsed: collapsedDirs.contains(dirKey)) {
+                        if collapsedDirs.contains(dirKey) { collapsedDirs.remove(dirKey) }
+                        else { collapsedDirs.insert(dirKey) }
+                    }
                 } else if let change = lookup[item.node.path] {
                     ChangeRow(change: change, area: area, showDirectory: false)
                         .padding(.leading, CGFloat(item.depth) * 14)
@@ -198,37 +218,6 @@ struct ChangesListView: View {
                 }
             }
         }
-    }
-
-    /// 目录行：点击折叠/展开该分区下的整个子树。
-    /// 注意：在带 selection 的 List 里 onTapGesture 会被选中机制吞掉，必须用 .borderless 按钮。
-    private func directoryRow(_ item: FlatTreeRow, area: ChangeArea) -> some View {
-        let key = "\(area)|\(item.node.path)"
-        let collapsed = collapsedDirs.contains(key)
-        return Button {
-            if collapsed {
-                collapsedDirs.remove(key)
-            } else {
-                collapsedDirs.insert(key)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(collapsed ? .zero : .degrees(90))
-                FileIconView(fileName: item.node.name, isDirectory: true, expanded: !collapsed)
-                Text(item.displayName)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.vertical, 1)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .padding(.leading, CGFloat(item.depth) * 14)
     }
 
     private func isCollapsed(_ key: String) -> Bool {
@@ -287,6 +276,71 @@ struct ChangesListView: View {
         }
         .padding(.vertical, 1)
         .padding(.trailing, 8)  // 操作按钮与侧边栏右缘留距
+    }
+}
+
+/// 目录行：点击折叠/展开该分区子树；悬停时对整个目录批量操作。
+/// 在带 selection 的 List 里必须用 .borderless 按钮，onTapGesture 会被选中机制吞掉。
+private struct DirectoryRow: View {
+    @EnvironmentObject var vm: RepoViewModel
+    let item: FlatTreeRow
+    let area: ChangeArea
+    let collapsed: Bool
+    let onToggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: onToggle) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(collapsed ? .zero : .degrees(90))
+                    FileIconView(fileName: item.node.name, isDirectory: true, expanded: !collapsed)
+                    Text(item.displayName)
+                        .font(.callout)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            Spacer(minLength: 4)
+            if hovering { hoverActions }
+        }
+        .padding(.vertical, 1)
+        .padding(.leading, CGFloat(item.depth) * 14)
+        .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder
+    private var hoverActions: some View {
+        HStack(spacing: 4) {
+            switch area {
+            case .unstaged:
+                Button { vm.requestDiscardDirectory(item.node.path) } label: {
+                    Image(systemName: "arrow.uturn.backward").contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help(tr("丢弃此目录的全部更改", "Discard all changes in folder"))
+                Button { vm.stageDirectory(item.node.path) } label: {
+                    Image(systemName: "plus").contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help(tr("暂存此目录", "Stage folder"))
+            case .staged:
+                Button { vm.unstageDirectory(item.node.path) } label: {
+                    Image(systemName: "minus").contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help(tr("取消暂存此目录", "Unstage folder"))
+            case .conflicted:
+                EmptyView()
+            }
+        }
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 4)
     }
 }
 
