@@ -1529,6 +1529,20 @@ final class RepoViewModel: ObservableObject {
         perform { try await self.repo?.commit(message: msg, amend: true) }
     }
 
+    /// 待确认还原(revert)的提交
+    @Published var commitToRevert: Repository.Commit?
+
+    func promptRevertCommit(_ commit: Repository.Commit) {
+        commitToRevert = commit
+    }
+
+    /// 还原该提交：生成反向提交;冲突文件进「合并更改」区，解决后提交完成 revert。
+    func confirmRevertCommit() {
+        guard let commit = commitToRevert else { return }
+        commitToRevert = nil
+        perform { try await self.repo?.revert(commit: commit.hash) }
+    }
+
     // MARK: - 贮藏
 
     func stashAll() {

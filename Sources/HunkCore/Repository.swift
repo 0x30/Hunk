@@ -170,6 +170,12 @@ public final class Repository: @unchecked Sendable {
         return result.stdout.trimmingCharacters(in: .newlines)
     }
 
+    /// 还原（revert）一个提交：生成一个抵消其改动的新提交（不重写历史，已推送也安全）。
+    /// 冲突时以非零退出，冲突文件已写入工作区，交由「合并更改」UI 处理（解决后提交即完成 revert）。
+    public func revert(commit hash: String) async throws {
+        try await git.run(["revert", "--no-edit", hash], allowedExitCodes: [0, 1])
+    }
+
     // MARK: - 分支
 
     public func branches() async throws -> [Branch] {

@@ -292,6 +292,26 @@ struct MainSplitView: View {
             RewordCommitSheet()
                 .environmentObject(vm)
         }
+        // 还原提交的确认框
+        .confirmationDialog(
+            tr("还原提交「\(vm.commitToRevert?.subject ?? "")」？",
+               "Revert commit “\(vm.commitToRevert?.subject ?? "")”?"),
+            isPresented: Binding(
+                get: { vm.commitToRevert != nil },
+                set: { if !$0 { vm.commitToRevert = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("还原", "Revert")) {
+                vm.confirmRevertCommit()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.commitToRevert = nil
+            }
+        } message: {
+            Text(tr("将生成一个新提交来抵消该提交的改动；若有冲突会进入「合并更改」待解决。",
+                    "Creates a new commit that undoes this commit’s changes; conflicts appear in Merge Changes."))
+        }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())

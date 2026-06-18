@@ -299,6 +299,11 @@ private struct HistoryRow: View {
                     vm.openHistoryDetail(.compare(base: commit.hash, target: upstream))
                 }
             }
+            // 还原：对任意提交生成反向提交（不重写历史，已推送也安全）
+            Divider()
+            Button(tr("还原此提交…", "Revert This Commit…")) {
+                vm.promptRevertCommit(legacyCommit)
+            }
             // 仅最新提交（HEAD）可撤销 / 改消息
             if commit.refs.contains(where: { $0.contains("HEAD") }) {
                 Divider()
