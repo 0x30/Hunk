@@ -304,6 +304,9 @@ private struct HistoryRow: View {
             Button(tr("还原此提交…", "Revert This Commit…")) {
                 vm.promptRevertCommit(legacyCommit)
             }
+            Button(tr("重置到此提交…", "Reset to This Commit…")) {
+                vm.promptResetToCommit(legacyCommit)
+            }
             // 仅最新提交（HEAD）可撤销 / 改消息
             if commit.refs.contains(where: { $0.contains("HEAD") }) {
                 Divider()

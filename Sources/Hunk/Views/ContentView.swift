@@ -312,6 +312,32 @@ struct MainSplitView: View {
             Text(tr("将生成一个新提交来抵消该提交的改动；若有冲突会进入「合并更改」待解决。",
                     "Creates a new commit that undoes this commit’s changes; conflicts appear in Merge Changes."))
         }
+        // 重置到提交的确认框（三种模式）
+        .confirmationDialog(
+            tr("重置到「\(vm.commitToReset?.subject ?? "")」？",
+               "Reset to “\(vm.commitToReset?.subject ?? "")”?"),
+            isPresented: Binding(
+                get: { vm.commitToReset != nil },
+                set: { if !$0 { vm.commitToReset = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("软重置（改动留在暂存区）", "Soft (keep changes staged)")) {
+                vm.resetToCommit(.soft)
+            }
+            Button(tr("混合重置（改动留在工作区）", "Mixed (keep changes unstaged)")) {
+                vm.resetToCommit(.mixed)
+            }
+            Button(tr("硬重置（丢弃所有改动）", "Hard (discard all changes)"), role: .destructive) {
+                vm.resetToCommit(.hard)
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.commitToReset = nil
+            }
+        } message: {
+            Text(tr("HEAD 将移到该提交。软/混合会保留其后的改动，硬重置会永久丢弃工作区与暂存区的改动。",
+                    "HEAD moves to this commit. Soft/Mixed keep later changes; Hard permanently discards working tree and index."))
+        }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
         .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
         .modifier(HideToolbarTitle())

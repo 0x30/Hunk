@@ -176,6 +176,14 @@ public final class Repository: @unchecked Sendable {
         try await git.run(["revert", "--no-edit", hash], allowedExitCodes: [0, 1])
     }
 
+    /// reset 模式：soft 改动留暂存区，mixed 改动留工作区(默认)，hard 丢弃所有改动。
+    public enum ResetMode: String, Sendable { case soft, mixed, hard }
+
+    /// 把当前分支 HEAD 重置到指定提交。hard 为危险操作（丢弃工作区与暂存区），调用方需确认。
+    public func reset(to hash: String, mode: ResetMode) async throws {
+        try await git.run(["reset", "--\(mode.rawValue)", hash])
+    }
+
     // MARK: - 分支
 
     public func branches() async throws -> [Branch] {

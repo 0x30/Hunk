@@ -1543,6 +1543,19 @@ final class RepoViewModel: ObservableObject {
         perform { try await self.repo?.revert(commit: commit.hash) }
     }
 
+    /// 待选择模式并重置到的目标提交
+    @Published var commitToReset: Repository.Commit?
+
+    func promptResetToCommit(_ commit: Repository.Commit) {
+        commitToReset = commit
+    }
+
+    func resetToCommit(_ mode: Repository.ResetMode) {
+        guard let commit = commitToReset else { return }
+        commitToReset = nil
+        perform { try await self.repo?.reset(to: commit.hash, mode: mode) }
+    }
+
     // MARK: - 贮藏
 
     func stashAll() {
