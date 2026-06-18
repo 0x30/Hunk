@@ -156,7 +156,7 @@ struct TerminalPanel: View {
                 TerminalHostView(
                     session: session,
                     root: vm.repoRoot,
-                    font: settings.editorNSFont
+                    font: settings.terminalNSFont
                 )
                 .id(session.id)  // 切换会话时重挂对应的终端视图
                 // 留点内边距,别让文字贴着窗口边/分隔线。padding 区域露出的是

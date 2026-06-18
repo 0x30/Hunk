@@ -173,6 +173,13 @@ final class SettingsStore: ObservableObject {
             ?? .monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
     }
 
+    /// 终端字体：编辑器字体若不是等宽，退回系统等宽字体——
+    /// 终端按等宽单元格布局，非等宽字体会让字符串位、看着字间距很宽。
+    var terminalNSFont: NSFont {
+        let f = editorNSFont
+        return f.isFixedPitch ? f : .monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
+    }
+
     var editorFont: Font {
         Font(editorNSFont)
     }
