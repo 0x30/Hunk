@@ -197,6 +197,7 @@ private struct EditorSettings: View {
     @State private var monoFamilies: [String] = []
     @State private var allFamilies: [String] = []
     @State private var showRestoreConfirm = false
+    @State private var newHiddenName = ""
 
     /// 字号输入框:不限制范围,手动输入(SwiftUI 默认仍会拦非法字符)
     private var sizeText: Binding<String> {
@@ -307,6 +308,38 @@ private struct EditorSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section(tr("隐藏文件", "Hidden Files")) {
+                ForEach(settings.hiddenFileNames.sorted(), id: \.self) { name in
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Text(name)
+                        Spacer()
+                        Button {
+                            settings.hiddenFileNames.remove(name)
+                        } label: {
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(tr("移除", "Remove"))
+                    }
+                }
+
+                HStack {
+                    TextField(tr("添加名称，如 .DS_Store", "Add a name, e.g. .DS_Store"), text: $newHiddenName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addHiddenName() }
+                    Button(tr("添加", "Add")) { addHiddenName() }
+                        .disabled(newHiddenName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                Text(tr("文件树中不显示这些名字的文件/文件夹（匹配任意层级）。不影响「源代码管理」更改列表。",
+                        "Files/folders with these names are hidden from the file tree (matched at any level). The Source Control changes list is unaffected."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section(tr("预览", "Preview")) {
                 Text("func greet(name: String) -> String {\n    // 简单的示例 sample\n    let parts = [\"Hello\", name]\n    return parts.joined(separator: \", \") + \" 你好\"\n}")
                     .font(Font(settings.editorNSFont))
@@ -334,8 +367,8 @@ private struct EditorSettings: View {
                         settings.restoreDefaults()
                     }
                 } message: {
-                    Text(tr("字体、字号、行高、差异视图、文件列表风格将恢复为推荐值（不影响语言、主题、图标）。",
-                            "Font, size, line height, diff view and file list style return to recommended values (language, theme and icons are untouched)."))
+                    Text(tr("字体、字号、行高、差异视图、文件列表风格、隐藏文件名单将恢复为推荐值（不影响语言、主题、图标）。",
+                            "Font, size, line height, diff view, file list style and hidden-file list return to recommended values (language, theme and icons are untouched)."))
                 }
             }
         }
@@ -344,6 +377,13 @@ private struct EditorSettings: View {
             if monoFamilies.isEmpty { monoFamilies = SettingsStore.monospacedFontFamilies }
             if allFamilies.isEmpty { allFamilies = SettingsStore.allFontFamilies }
         }
+    }
+
+    private func addHiddenName() {
+        let name = newHiddenName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        settings.hiddenFileNames.insert(name)
+        newHiddenName = ""
     }
 }
 

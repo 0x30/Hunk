@@ -73,9 +73,8 @@ final class FileTreeTests: XCTestCase {
     func testIgnoredEntriesAreMarkedAndDirectoriesCollapse() {
         let nodes = FileTreeBuilder.build(
             paths: ["src/a.swift", "README.md"],
-            ignored: [".DS_Store", ".build/", "src/debug.log"]
+            ignored: [".build/", "src/debug.log"]
         )
-        // 顶层：目录在前(.build、src)，再文件(.DS_Store、README.md)
         let top = Dictionary(uniqueKeysWithValues: nodes.map { ($0.name, $0) })
 
         // .build 被折叠成一个目录节点、标记忽略、无子项
@@ -83,10 +82,6 @@ final class FileTreeTests: XCTestCase {
         XCTAssertTrue(build.isDirectory)
         XCTAssertTrue(build.isIgnored)
         XCTAssertEqual(build.children?.count ?? 0, 0)
-
-        // 根级被忽略文件
-        XCTAssertEqual(top[".DS_Store"]?.isIgnored, true)
-        XCTAssertEqual(top[".DS_Store"]?.isDirectory, false)
 
         // 跟踪文件不受影响
         XCTAssertEqual(top["README.md"]?.isIgnored, false)
@@ -97,5 +92,40 @@ final class FileTreeTests: XCTestCase {
         let srcChildren = Dictionary(uniqueKeysWithValues: (src.children ?? []).map { ($0.name, $0) })
         XCTAssertEqual(srcChildren["debug.log"]?.isIgnored, true)
         XCTAssertEqual(srcChildren["a.swift"]?.isIgnored, false)
+    }
+
+    /// 隐藏名单(.DS_Store 等)任一层命中都不进树，无论跟踪与否。
+    func testHiddenNamesNeverAppear() {
+        let nodes = FileTreeBuilder.build(
+            paths: [".DS_Store", "Thumbs.db", "docs/.DS_Store", "docs/guide.md", "keep.txt"],
+            ignored: ["sub/.DS_Store"],
+            hidden: FileTreeBuilder.defaultHiddenNames
+        )
+        let top = Dictionary(uniqueKeysWithValues: nodes.map { ($0.name, $0) })
+        XCTAssertNil(top[".DS_Store"])
+        XCTAssertNil(top["Thumbs.db"])
+        XCTAssertNotNil(top["keep.txt"])
+        // docs 只剩 guide.md(.DS_Store 被滤掉);sub 整个空了不应出现
+        let docs = try! XCTUnwrap(top["docs"])
+        XCTAssertEqual((docs.children ?? []).map(\.name), ["guide.md"])
+        XCTAssertNil(top["sub"])
+    }
+
+    /// 忽略目录懒加载进来的内部条目：父目录忽略 → 子项一律继承忽略(淡色)。
+    func testIgnoredDirectoryContentsInheritIgnored() {
+        // 模拟 .build/ 折叠 + 展开后枚举到的内部条目
+        let nodes = FileTreeBuilder.build(
+            paths: ["main.swift"],
+            ignored: [".build/", ".build/sub/", ".build/sub/x.o", ".build/y.json"]
+        )
+        let top = Dictionary(uniqueKeysWithValues: nodes.map { ($0.name, $0) })
+        let build = try! XCTUnwrap(top[".build"])
+        XCTAssertTrue(build.isIgnored)
+        let buildChildren = Dictionary(uniqueKeysWithValues: (build.children ?? []).map { ($0.name, $0) })
+        let sub = try! XCTUnwrap(buildChildren["sub"])
+        XCTAssertTrue(sub.isDirectory)
+        XCTAssertTrue(sub.isIgnored)                                   // 继承
+        XCTAssertEqual(buildChildren["y.json"]?.isIgnored, true)      // 继承
+        XCTAssertEqual((sub.children ?? []).first?.isIgnored, true)   // x.o 继承
     }
 }

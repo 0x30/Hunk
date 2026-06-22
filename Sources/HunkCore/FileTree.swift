@@ -37,6 +37,12 @@ public struct FlatTreeRow: Identifiable {
 }
 
 public enum FileTreeBuilder {
+    /// 默认隐藏的文件/目录名（对齐 VS Code `files.exclude` 默认值）：
+    /// 无论是否被 git 跟踪都完全不在文件树展示。
+    public static let defaultHiddenNames: Set<String> = [
+        ".DS_Store", "Thumbs.db", ".git", ".svn", ".hg", "CVS",
+    ]
+
     /// 拍平为行列表（默认全展开）。
     /// 只把「单子目录链」合并成一行：某目录恰好只有一个子项且它是目录时，名字
     /// 并入下一层继续合并（/a/b/c/d/f.json → 目录行 "a/b/c/d"）。一旦目录出现
@@ -97,11 +103,14 @@ public enum FileTreeBuilder {
     /// `ignored` 为被 .gitignore 忽略的条目（`git ls-files --directory` 风格：
     /// 整个被忽略的目录折叠成一条、以 `/` 结尾，避免展开 .build 之类成千上万的文件）。
     /// 这些条目照常进树、但节点 `isIgnored = true`，供视图以低透明度展示。
-    public static func build(paths: [String], ignored ignoredEntries: [String] = []) -> [FileNode] {
+    /// `hidden` 为「任一层路径命中就整条丢弃、完全不进树」的名字（如 .DS_Store）；
+    /// 默认空集——仅文件树视图按用户设置传入，更改列表/历史不受影响。
+    public static func build(paths: [String], ignored ignoredEntries: [String] = [], hidden: Set<String> = []) -> [FileNode] {
         final class Builder {
             var files: Set<String> = []
             var dirs: [String: Set<String>] = [:]  // 目录路径 -> 子项名集合
             var ignoredPaths: Set<String> = []     // 被忽略条目的规范化路径（无尾斜杠）
+            var hidden: Set<String> = []           // 默认隐藏名(任一层命中即丢弃)
 
             /// `forceDir` 用于「以 `/` 结尾的忽略目录」——即便它没有列出任何子项，也当目录建节点。
             func insert(_ rawPath: String, ignored: Bool) {
@@ -109,6 +118,8 @@ public enum FileTreeBuilder {
                 let path = forceDir ? String(rawPath.dropLast()) : rawPath
                 let components = path.split(separator: "/").map(String.init)
                 guard !components.isEmpty else { return }
+                // 隐藏项（.DS_Store 等）：任一层命中就整条丢弃，不进树
+                if !hidden.isEmpty, components.contains(where: { hidden.contains($0) }) { return }
                 if ignored { ignoredPaths.insert(path) }
                 var parent = ""
                 for (index, name) in components.enumerated() {
@@ -129,14 +140,15 @@ public enum FileTreeBuilder {
                 }
             }
 
-            func nodes(in dir: String) -> [FileNode] {
+            // `inheritedIgnored`：父目录被忽略时,子项一律继承忽略(整目录展开后内部也淡色)。
+            func nodes(in dir: String, inheritedIgnored: Bool) -> [FileNode] {
                 let names = dirs[dir] ?? []
                 var result: [FileNode] = []
                 for name in names {
                     let full = dir.isEmpty ? name : dir + "/" + name
-                    let ignored = ignoredPaths.contains(full)
+                    let ignored = inheritedIgnored || ignoredPaths.contains(full)
                     if dirs[full] != nil, !files.contains(full) {
-                        result.append(FileNode(path: full, name: name, isDirectory: true, isIgnored: ignored, children: nodes(in: full)))
+                        result.append(FileNode(path: full, name: name, isDirectory: true, isIgnored: ignored, children: nodes(in: full, inheritedIgnored: ignored)))
                     } else {
                         result.append(FileNode(path: full, name: name, isDirectory: false, isIgnored: ignored))
                     }
@@ -149,8 +161,9 @@ public enum FileTreeBuilder {
         }
 
         let builder = Builder()
+        builder.hidden = hidden
         for path in paths { builder.insert(path, ignored: false) }
         for entry in ignoredEntries { builder.insert(entry, ignored: true) }
-        return builder.nodes(in: "")
+        return builder.nodes(in: "", inheritedIgnored: false)
     }
 }

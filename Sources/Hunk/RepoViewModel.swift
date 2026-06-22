@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import HunkCore
 
 enum ChangeArea: Hashable { case staged, unstaged, conflicted }
@@ -74,6 +75,10 @@ final class RepoViewModel: ObservableObject {
     @Published var workspaceTree: [FileNode] = []
     /// 被忽略条目缓存（仅用于变更检测，避免每次刷新重建整树）
     private var workspaceIgnored: [String] = []
+    /// 已展开并加载过内容的「被忽略目录」(相对路径)，避免重复枚举
+    private var loadedIgnoredDirs: Set<String> = []
+    /// 懒加载得到的忽略目录内部条目(目录以 `/` 结尾)，与 workspaceIgnored 合并建树
+    private var ignoredDirContents: [String] = []
 
     // MARK: 界面状态
 
@@ -561,10 +566,19 @@ final class RepoViewModel: ObservableObject {
     @Published var openWindowRequest: String?
 
     /// `restoreLast` 为 false 时不恢复上次仓库（⌘⇧N 的空白欢迎窗口）。
+    private var cancellables: Set<AnyCancellable> = []
+
     init(initialPath: String? = nil, restoreLast: Bool = true) {
         let savedHeight = UserDefaults.standard.double(forKey: "terminalHeight")
         terminalHeight = savedHeight > 0 ? CGFloat(savedHeight) : 240
         RepoViewModel.instances.add(self)
+        // 隐藏名单设置变化时实时重建文件树(延一帧确保 @Published 值已落定)
+        SettingsStore.shared.$hiddenFileNames
+            .dropFirst()
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.rebuildWorkspaceTree() }
+            }
+            .store(in: &cancellables)
         if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
             Task { await open(URL(fileURLWithPath: initialPath)) }
         } else if restoreLast,
@@ -674,6 +688,8 @@ final class RepoViewModel: ObservableObject {
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
         fileTreeDidInitialExpand = false
+        loadedIgnoredDirs = []
+        ignoredDirContents = []
         await refresh()
     }
 
@@ -809,7 +825,7 @@ final class RepoViewModel: ObservableObject {
             if newFiles != self.workspaceFiles || newIgnored != self.workspaceIgnored {
                 self.workspaceFiles = newFiles
                 self.workspaceIgnored = newIgnored
-                self.workspaceTree = FileTreeBuilder.build(paths: newFiles, ignored: newIgnored)
+                self.rebuildWorkspaceTree()
                 Diagnostics.log("工作区树重建 文件=\(newFiles.count) 忽略=\(newIgnored.count) 顶层节点=\(self.workspaceTree.count)")
             }
             // 保持已加载的分页量（用户触底加载到多少，刷新后维持多少）
@@ -861,7 +877,7 @@ final class RepoViewModel: ObservableObject {
         if files != workspaceFiles || !workspaceIgnored.isEmpty {
             workspaceFiles = files
             workspaceIgnored = []   // 非 git 根无忽略概念
-            workspaceTree = FileTreeBuilder.build(paths: files)
+            rebuildWorkspaceTree()
             Diagnostics.log("非 git 文件树 文件=\(files.count) 顶层=\(workspaceTree.count)")
         }
     }
@@ -890,6 +906,43 @@ final class RepoViewModel: ObservableObject {
             if url.path.count > prefixLen {
                 result.append(String(url.path.dropFirst(prefixLen)))
             }
+        }
+        return result
+    }
+
+    /// 用当前缓存(跟踪文件 + 忽略折叠项 + 已懒加载的忽略目录内容)重建文件树。
+    /// 隐藏名单按用户设置过滤(仅作用于文件树视图)。
+    private func rebuildWorkspaceTree() {
+        workspaceTree = FileTreeBuilder.build(
+            paths: workspaceFiles,
+            ignored: workspaceIgnored + ignoredDirContents,
+            hidden: SettingsStore.shared.hiddenFileNames
+        )
+    }
+
+    /// 展开某个被忽略的目录时,懒加载其直接子项(只一层),让用户可逐级浏览内部内容。
+    /// 因为 build 用了「父忽略则子继承忽略」,加载进来的条目会自动以淡色展示。
+    func loadIgnoredDirIfNeeded(_ relPath: String) {
+        guard let root = repoRoot, !loadedIgnoredDirs.contains(relPath) else { return }
+        loadedIgnoredDirs.insert(relPath)
+        let children = RepoViewModel.listDirectChildren(root: root, relDir: relPath)
+        guard !children.isEmpty else { return }
+        ignoredDirContents.append(contentsOf: children)
+        rebuildWorkspaceTree()
+    }
+
+    /// 列某相对目录的直接子项(目录以 `/` 结尾)。供忽略目录懒加载浏览。
+    nonisolated static func listDirectChildren(root: URL, relDir: String) -> [String] {
+        let dirURL = root.appendingPathComponent(relDir)
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: dirURL, includingPropertiesForKeys: [.isDirectoryKey], options: []
+        ) else { return [] }
+        var result: [String] = []
+        for url in entries {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let rel = relDir + "/" + url.lastPathComponent
+            result.append(isDir ? rel + "/" : rel)
         }
         return result
     }
@@ -1123,6 +1176,8 @@ final class RepoViewModel: ObservableObject {
         sidebarVisible = false                       // 单文件无文件树，收起侧边栏只看文件
         workspaceFiles = []
         workspaceIgnored = []
+        loadedIgnoredDirs = []
+        ignoredDirContents = []
         workspaceTree = []
         changes = []
         diff = nil

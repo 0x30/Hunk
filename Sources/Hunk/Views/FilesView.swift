@@ -124,7 +124,8 @@ struct FilesView: View {
     private func initialExpandIfNeeded() {
         guard !vm.fileTreeDidInitialExpand, !vm.workspaceTree.isEmpty else { return }
         vm.fileTreeDidInitialExpand = true
-        vm.fileTreeExpanded.formUnion(vm.workspaceTree.filter(\.isDirectory).map(\.path))
+        // 被忽略的目录不参与首层自动展开,保持折叠(内容点开才懒加载)
+        vm.fileTreeExpanded.formUnion(vm.workspaceTree.filter { $0.isDirectory && !$0.isIgnored }.map(\.path))
     }
 
     private func toggle(_ node: FileNode) {
@@ -133,6 +134,7 @@ struct FilesView: View {
             vm.fileTreeExpanded.remove(node.path)
         } else {
             vm.fileTreeExpanded.insert(node.path)
+            if node.isIgnored { vm.loadIgnoredDirIfNeeded(node.path) }  // 忽略目录:点开懒加载内部内容
         }
     }
 
@@ -160,6 +162,7 @@ struct FilesView: View {
         guard let row = selectedRow, row.node.isDirectory else { return .ignored }
         if !vm.fileTreeExpanded.contains(row.node.path) {
             vm.fileTreeExpanded.insert(row.node.path)
+            if row.node.isIgnored { vm.loadIgnoredDirIfNeeded(row.node.path) }  // 忽略目录:展开懒加载
         } else if let firstChild = row.node.children?.first {
             localSelection = firstChild.path
         }

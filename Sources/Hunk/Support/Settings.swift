@@ -131,6 +131,12 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(Array(collapsedChangeSections), forKey: "collapsedChangeSections") }
     }
 
+    /// 文件树中默认隐藏的文件/目录名（任一层级命中即不展示，对齐 VS Code files.exclude）。
+    /// 用户可在设置里增删；仅作用于文件树视图，不影响更改列表/历史。
+    @Published var hiddenFileNames: Set<String> {
+        didSet { defaults.set(Array(hiddenFileNames), forKey: "hiddenFileNames") }
+    }
+
     private init() {
         let saved = AppLanguage(rawValue: defaults.string(forKey: "appLanguage") ?? "") ?? .system
         language = saved
@@ -149,6 +155,12 @@ final class SettingsStore: ObservableObject {
         editorLineHeight = lineHeight > 0 ? lineHeight : 1.3
         showAllFonts = defaults.bool(forKey: "showAllFonts")
         collapsedChangeSections = Set(defaults.stringArray(forKey: "collapsedChangeSections") ?? [])
+        // 缺省键(从未设置过)用内置默认;已设置过则尊重用户值(含「清空 = 不隐藏」)
+        if let saved = defaults.stringArray(forKey: "hiddenFileNames") {
+            hiddenFileNames = Set(saved)
+        } else {
+            hiddenFileNames = FileTreeBuilder.defaultHiddenNames
+        }
     }
 
     /// 恢复编辑器 / 视图相关设置为默认（不动语言、主题、图标——那些是有意的选择）。
@@ -161,6 +173,7 @@ final class SettingsStore: ObservableObject {
         showAllFonts = false
         fileTreeStyle = .mergedTree
         splitDiff = true
+        hiddenFileNames = FileTreeBuilder.defaultHiddenNames
     }
 
     var resolvedLanguage: ResolvedLanguage {
