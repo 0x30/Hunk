@@ -83,6 +83,16 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(editorFontSize, forKey: "editorFontSize") }
     }
 
+    /// 终端字体——独立于编辑器（终端按等宽单元格布局，且常想用比代码更紧凑的字号）。
+    /// 早先终端跟随编辑器字体，调编辑器会连带改终端，体验割裂；故拆开。
+    @Published var terminalFontName: String {
+        didSet { defaults.set(terminalFontName, forKey: "terminalFontName") }
+    }
+
+    @Published var terminalFontSize: Double {
+        didSet { defaults.set(terminalFontSize, forKey: "terminalFontSize") }
+    }
+
     /// 颜色主题 id："system" 表示内置（跟随系统明暗），其余为已下载的 VS Code 主题
     @Published var themeID: String {
         didSet { defaults.set(themeID, forKey: "themeID") }
@@ -128,6 +138,9 @@ final class SettingsStore: ObservableObject {
         editorFontName = defaults.string(forKey: "editorFontName") ?? "SF Mono"
         let size = defaults.double(forKey: "editorFontSize")
         editorFontSize = size > 0 ? size : 13
+        terminalFontName = defaults.string(forKey: "terminalFontName") ?? "SF Mono"
+        let tSize = defaults.double(forKey: "terminalFontSize")
+        terminalFontSize = tSize > 0 ? tSize : 13
         themeID = defaults.string(forKey: "themeID") ?? "system"
         iconThemeID = defaults.string(forKey: "iconThemeID") ?? ""
         splitDiff = defaults.object(forKey: "splitDiff") as? Bool ?? true  // 默认左右分栏比对
@@ -142,6 +155,8 @@ final class SettingsStore: ObservableObject {
     func restoreDefaults() {
         editorFontName = "SF Mono"
         editorFontSize = 13
+        terminalFontName = "SF Mono"
+        terminalFontSize = 13
         editorLineHeight = 1.3
         showAllFonts = false
         fileTreeStyle = .mergedTree
@@ -173,11 +188,12 @@ final class SettingsStore: ObservableObject {
             ?? .monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
     }
 
-    /// 终端字体：编辑器字体若不是等宽，退回系统等宽字体——
+    /// 终端字体：用独立的 terminalFontName/Size；若选了非等宽字体，退回系统等宽——
     /// 终端按等宽单元格布局，非等宽字体会让字符串位、看着字间距很宽。
     var terminalNSFont: NSFont {
-        let f = editorNSFont
-        return f.isFixedPitch ? f : .monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
+        let f = NSFont(name: terminalFontName, size: terminalFontSize)
+            ?? .monospacedSystemFont(ofSize: terminalFontSize, weight: .regular)
+        return f.isFixedPitch ? f : .monospacedSystemFont(ofSize: terminalFontSize, weight: .regular)
     }
 
     var editorFont: Font {

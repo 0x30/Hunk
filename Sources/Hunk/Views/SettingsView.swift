@@ -213,6 +213,17 @@ private struct EditorSettings: View {
         settings.showAllFonts ? allFamilies : monoFamilies
     }
 
+    /// 终端字号输入框（终端只列等宽字体，故不复用 showAllFonts）。
+    private var terminalSizeText: Binding<String> {
+        Binding(
+            get: { String(Int(settings.terminalFontSize.rounded())) },
+            set: { newValue in
+                let digits = newValue.filter(\.isNumber)
+                if let value = Double(digits), value > 0 { settings.terminalFontSize = value }
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section(tr("字体", "Font")) {
@@ -248,6 +259,34 @@ private struct EditorSettings: View {
                         .monospacedDigit()
                         .frame(width: 48, alignment: .trailing)
                 }
+            }
+
+            Section(tr("终端", "Terminal")) {
+                Picker(tr("终端字体", "Terminal font"), selection: $settings.terminalFontName) {
+                    ForEach(monoFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                    if !monoFamilies.contains(settings.terminalFontName) {
+                        Text(settings.terminalFontName).tag(settings.terminalFontName)
+                    }
+                }
+
+                HStack {
+                    Text(tr("字号", "Size"))
+                    Spacer()
+                    TextField("", text: terminalSizeText)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 56)
+                    Stepper("", value: $settings.terminalFontSize, in: 1...512, step: 1)
+                        .labelsHidden()
+                    Text("pt").foregroundStyle(.secondary)
+                }
+
+                Text(tr("终端字体独立于编辑器，互不影响。",
+                        "The terminal font is independent of the editor."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section(tr("视图", "View")) {
