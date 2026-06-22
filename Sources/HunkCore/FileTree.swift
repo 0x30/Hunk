@@ -5,12 +5,14 @@ public final class FileNode: Identifiable, Hashable {
     public let path: String   // 相对仓库根的完整路径
     public let name: String
     public let isDirectory: Bool
+    public let isIgnored: Bool // 被 .gitignore 忽略：仍展示，但低透明度
     public var children: [FileNode]?
 
-    public init(path: String, name: String, isDirectory: Bool, children: [FileNode]? = nil) {
+    public init(path: String, name: String, isDirectory: Bool, isIgnored: Bool = false, children: [FileNode]? = nil) {
         self.path = path
         self.name = name
         self.isDirectory = isDirectory
+        self.isIgnored = isIgnored
         self.children = children
     }
 
@@ -92,20 +94,33 @@ public enum FileTreeBuilder {
     }
 
     /// 把路径列表组装成树，目录在前、同级按名称排序。
-    public static func build(paths: [String]) -> [FileNode] {
+    /// `ignored` 为被 .gitignore 忽略的条目（`git ls-files --directory` 风格：
+    /// 整个被忽略的目录折叠成一条、以 `/` 结尾，避免展开 .build 之类成千上万的文件）。
+    /// 这些条目照常进树、但节点 `isIgnored = true`，供视图以低透明度展示。
+    public static func build(paths: [String], ignored ignoredEntries: [String] = []) -> [FileNode] {
         final class Builder {
             var files: Set<String> = []
             var dirs: [String: Set<String>] = [:]  // 目录路径 -> 子项名集合
+            var ignoredPaths: Set<String> = []     // 被忽略条目的规范化路径（无尾斜杠）
 
-            func insert(_ path: String) {
+            /// `forceDir` 用于「以 `/` 结尾的忽略目录」——即便它没有列出任何子项，也当目录建节点。
+            func insert(_ rawPath: String, ignored: Bool) {
+                let forceDir = rawPath.hasSuffix("/")
+                let path = forceDir ? String(rawPath.dropLast()) : rawPath
                 let components = path.split(separator: "/").map(String.init)
                 guard !components.isEmpty else { return }
+                if ignored { ignoredPaths.insert(path) }
                 var parent = ""
                 for (index, name) in components.enumerated() {
                     let full = parent.isEmpty ? name : parent + "/" + name
                     if index == components.count - 1 {
-                        files.insert(full)
-                        dirs[parent, default: []].insert(name)
+                        if forceDir {
+                            dirs[parent, default: []].insert(name)
+                            if dirs[full] == nil { dirs[full] = [] }
+                        } else {
+                            files.insert(full)
+                            dirs[parent, default: []].insert(name)
+                        }
                     } else {
                         dirs[parent, default: []].insert(name)
                         if dirs[full] == nil { dirs[full] = [] }
@@ -119,10 +134,11 @@ public enum FileTreeBuilder {
                 var result: [FileNode] = []
                 for name in names {
                     let full = dir.isEmpty ? name : dir + "/" + name
+                    let ignored = ignoredPaths.contains(full)
                     if dirs[full] != nil, !files.contains(full) {
-                        result.append(FileNode(path: full, name: name, isDirectory: true, children: nodes(in: full)))
+                        result.append(FileNode(path: full, name: name, isDirectory: true, isIgnored: ignored, children: nodes(in: full)))
                     } else {
-                        result.append(FileNode(path: full, name: name, isDirectory: false))
+                        result.append(FileNode(path: full, name: name, isDirectory: false, isIgnored: ignored))
                     }
                 }
                 return result.sorted {
@@ -133,7 +149,8 @@ public enum FileTreeBuilder {
         }
 
         let builder = Builder()
-        for path in paths { builder.insert(path) }
+        for path in paths { builder.insert(path, ignored: false) }
+        for entry in ignoredEntries { builder.insert(entry, ignored: true) }
         return builder.nodes(in: "")
     }
 }

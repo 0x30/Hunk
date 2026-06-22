@@ -872,4 +872,15 @@ public final class Repository: @unchecked Sendable {
             .map { String(decoding: $0, as: UTF8.self) }
         return Array(Set(paths)).sorted()
     }
+
+    /// 被 .gitignore 忽略的条目，供文件树以低透明度展示。
+    /// `--directory` 让整个被忽略的目录折叠成一条（以 `/` 结尾），
+    /// 否则 `.build/` 之类会展开出成千上万个文件。
+    public func listIgnored() async throws -> [String] {
+        let result = try await git.run(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"])
+        let paths = result.stdoutData
+            .split(separator: 0, omittingEmptySubsequences: true)
+            .map { String(decoding: $0, as: UTF8.self) }
+        return Array(Set(paths)).sorted()
+    }
 }

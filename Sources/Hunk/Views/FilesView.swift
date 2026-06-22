@@ -236,6 +236,8 @@ private struct FileTreeRow: View {
         }
         .padding(.vertical, 1)
         .padding(.leading, CGFloat(depth) * 14)
+        // 被忽略的文件/目录:照常展示,但低透明度区分
+        .opacity(node.isIgnored ? 0.4 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
             // 单击：选中 + 目录切换展开 / 文件打开

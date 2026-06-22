@@ -67,4 +67,35 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(rows.map(\.displayName), ["a/b", "c", "1.json", "e", "2.json"])
         XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 1, 2])
     }
+
+    /// 被忽略的条目照常进树并标记 isIgnored；
+    /// 以 `/` 结尾的忽略目录折叠成单个目录节点（不展开内部成千上万的文件）。
+    func testIgnoredEntriesAreMarkedAndDirectoriesCollapse() {
+        let nodes = FileTreeBuilder.build(
+            paths: ["src/a.swift", "README.md"],
+            ignored: [".DS_Store", ".build/", "src/debug.log"]
+        )
+        // 顶层：目录在前(.build、src)，再文件(.DS_Store、README.md)
+        let top = Dictionary(uniqueKeysWithValues: nodes.map { ($0.name, $0) })
+
+        // .build 被折叠成一个目录节点、标记忽略、无子项
+        let build = try! XCTUnwrap(top[".build"])
+        XCTAssertTrue(build.isDirectory)
+        XCTAssertTrue(build.isIgnored)
+        XCTAssertEqual(build.children?.count ?? 0, 0)
+
+        // 根级被忽略文件
+        XCTAssertEqual(top[".DS_Store"]?.isIgnored, true)
+        XCTAssertEqual(top[".DS_Store"]?.isDirectory, false)
+
+        // 跟踪文件不受影响
+        XCTAssertEqual(top["README.md"]?.isIgnored, false)
+
+        // src 目录本身不算忽略（含跟踪文件），但其下被忽略的 debug.log 标记忽略
+        let src = try! XCTUnwrap(top["src"])
+        XCTAssertFalse(src.isIgnored)
+        let srcChildren = Dictionary(uniqueKeysWithValues: (src.children ?? []).map { ($0.name, $0) })
+        XCTAssertEqual(srcChildren["debug.log"]?.isIgnored, true)
+        XCTAssertEqual(srcChildren["a.swift"]?.isIgnored, false)
+    }
 }

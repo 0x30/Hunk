@@ -72,6 +72,8 @@ final class RepoViewModel: ObservableObject {
     @Published var headSummary: String?
     @Published var workspaceFiles: [String] = []
     @Published var workspaceTree: [FileNode] = []
+    /// 被忽略条目缓存（仅用于变更检测，避免每次刷新重建整树）
+    private var workspaceIgnored: [String] = []
 
     // MARK: 界面状态
 
@@ -788,6 +790,7 @@ final class RepoViewModel: ObservableObject {
             async let sync = repo.syncStatus()
             async let head = repo.headSummary()
             async let files = repo.listFiles()
+            async let ignoredFiles = repo.listIgnored()
 
             // 只在值真正变化时赋值：避免每次激活刷新都触发整树重绘
             // （工具栏项重建会吞掉紧随其后的第一次点击）
@@ -802,10 +805,12 @@ final class RepoViewModel: ObservableObject {
             assignIfChanged(try await sync, to: \.sync)
             assignIfChanged(try await head, to: \.headSummary)
             let newFiles = try await files
-            if newFiles != self.workspaceFiles {
+            let newIgnored = (try? await ignoredFiles) ?? []
+            if newFiles != self.workspaceFiles || newIgnored != self.workspaceIgnored {
                 self.workspaceFiles = newFiles
-                self.workspaceTree = FileTreeBuilder.build(paths: newFiles)
-                Diagnostics.log("工作区树重建 文件=\(newFiles.count) 顶层节点=\(self.workspaceTree.count)")
+                self.workspaceIgnored = newIgnored
+                self.workspaceTree = FileTreeBuilder.build(paths: newFiles, ignored: newIgnored)
+                Diagnostics.log("工作区树重建 文件=\(newFiles.count) 忽略=\(newIgnored.count) 顶层节点=\(self.workspaceTree.count)")
             }
             // 保持已加载的分页量（用户触底加载到多少，刷新后维持多少）
             let commits = (try? await repo.history(limit: self.historyLimit, path: self.historyFilterPath)) ?? []
@@ -846,14 +851,16 @@ final class RepoViewModel: ObservableObject {
         headSummary = nil
         guard let root = repoRoot, !isStandaloneFile else {
             workspaceFiles = []        // 单文件模式：无文件树
+            workspaceIgnored = []
             workspaceTree = []
             return
         }
         let files = await Task.detached(priority: .userInitiated) {
             RepoViewModel.listFilesOnDisk(root: root)
         }.value
-        if files != workspaceFiles {
+        if files != workspaceFiles || !workspaceIgnored.isEmpty {
             workspaceFiles = files
+            workspaceIgnored = []   // 非 git 根无忽略概念
             workspaceTree = FileTreeBuilder.build(paths: files)
             Diagnostics.log("非 git 文件树 文件=\(files.count) 顶层=\(workspaceTree.count)")
         }
@@ -1115,6 +1122,7 @@ final class RepoViewModel: ObservableObject {
         repoRoot = url.deletingLastPathComponent()  // 目录作根（无 git），让主界面显示编辑器
         sidebarVisible = false                       // 单文件无文件树，收起侧边栏只看文件
         workspaceFiles = []
+        workspaceIgnored = []
         workspaceTree = []
         changes = []
         diff = nil
