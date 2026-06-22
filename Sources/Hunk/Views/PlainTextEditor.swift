@@ -316,11 +316,18 @@ struct PlainTextEditor: NSViewRepresentable {
             let glyph = layoutManager.glyphIndexForCharacter(at: caret)
             guard glyph < layoutManager.numberOfGlyphs || layoutManager.numberOfGlyphs > 0 else { return }
             let safeGlyph = min(glyph, max(0, layoutManager.numberOfGlyphs - 1))
-            let fragment = layoutManager.lineFragmentUsedRect(forGlyphAt: safeGlyph, effectiveRange: nil)
+            let usedRect = layoutManager.lineFragmentUsedRect(forGlyphAt: safeGlyph, effectiveRange: nil)
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: safeGlyph, effectiveRange: nil)
+            let glyphLoc = layoutManager.location(forGlyphAt: safeGlyph)
             let inset = textView.textContainerInset
+            // 注解(11pt 系统字)与代码(等宽字、字号更大)按「基线对齐」才视觉居中：
+            // 两种字号若按 frame 盒子居中，NSTextField 的单元内边距会让小字偏上/偏下。
+            // glyphLoc.y 是该字形基线相对所在行片段顶部的偏移；firstBaselineOffsetFromTop
+            // 是标签自身文字基线相对其顶部的偏移，两者相减即让两条基线落在同一水平线。
+            let codeBaselineY = lineRect.minY + inset.height + glyphLoc.y
             blameLabel.setFrameOrigin(NSPoint(
-                x: fragment.maxX + inset.width + 28,
-                y: fragment.minY + inset.height + (fragment.height - blameLabel.frame.height) / 2
+                x: usedRect.maxX + inset.width + 28,
+                y: codeBaselineY - blameLabel.firstBaselineOffsetFromTop
             ))
         }
 
