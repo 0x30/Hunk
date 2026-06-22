@@ -47,9 +47,14 @@ struct SearchPanelView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
-            focusField = .search
+            focusField = vm.globalSearchReplace ? .replace : .search
             // 复用缓存结果时不重搜；首次或查询变更才搜
             if hits.isEmpty { scheduleSearch(vm.globalSearchQuery) }
+        }
+        // 标签已存在时再按 ⌘⇧F 不重走 onAppear，靠 nonce 每次都把焦点+全选还给输入框。
+        // 下一帧再设：切到搜索标签后视图才成为第一响应者，同帧设焦点会被吞。
+        .onChange(of: vm.searchFocusNonce) { _, _ in
+            DispatchQueue.main.async { focusField = vm.globalSearchReplace ? .replace : .search }
         }
         .onChange(of: vm.globalSearchQuery) { _, q in scheduleSearch(q) }
         .onChange(of: vm.globalSearchExact) { _, _ in scheduleSearch(vm.globalSearchQuery) }

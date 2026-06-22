@@ -186,6 +186,9 @@ final class RepoViewModel: ObservableObject {
     /// 搜索标签：searchTabOpen=标签存在；显示与否由 activeDetail==.search 决定（showGlobalSearch 同步它）。
     @Published var showGlobalSearch = false
     @Published var searchTabOpen = false
+    /// 每次 ⌘⇧F/⌘⇧R 自增——搜索面板据此重新聚焦输入框（标签已存在时 onAppear 不再触发，
+    /// 只靠它无法聚焦；用一个递增 nonce 保证每次都把焦点+全选给到搜索框）。
+    @Published var searchFocusNonce = 0
     /// 全局搜索状态提到视图模型，标签开/关、失活/激活都不丢查询与结果。
     @Published var globalSearchQuery = ""
     @Published var globalSearchHits: [Repository.GrepHit] = []
@@ -253,6 +256,7 @@ final class RepoViewModel: ObservableObject {
         searchTabOpen = true
         if !openViewTabs.contains(.search) { openViewTabs.append(.search) }
         activeDetail = .view(.search)
+        searchFocusNonce &+= 1   // 即便标签已存在也重新聚焦输入框
     }
     func activateSearchTab() { activeDetail = .view(.search) }
     func closeSearchTab() { closeViewTab(.search) }
