@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notify_register_dispatch(CLIOpenRouter.notifyName, &cliNotifyToken, .main) { _ in
             Task { @MainActor in CLIOpenRouter.consumeChannelFile() }
         }
+        // vnode 监视通道目录：应用已在前台时 `open -a Hunk` 不触发激活，仅靠 didBecomeActive
+        // 会漏读（在 Hunk 终端里 `hunk 某目录` 毫无反应即此因）。监视写入即时领取。
+        Task { @MainActor in CLIOpenRouter.startWatchingChannel() }
 
         // 诊断日志（实时落盘，崩溃后可复盘）+ 内存看门狗（异常暴涨时清缓存/主动退出，
         // 避免拖垮整个系统的 OOM 连锁）。日志在 ~/Library/Logs/Hunk/session.log
@@ -183,6 +186,29 @@ enum CLIOpenRouter {
         let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return }
         route(path)
+    }
+
+    // 监视通道目录：脚本写入 cli-open 立即领取，不依赖应用「激活」事件。
+    // 之前只在 didBecomeActive 时消费——应用已在前台（如在 Hunk 自带终端里敲 `hunk 某目录`）
+    // 时 `open -a Hunk` 不触发激活，通道永远没人读，表现为「毫无反应」。vnode 监视根治此问题。
+    private static var channelWatchFD: Int32 = -1
+    private static var channelWatchSource: DispatchSourceFileSystemObject?
+
+    static func startWatchingChannel() {
+        let dir = channelFile.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // 消费后会删文件，下次脚本写入即「新建」，目录 .write 事件可靠触发
+        let fd = Darwin.open(dir.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        channelWatchFD = fd
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write, .extend, .rename, .delete], queue: .main)
+        src.setEventHandler { MainActor.assumeIsolated { CLIOpenRouter.consumeChannelFile() } }
+        src.setCancelHandler { Darwin.close(fd) }
+        channelWatchSource = src
+        src.resume()
+        // 启动瞬间脚本可能已写好通道（冷启动竞速），先领一次
+        consumeChannelFile()
     }
 }
 
