@@ -28,6 +28,12 @@ struct PlainTextEditor: NSViewRepresentable {
     /// 行高倍数(由设置传入)。作为显式参数而非在内部读全局——这样改设置时它是真正的
     /// SwiftUI 依赖,会触发 updateNSView 重新应用;否则编辑器收不到变更。
     var lineHeight: Double = 1.3
+    /// 改动标记基线（文件 HEAD 版本）；nil = 不画标记。与当前文本做行级 diff。
+    var baseline: String?
+    /// 是否在行号槽画改动标记（绿增/蓝改/红删）。
+    var showChangeGutter: Bool = true
+    /// 是否高亮选中单词的其它整词匹配。
+    var highlightOccurrences: Bool = true
 
     /// 行高:按倍数生成段落样式。等宽字体默认行距偏紧,调大更透气。
     static func lineParagraphStyle(_ multiple: Double) -> NSParagraphStyle {
@@ -158,6 +164,8 @@ struct PlainTextEditor: NSViewRepresentable {
             // 在主线程同步整文件 tokenize+全量上色——那是「切换卡死」的主因之一。
             // 字体是等宽、已就位，延迟的只是语法配色，可读性不受影响。
             coordinator.scheduleHighlight()
+            coordinator.clearOccurrenceHighlights()  // 换内容旧高亮作废
+            coordinator.scheduleGutterDiff()
             if isNewDocument {
                 // 新文档从顶部开始（底部 overscroll inset 会把初始位置带偏）
                 DispatchQueue.main.async {
@@ -183,6 +191,19 @@ struct PlainTextEditor: NSViewRepresentable {
             textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
             textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
             coordinator.highlightNow()
+        }
+
+        // 基线变化 / 开关切换 → 重算改动标记
+        if coordinator.lastBaseline != baseline || coordinator.lastShowChangeGutter != showChangeGutter {
+            coordinator.lastBaseline = baseline
+            coordinator.lastShowChangeGutter = showChangeGutter
+            coordinator.scheduleGutterDiff()
+        }
+        // 同词高亮开关切换 → 立即应用或清除
+        if coordinator.lastHighlightOccurrences != highlightOccurrences {
+            coordinator.lastHighlightOccurrences = highlightOccurrences
+            if highlightOccurrences { coordinator.updateOccurrenceHighlights() }
+            else { coordinator.clearOccurrenceHighlights() }
         }
 
         if let line = scrollToLine {
@@ -219,11 +240,17 @@ struct PlainTextEditor: NSViewRepresentable {
         var lastFileName: String?
         var lastLanguageOverride: String?
         var lastLineHeight: Double = 0
+        var lastBaseline: String?
+        var lastShowChangeGutter = true
+        var lastHighlightOccurrences = true
         private var lastBlameText: String?
         private var lastCursorLine = -1
         private var pendingHighlight: DispatchWorkItem?
+        private var pendingGutterDiff: DispatchWorkItem?
         private var cachedLineRanges: [NSRange]?
         private var isHighlighting = false
+        /// 当前已应用同词高亮的范围（临时属性，clear 时逐个撤销）
+        private var occurrenceRanges: [NSRange] = []
 
         init(parent: PlainTextEditor) {
             self.parent = parent
@@ -235,7 +262,9 @@ struct PlainTextEditor: NSViewRepresentable {
             parent.onEdit()
             ruler?.invalidateLineIndex()
             invalidateLineCache()
+            clearOccurrenceHighlights()  // 编辑后旧范围失配，先清；选区变化会重算
             scheduleHighlight()
+            scheduleGutterDiff()
         }
 
         /// 底部留约半屏空白，末行可以滚到视野中上部。
@@ -284,6 +313,7 @@ struct PlainTextEditor: NSViewRepresentable {
                 parent.onCursorLineChange(line)
             }
             positionBlameLabel()
+            updateOccurrenceHighlights()
         }
 
         func updateBlame(text: String?) {
@@ -338,6 +368,103 @@ struct PlainTextEditor: NSViewRepresentable {
             }
             pendingHighlight = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+        }
+
+        // MARK: - 改动标记（行号槽竖线）
+
+        func scheduleGutterDiff() {
+            pendingGutterDiff?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.computeGutterDiff() }
+            pendingGutterDiff = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+        }
+
+        /// 基线与当前文本做行级 diff，把 hunk 交给标尺绘制。计算放后台线程，应用回主线程。
+        private func computeGutterDiff() {
+            guard let ruler else { return }
+            guard parent.showChangeGutter, let baseline = parent.baseline else {
+                if !ruler.changeHunks.isEmpty {
+                    ruler.changeHunks = []
+                    ruler.needsDisplay = true
+                }
+                return
+            }
+            let new = parent.text
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let hunks = LineDiff.hunks(old: baseline, new: new)
+                DispatchQueue.main.async {
+                    guard let self, let ruler = self.ruler else { return }
+                    guard self.parent.text == new else { return }  // 期间又编辑了 → 丢弃旧结果
+                    ruler.changeHunks = hunks
+                    ruler.needsDisplay = true
+                }
+            }
+        }
+
+        // MARK: - 同词高亮（选中一个单词，标其它整词匹配）
+
+        func clearOccurrenceHighlights() {
+            let hadHighlights = !occurrenceRanges.isEmpty
+            occurrenceRanges = []
+            // 按整文档范围撤销临时背景：编辑后旧范围可能越界，整段清最安全（同词高亮是唯一的临时背景用途）
+            guard hadHighlights, let textView, let layoutManager = textView.layoutManager else { return }
+            let full = NSRange(location: 0, length: (textView.string as NSString).length)
+            if full.length > 0 {
+                layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
+            }
+        }
+
+        func updateOccurrenceHighlights() {
+            clearOccurrenceHighlights()
+            guard parent.highlightOccurrences,
+                  let textView, let layoutManager = textView.layoutManager else { return }
+            let sel = textView.selectedRange()
+            let nsString = textView.string as NSString
+            // 选区要正好是一个完整单词：长度合理、全是词字符、两端是词边界
+            guard sel.length >= 2, sel.length <= 200,
+                  NSMaxRange(sel) <= nsString.length, nsString.length < 400_000 else { return }
+            let token = nsString.substring(with: sel)
+            guard Self.isWord(token), Self.isWholeWord(sel, in: nsString) else { return }
+
+            let color = NSColor.controlAccentColor.withAlphaComponent(0.22)
+            var start = 0
+            while start < nsString.length {
+                let found = nsString.range(
+                    of: token, options: [.literal],
+                    range: NSRange(location: start, length: nsString.length - start))
+                if found.location == NSNotFound { break }
+                start = NSMaxRange(found)
+                guard found.location != sel.location else { continue }  // 跳过选区本身
+                if Self.isWholeWord(found, in: nsString) {
+                    layoutManager.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: found)
+                    occurrenceRanges.append(found)
+                }
+            }
+        }
+
+        private static func isWordChar(_ ch: unichar) -> Bool {
+            if ch == 0x5F { return true }                       // _
+            if let scalar = Unicode.Scalar(ch) {
+                return CharacterSet.alphanumerics.contains(scalar)
+            }
+            return true
+        }
+
+        private static func isWord(_ s: String) -> Bool {
+            guard !s.isEmpty else { return false }
+            for scalar in s.unicodeScalars {
+                if scalar == "_" { continue }
+                if !CharacterSet.alphanumerics.contains(scalar) { return false }
+            }
+            return true
+        }
+
+        /// range 两端是否都是词边界（前一字符 / 后一字符非词字符）。
+        private static func isWholeWord(_ range: NSRange, in s: NSString) -> Bool {
+            if range.location > 0, isWordChar(s.character(at: range.location - 1)) { return false }
+            let end = NSMaxRange(range)
+            if end < s.length, isWordChar(s.character(at: end)) { return false }
+            return true
         }
 
         func highlightNow() {
@@ -691,16 +818,75 @@ final class LineNumberRulerView: NSRulerView {
     private var lineStarts: [Int] = [0]
     private var lineIndexValid = false
 
+    // MARK: 改动标记
+    /// 当前文件相对 HEAD 的改动 hunk；赋值即重建按行索引并刷新。
+    var changeHunks: [LineDiff.Hunk] = [] {
+        didSet { rebuildChangeIndex(); needsDisplay = true }
+    }
+    /// 新增/修改：被覆盖的新行下标(0 基) → 所属 hunk，用于画竖线与悬浮。
+    private var hunkAtLine: [Int: LineDiff.Hunk] = [:]
+    /// 删除：发生删除的新行下标(0 基) → hunk，用于画红三角与悬浮。
+    private var deletionAtLine: [Int: LineDiff.Hunk] = [:]
+    /// 本次绘制记录的可见行矩形（标尺坐标系），供悬浮命中测试。
+    private var visibleRows: [(line: Int, rect: NSRect)] = []
+    private var trackingArea: NSTrackingArea?
+    private let hoverPopover = NSPopover()
+    /// 当前悬浮卡对应的 hunk 起始行，避免同一处反复重弹。
+    private var hoveredHunkStart: Int?
+
     init(textView: NSTextView) {
         self.textView = textView
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
+        hoverPopover.behavior = .applicationDefined
+        hoverPopover.animates = false
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(needsRedraw),
             name: NSView.boundsDidChangeNotification,
             object: textView.enclosingScrollView?.contentView
         )
+    }
+
+    private func rebuildChangeIndex() {
+        hunkAtLine.removeAll(keepingCapacity: true)
+        deletionAtLine.removeAll(keepingCapacity: true)
+        for hunk in changeHunks {
+            switch hunk.kind {
+            case .added, .modified:
+                for line in hunk.newStart..<(hunk.newStart + hunk.newCount) {
+                    hunkAtLine[line] = hunk
+                }
+            case .deleted:
+                deletionAtLine[hunk.newStart] = hunk   // 删除发生在该新行之前
+            }
+        }
+    }
+
+    /// 改动标记颜色：绿增、蓝改、红删。
+    private func changeColor(_ kind: LineDiff.Hunk.Kind) -> NSColor {
+        switch kind {
+        case .added: return .systemGreen
+        case .modified: return .systemBlue
+        case .deleted: return .systemRed
+        }
+    }
+
+    /// 在某行片段矩形右缘画一条改动竖线。
+    private func drawChangeBar(_ kind: LineDiff.Hunk.Kind, rowRect: NSRect) {
+        changeColor(kind).setFill()
+        NSRect(x: bounds.width - 5, y: rowRect.minY, width: 3, height: rowRect.height).fill()
+    }
+
+    /// 在行边界 y 处画一个指向右的红三角（表示此处有行被删除）。
+    private func drawDeletionTriangle(atBoundaryY y: CGFloat) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: bounds.width - 8, y: y - 4))
+        path.line(to: NSPoint(x: bounds.width - 8, y: y + 4))
+        path.line(to: NSPoint(x: bounds.width - 2, y: y))
+        path.close()
+        changeColor(.deleted).setFill()
+        path.fill()
     }
 
     required init(coder: NSCoder) {
@@ -713,6 +899,7 @@ final class LineNumberRulerView: NSRulerView {
 
     @objc private func needsRedraw() {
         needsDisplay = true
+        dismissHoverPopover()   // 滚动后锚点失位，先收起悬浮卡
     }
 
     func invalidateLineIndex() {
@@ -785,6 +972,7 @@ final class LineNumberRulerView: NSRulerView {
         )
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: numberColor]
         let inset = textView.textContainerInset
+        visibleRows.removeAll(keepingCapacity: true)
 
         var lastDrawnLine = -1
         var glyphIndex = glyphRange.location
@@ -793,11 +981,22 @@ final class LineNumberRulerView: NSRulerView {
             let fragmentRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &fragmentGlyphRange)
             let charIndex = layoutManager.characterIndexForGlyph(at: fragmentGlyphRange.location)
             let line = lineNumber(forCharacter: charIndex)
+            let isFirstFragment = lineStarts[line - 1] == charIndex
+            let y = fragmentRect.minY + inset.height - visibleRect.minY
+            let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: fragmentRect.height)
+            visibleRows.append((line: line - 1, rect: rowRect))
 
-            // 软换行的后续片段不重复编号
-            if line != lastDrawnLine, lineStarts[line - 1] == charIndex {
+            // 改动竖线：每片段都画，软换行行也连续
+            if let hunk = hunkAtLine[line - 1] {
+                drawChangeBar(hunk.kind, rowRect: rowRect)
+            }
+            // 删除红三角只在行首画一次
+            if isFirstFragment, deletionAtLine[line - 1] != nil {
+                drawDeletionTriangle(atBoundaryY: y)
+            }
+            // 行号：软换行的后续片段不重复编号
+            if line != lastDrawnLine, isFirstFragment {
                 lastDrawnLine = line
-                let y = fragmentRect.minY + inset.height - visibleRect.minY
                 let text = "\(line)" as NSString
                 let size = text.size(withAttributes: attributes)
                 text.draw(
@@ -812,8 +1011,16 @@ final class LineNumberRulerView: NSRulerView {
         if layoutManager.extraLineFragmentTextContainer != nil {
             let fragmentRect = layoutManager.extraLineFragmentRect
             let line = lineStarts.count
+            let y = fragmentRect.minY + inset.height - visibleRect.minY
+            let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: fragmentRect.height)
+            visibleRows.append((line: line - 1, rect: rowRect))
+            if let hunk = hunkAtLine[line - 1] {
+                drawChangeBar(hunk.kind, rowRect: rowRect)
+            }
+            if deletionAtLine[line - 1] != nil {
+                drawDeletionTriangle(atBoundaryY: y)
+            }
             if line != lastDrawnLine {
-                let y = fragmentRect.minY + inset.height - visibleRect.minY
                 let text = "\(line)" as NSString
                 let size = text.size(withAttributes: attributes)
                 text.draw(
@@ -822,6 +1029,105 @@ final class LineNumberRulerView: NSRulerView {
                 )
             }
         }
+    }
+
+    // MARK: - 悬浮看具体变动
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        // 命中某可见行；该行有改动 hunk 就弹卡，否则收起
+        guard let row = visibleRows.first(where: { $0.rect.contains(point) }),
+              let hunk = hunkAtLine[row.line] ?? deletionAtLine[row.line] else {
+            dismissHoverPopover()
+            return
+        }
+        if hoveredHunkStart == hunk.newStart, hoverPopover.isShown { return }
+        hoveredHunkStart = hunk.newStart
+        let anchor = NSRect(x: bounds.width - 6, y: row.rect.minY, width: 4, height: row.rect.height)
+        let host = NSHostingController(rootView: ChangeHunkCard(hunk: hunk))
+        host.sizingOptions = [.preferredContentSize]
+        hoverPopover.contentViewController = host
+        if hoverPopover.isShown { hoverPopover.close() }
+        hoverPopover.show(relativeTo: anchor, of: self, preferredEdge: .maxX)
+    }
+
+    override func mouseExited(with event: NSEvent) { dismissHoverPopover() }
+
+    private func dismissHoverPopover() {
+        hoveredHunkStart = nil
+        if hoverPopover.isShown { hoverPopover.close() }
+    }
+}
+
+// MARK: - 改动悬浮卡（展示某 hunk 的旧/新行）
+
+/// 行号槽竖线/三角的悬浮卡：标题给出改动类型，下面按红(旧)/绿(新)列出具体行。
+private struct ChangeHunkCard: View {
+    let hunk: LineDiff.Hunk
+
+    private var title: String {
+        switch hunk.kind {
+        case .added: return tr("新增 \(hunk.newLines.count) 行", "Added \(hunk.newLines.count) line(s)")
+        case .deleted: return tr("删除 \(hunk.oldLines.count) 行", "Removed \(hunk.oldLines.count) line(s)")
+        case .modified:
+            return tr("修改：\(hunk.oldLines.count) 行 → \(hunk.newLines.count) 行",
+                      "Modified: \(hunk.oldLines.count) → \(hunk.newLines.count) line(s)")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            if !hunk.oldLines.isEmpty || !hunk.newLines.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        if hunk.kind != .added {
+                            ForEach(Array(hunk.oldLines.enumerated()), id: \.offset) { _, line in
+                                diffLine("−", line, .red)
+                            }
+                        }
+                        if hunk.kind != .deleted {
+                            ForEach(Array(hunk.newLines.enumerated()), id: \.offset) { _, line in
+                                diffLine("+", line, .green)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+            }
+        }
+        .padding(10)
+        .frame(width: 420)
+    }
+
+    private func diffLine(_ sign: String, _ text: String, _ color: Color) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(sign)
+                .foregroundStyle(color)
+            Text(text.isEmpty ? " " : text)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+        }
+        .font(SettingsStore.shared.editorFont)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.12))
     }
 }
 

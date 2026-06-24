@@ -151,6 +151,13 @@ public final class Repository: @unchecked Sendable {
         return result.exitCode == 0 ? result.stdout : nil
     }
 
+    /// HEAD（上次提交）里某个文件的内容；用作编辑器改动标记的基线。
+    /// 文件未跟踪 / 尚无提交（128）→ 返回 nil，调用方按「整文件新增」处理。
+    public func headContent(of path: String) async throws -> String? {
+        let result = try await git.run(["show", "HEAD:\(path)"], allowedExitCodes: [0, 128])
+        return result.exitCode == 0 ? result.stdout : nil
+    }
+
     // MARK: - 提交
 
     public func commit(message: String, amend: Bool = false) async throws {

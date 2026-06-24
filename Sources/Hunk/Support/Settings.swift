@@ -125,6 +125,16 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(showAllFonts, forKey: "showAllFonts") }
     }
 
+    /// 编辑器行号槽显示改动标记（与 HEAD 比对的竖线：绿增/蓝改/红删，悬浮看具体变动）
+    @Published var editorChangeGutter: Bool {
+        didSet { defaults.set(editorChangeGutter, forKey: "editorChangeGutter") }
+    }
+
+    /// 选中一个完整单词时，高亮文档内其它整词匹配处
+    @Published var editorHighlightOccurrences: Bool {
+        didSet { defaults.set(editorHighlightOccurrences, forKey: "editorHighlightOccurrences") }
+    }
+
     /// 「源代码管理」里被折叠的分区（"conflicted"/"staged"/"unstaged"/"stash"）。
     /// 持久化：折叠一次（如收起贮藏）后长期生效，不必每次重折。
     @Published var collapsedChangeSections: Set<String> {
@@ -154,6 +164,8 @@ final class SettingsStore: ObservableObject {
         let lineHeight = defaults.double(forKey: "editorLineHeight")
         editorLineHeight = lineHeight > 0 ? lineHeight : 1.3
         showAllFonts = defaults.bool(forKey: "showAllFonts")
+        editorChangeGutter = defaults.object(forKey: "editorChangeGutter") as? Bool ?? true
+        editorHighlightOccurrences = defaults.object(forKey: "editorHighlightOccurrences") as? Bool ?? true
         collapsedChangeSections = Set(defaults.stringArray(forKey: "collapsedChangeSections") ?? [])
         // 缺省键(从未设置过)用内置默认;已设置过则尊重用户值(含「清空 = 不隐藏」)
         if let saved = defaults.stringArray(forKey: "hiddenFileNames") {
@@ -171,6 +183,8 @@ final class SettingsStore: ObservableObject {
         terminalFontSize = 13
         editorLineHeight = 1.3
         showAllFonts = false
+        editorChangeGutter = true
+        editorHighlightOccurrences = true
         fileTreeStyle = .mergedTree
         splitDiff = true
         hiddenFileNames = FileTreeBuilder.defaultHiddenNames

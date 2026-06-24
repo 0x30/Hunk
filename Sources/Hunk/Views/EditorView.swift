@@ -53,7 +53,10 @@ struct EditorView: View {
                     languageOverride: vm.editorLanguageOverride,
                     requestFocus: vm.pendingEditorFocus,
                     onFocusHandled: { vm.pendingEditorFocus = false },
-                    lineHeight: settings.editorLineHeight
+                    lineHeight: settings.editorLineHeight,
+                    baseline: vm.editorBaseline,
+                    showChangeGutter: settings.editorChangeGutter,
+                    highlightOccurrences: settings.editorHighlightOccurrences
                 )
                 .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
             }

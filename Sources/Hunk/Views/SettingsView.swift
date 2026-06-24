@@ -260,6 +260,16 @@ private struct EditorSettings: View {
                         .monospacedDigit()
                         .frame(width: 48, alignment: .trailing)
                 }
+
+                Toggle(tr("行号槽显示改动标记", "Show change markers in the gutter"),
+                       isOn: $settings.editorChangeGutter)
+                Text(tr("与上次提交比对：绿条=新增、蓝条=修改、红三角=删除；悬浮查看具体变动。",
+                        "Compared against the last commit: green = added, blue = modified, red triangle = deleted; hover to see the change."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle(tr("高亮选中单词的其它匹配", "Highlight other matches of the selected word"),
+                       isOn: $settings.editorHighlightOccurrences)
             }
 
             Section(tr("终端", "Terminal")) {

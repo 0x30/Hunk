@@ -149,6 +149,9 @@ final class RepoViewModel: ObservableObject {
     @Published var editorText = ""
     @Published var editorPath: String?
     @Published var editorDirty = false
+    /// 当前编辑文件的基线内容（HEAD 版本）；与编辑器内容做行级 diff 画改动标记。
+    /// nil = 未跟踪/无仓库/尚未加载，编辑器据此把整文件视为新增或不画标记。
+    @Published var editorBaseline: String?
     /// 当前编辑文件是二进制（含 NUL）→ 显示 hex 查看器而非纯文本编辑器
     @Published var editorIsBinary = false
     @Published var editorLoading = false   // 大文件异步读盘期间为 true
@@ -847,6 +850,10 @@ final class RepoViewModel: ObservableObject {
                     await loadDetail()
                 }
             }
+            // 提交/检出/暂存后 HEAD 可能变了，刷新编辑器改动标记基线
+            if let editorPath, !isUntitled(editorPath) {
+                loadEditorBaseline(editorPath)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1087,6 +1094,7 @@ final class RepoViewModel: ObservableObject {
         }
         stashActiveBuffer()
         editorLoading = false
+        editorBaseline = nil   // 换文件先清基线，异步加载完再画改动标记，避免串台
 
         if !openTabs.contains(path) {
             openTabs.append(path)
@@ -1122,6 +1130,7 @@ final class RepoViewModel: ObservableObject {
             blameText = nil
             blameHash = nil
             reparseConflicts()
+            loadEditorBaseline(path)
         } else if isUntitled(path) {
             editorText = ""
             editorDirty = false
@@ -1151,7 +1160,26 @@ final class RepoViewModel: ObservableObject {
                     self.editorText = content
                     self.editorLoading = false
                     self.reparseConflicts()
+                    self.loadEditorBaseline(targetPath)
                 }
+            }
+        }
+    }
+
+    /// 加载改动标记的基线：取该文件的 HEAD 版本。未跟踪/尚无提交 → 基线设为空串，
+    /// 让编辑器把整文件当作新增（全绿）。无仓库/单文件模式不画标记（基线保持 nil）。
+    func loadEditorBaseline(_ path: String) {
+        guard let repo, !isUntitled(path), !path.hasPrefix("/") else {
+            editorBaseline = nil
+            return
+        }
+        Task { [weak self] in
+            let content = try? await repo.headContent(of: path)
+            await MainActor.run {
+                guard let self, self.editorPath == path else { return }
+                // headContent 为 nil = 文件未跟踪 → 整文件视为新增
+                let next = content ?? ""
+                if self.editorBaseline != next { self.editorBaseline = next }  // 不变就不重发，省一次重绘
             }
         }
     }
