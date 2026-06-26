@@ -807,6 +807,107 @@ final class OverscrollTextView: NSTextView {
     override func moveWordBackwardAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: false) }
     override func deleteWordForward(_ sender: Any?) { deleteByWord(forward: true) }
     override func deleteWordBackward(_ sender: Any?) { deleteByWord(forward: false) }
+
+    // MARK: - 多选区（⌘D 加选下一个相同词 / ⌘⇧L 选中全部）
+
+    // 选中全文/逐个相同词，便于「选中后一次性改名或删除」。注意：TextKit 1 的 NSTextView
+    // 支持多个「非空选区」（可一次性同时编辑），但不支持多个零长光标——按方向键会塌回单个，
+    // 故只做多选区，不做持续多光标（那需要 TextKit 2 内核，见 [[hunk-editor-pending]]）。
+    // ⌘D / ⌘⇧L 都不是本 app 的菜单快捷键，未拦截会漏给系统（触发系统搜索/Safari），故在此接管。
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let chars = event.charactersIgnoringModifiers?.lowercased()
+        if mods == .command, chars == "d" { return addNextOccurrence() }
+        if mods == [.command, .shift], chars == "l" { return selectAllOccurrences() }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func isAllWordChars(_ s: NSString) -> Bool {
+        guard s.length > 0 else { return false }
+        for i in 0..<s.length where !Self.isWordChar(s.character(at: i)) { return false }
+        return true
+    }
+
+    private func isWholeWord(_ r: NSRange, in s: NSString) -> Bool {
+        let before = r.location - 1
+        let after = NSMaxRange(r)
+        let okBefore = before < 0 || !Self.isWordChar(s.character(at: before))
+        let okAfter = after >= s.length || !Self.isWordChar(s.character(at: after))
+        return okBefore && okAfter
+    }
+
+    /// 文档里 needle 的全部出现位置（升序）。wholeWord=true 时只取前后均为分隔符的整词匹配。
+    private func ranges(of needle: NSString, wholeWord: Bool) -> [NSRange] {
+        let s = string as NSString
+        guard needle.length > 0, s.length > 0 else { return [] }
+        var result: [NSRange] = []
+        var from = 0
+        while from < s.length {
+            let r = s.range(of: needle as String, options: [],
+                            range: NSRange(location: from, length: s.length - from))
+            if r.location == NSNotFound { break }
+            if !wholeWord || isWholeWord(r, in: s) { result.append(r) }
+            from = max(NSMaxRange(r), r.location + 1)
+        }
+        return result
+    }
+
+    /// 当前用于匹配的「针」：有选区取选区文本；无选区取光标处整词。
+    /// 返回 nil 表示光标停在非词字符上、无可匹配的词。
+    private func currentNeedle() -> (text: NSString, wholeWord: Bool, primary: NSRange)? {
+        let s = string as NSString
+        guard s.length > 0 else { return nil }
+        let sel = selectedRange()
+        if sel.length > 0 {
+            let text = s.substring(with: sel) as NSString
+            return (text, isAllWordChars(text), sel)
+        }
+        let wr = wordRange(at: sel.location, in: s)
+        guard wr.length > 0, Self.isWordChar(s.character(at: wr.location)) else { return nil }
+        return (s.substring(with: wr) as NSString, true, wr)
+    }
+
+    private func setMultiSelection(_ ranges: [NSRange], scrollTo: NSRange) {
+        let sorted = ranges.sorted { $0.location < $1.location }
+        setSelectedRanges(sorted.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
+        scrollRangeToVisible(scrollTo)
+    }
+
+    /// ⌘⇧L：选中全文所有相同词（无选区时先以光标处整词为准）。
+    @discardableResult
+    private func selectAllOccurrences() -> Bool {
+        guard let needle = currentNeedle() else { return true }
+        let all = ranges(of: needle.text, wholeWord: needle.wholeWord)
+        guard !all.isEmpty else { return true }
+        setMultiSelection(all, scrollTo: needle.primary)
+        return true
+    }
+
+    /// ⌘D：无选区先选光标处整词；已有选区则加选其后（环绕）第一个尚未选中的相同词。
+    @discardableResult
+    private func addNextOccurrence() -> Bool {
+        let s = string as NSString
+        let sel = selectedRange()
+        if sel.length == 0 {
+            guard let needle = currentNeedle() else { return true }
+            setSelectedRange(needle.primary)
+            scrollRangeToVisible(needle.primary)
+            return true
+        }
+        let needle = s.substring(with: sel) as NSString
+        let all = ranges(of: needle, wholeWord: isAllWordChars(needle))
+        guard !all.isEmpty else { return true }
+        let existing = selectedRanges.map { $0.rangeValue }
+        let taken = Set(existing.map(\.location))
+        let anchor = existing.map { NSMaxRange($0) }.max() ?? NSMaxRange(sel)
+        let candidates = all.filter { !taken.contains($0.location) }
+        guard let next = candidates.first(where: { $0.location >= anchor }) ?? candidates.first else {
+            return true   // 全部已选中
+        }
+        setMultiSelection(existing + [next], scrollTo: next)
+        return true
+    }
 }
 
 // MARK: - 行号 gutter
