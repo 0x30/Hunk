@@ -56,7 +56,8 @@ struct EditorView: View {
                     lineHeight: settings.editorLineHeight,
                     baseline: vm.editorBaseline,
                     showChangeGutter: settings.editorChangeGutter,
-                    highlightOccurrences: settings.editorHighlightOccurrences
+                    highlightOccurrences: settings.editorHighlightOccurrences,
+                    onDropFile: { url in vm.handleDrop(url: url) }
                 )
                 .clipped()  // 防止行号标尺渗到标签栏等相邻视图背后
             }

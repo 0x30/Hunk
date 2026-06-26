@@ -34,6 +34,9 @@ struct PlainTextEditor: NSViewRepresentable {
     var showChangeGutter: Bool = true
     /// 是否高亮选中单词的其它整词匹配。
     var highlightOccurrences: Bool = true
+    /// 从访达拖文件/文件夹进编辑器：直接打开(文件)或问在哪个窗口打开(文件夹),
+    /// 而非把内容/路径插进文本。要全路径请用复制粘贴(⌘V)。
+    var onDropFile: (URL) -> Void = { _ in }
 
     /// 行高:按倍数生成段落样式。等宽字体默认行距偏紧,调大更透气。
     ///
@@ -136,6 +139,12 @@ struct PlainTextEditor: NSViewRepresentable {
         blameLabel.onClick = { [weak blameLabel, weak popover] in
             guard let blameLabel, let popover, let hash = blameLabel.commitHash else { return }
             popover.clicked(hash: hash, relativeTo: blameLabel.bounds, of: blameLabel)
+        }
+
+        // 拖入文件 → 打开;拖入文件夹 → 问窗口。交给上层 handleDrop,绕开 NSTextView 默认的插文本。
+        textView.onDropURLs = { [weak coordinator = context.coordinator] urls in
+            guard let coordinator else { return }
+            for url in urls { coordinator.parent.onDropFile(url) }
         }
 
         context.coordinator.textView = textView
@@ -657,6 +666,35 @@ struct PlainTextEditor: NSViewRepresentable {
 final class OverscrollTextView: NSTextView {
     var overscroll: CGFloat = 0
     private var resizing = false
+    /// 拖入的文件 URL 交给上层处理(打开文件/文件夹);设了它就拦下文件拖拽,不走默认插文本。
+    var onDropURLs: (([URL]) -> Void)?
+
+    // MARK: - 拖入文件 → 打开(而非把内容/路径插进文本)
+
+    private func droppedFileURLs(_ sender: NSDraggingInfo) -> [URL]? {
+        guard onDropURLs != nil else { return nil }
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty
+        else { return nil }
+        return urls
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(sender) != nil ? .copy : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(sender) != nil ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let urls = droppedFileURLs(sender) {
+            onDropURLs?(urls)
+            return true
+        }
+        return super.performDragOperation(sender)
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         guard !resizing, overscroll > 0,
@@ -942,14 +980,21 @@ final class LineNumberRulerView: NSRulerView {
     private var visibleRows: [(line: Int, rect: NSRect)] = []
     private var trackingArea: NSTrackingArea?
     private let hoverPopover = NSPopover()
-    /// 当前悬浮卡对应的 hunk 起始行，避免同一处反复重弹。
-    private var hoveredHunkStart: Int?
+    /// 当前鼠标悬停的改动行(0 基)；用于把改动竖线加宽(VS Code 式:平时窄,悬浮变宽)。
+    private var hoveredLine: Int?
+
+    // 行号槽几何:改动条贴右缘留窄气口,行号往左让开,别和改动条挤在一起。
+    private let gutterRightInset: CGFloat = 3   // 改动条/三角距标尺右缘
+    private let barNormalWidth: CGFloat = 2     // 改动竖线平时宽度
+    private let barHoverWidth: CGFloat = 5      // 悬浮时加宽
+    private let numberRightPadding: CGFloat = 16 // 行号右缘内边距(给改动条留气口)
 
     init(textView: NSTextView) {
         self.textView = textView
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
-        hoverPopover.behavior = .applicationDefined
+        // 点击改动条弹出「变动预览」卡:.transient 让点别处自动收起(像钉了一下的小窗)。
+        hoverPopover.behavior = .transient
         hoverPopover.animates = false
 
         NotificationCenter.default.addObserver(
@@ -983,18 +1028,23 @@ final class LineNumberRulerView: NSRulerView {
         }
     }
 
-    /// 在某行片段矩形右缘画一条改动竖线。
-    private func drawChangeBar(_ kind: LineDiff.Hunk.Kind, rowRect: NSRect) {
+    /// 在某行片段矩形右缘画一条改动竖线（圆角）。悬浮该行时加宽。
+    private func drawChangeBar(_ kind: LineDiff.Hunk.Kind, rowRect: NSRect, hovered: Bool) {
+        let w = hovered ? barHoverWidth : barNormalWidth
+        let rect = NSRect(x: bounds.width - gutterRightInset - w, y: rowRect.minY,
+                          width: w, height: rowRect.height)
+        let path = NSBezierPath(roundedRect: rect, xRadius: w / 2, yRadius: w / 2)
         changeColor(kind).setFill()
-        NSRect(x: bounds.width - 5, y: rowRect.minY, width: 3, height: rowRect.height).fill()
+        path.fill()
     }
 
     /// 在行边界 y 处画一个指向右的红三角（表示此处有行被删除）。
     private func drawDeletionTriangle(atBoundaryY y: CGFloat) {
+        let right = bounds.width - gutterRightInset
         let path = NSBezierPath()
-        path.move(to: NSPoint(x: bounds.width - 8, y: y - 4))
-        path.line(to: NSPoint(x: bounds.width - 8, y: y + 4))
-        path.line(to: NSPoint(x: bounds.width - 2, y: y))
+        path.move(to: NSPoint(x: right - 6, y: y - 4))
+        path.line(to: NSPoint(x: right - 6, y: y + 4))
+        path.line(to: NSPoint(x: right, y: y))
         path.close()
         changeColor(.deleted).setFill()
         path.fill()
@@ -1040,7 +1090,7 @@ final class LineNumberRulerView: NSRulerView {
         lineIndexValid = true
 
         let digits = max(3, String(starts.count).count)
-        ruleThickness = CGFloat(digits) * 8 + 14
+        ruleThickness = CGFloat(digits) * 8 + 22
     }
 
     /// 字符偏移所在行号（1 基），供光标 blame 使用。
@@ -1099,7 +1149,7 @@ final class LineNumberRulerView: NSRulerView {
 
             // 改动竖线：每片段都画，软换行行也连续
             if let hunk = hunkAtLine[line - 1] {
-                drawChangeBar(hunk.kind, rowRect: rowRect)
+                drawChangeBar(hunk.kind, rowRect: rowRect, hovered: hoveredLine == line - 1)
             }
             // 删除红三角只在行首画一次
             if isFirstFragment, deletionAtLine[line - 1] != nil {
@@ -1111,7 +1161,7 @@ final class LineNumberRulerView: NSRulerView {
                 let text = "\(line)" as NSString
                 let size = text.size(withAttributes: attributes)
                 text.draw(
-                    at: NSPoint(x: bounds.width - size.width - 6, y: y + (fragmentRect.height - size.height) / 2),
+                    at: NSPoint(x: bounds.width - size.width - numberRightPadding, y: y + (fragmentRect.height - size.height) / 2),
                     withAttributes: attributes
                 )
             }
@@ -1126,7 +1176,7 @@ final class LineNumberRulerView: NSRulerView {
             let rowRect = NSRect(x: 0, y: y, width: bounds.width, height: fragmentRect.height)
             visibleRows.append((line: line - 1, rect: rowRect))
             if let hunk = hunkAtLine[line - 1] {
-                drawChangeBar(hunk.kind, rowRect: rowRect)
+                drawChangeBar(hunk.kind, rowRect: rowRect, hovered: hoveredLine == line - 1)
             }
             if deletionAtLine[line - 1] != nil {
                 drawDeletionTriangle(atBoundaryY: y)
@@ -1135,14 +1185,14 @@ final class LineNumberRulerView: NSRulerView {
                 let text = "\(line)" as NSString
                 let size = text.size(withAttributes: attributes)
                 text.draw(
-                    at: NSPoint(x: bounds.width - size.width - 6, y: y + (fragmentRect.height - size.height) / 2),
+                    at: NSPoint(x: bounds.width - size.width - numberRightPadding, y: y + (fragmentRect.height - size.height) / 2),
                     withAttributes: attributes
                 )
             }
         }
     }
 
-    // MARK: - 悬浮看具体变动
+    // MARK: - 改动条:悬浮加宽,点击展开变动预览
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -1156,17 +1206,35 @@ final class LineNumberRulerView: NSRulerView {
         trackingArea = area
     }
 
+    /// 鼠标所在的改动行(0 基),无则 nil。
+    private func changedLine(at point: NSPoint) -> Int? {
+        guard let row = visibleRows.first(where: { $0.rect.contains(point) }) else { return nil }
+        return (hunkAtLine[row.line] ?? deletionAtLine[row.line]) != nil ? row.line : nil
+    }
+
     override func mouseMoved(with event: NSEvent) {
+        // 悬浮在改动行上 → 把该行改动条加宽(仅重绘,不弹窗;点击才弹)。
+        let line = changedLine(at: convert(event.locationInWindow, from: nil))
+        if line != hoveredLine {
+            hoveredLine = line
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredLine != nil { hoveredLine = nil; needsDisplay = true }
+    }
+
+    override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        // 命中某可见行；该行有改动 hunk 就弹卡，否则收起
         guard let row = visibleRows.first(where: { $0.rect.contains(point) }),
               let hunk = hunkAtLine[row.line] ?? deletionAtLine[row.line] else {
-            dismissHoverPopover()
+            super.mouseDown(with: event)
             return
         }
-        if hoveredHunkStart == hunk.newStart, hoverPopover.isShown { return }
-        hoveredHunkStart = hunk.newStart
-        let anchor = NSRect(x: bounds.width - 6, y: row.rect.minY, width: 4, height: row.rect.height)
+        // 从这一行往右展开一张变动预览卡(像在选中行处再开一个小编辑器)。
+        let anchor = NSRect(x: bounds.width - gutterRightInset - barHoverWidth,
+                            y: row.rect.minY, width: barHoverWidth, height: row.rect.height)
         let host = NSHostingController(rootView: ChangeHunkCard(hunk: hunk))
         host.sizingOptions = [.preferredContentSize]
         hoverPopover.contentViewController = host
@@ -1174,10 +1242,7 @@ final class LineNumberRulerView: NSRulerView {
         hoverPopover.show(relativeTo: anchor, of: self, preferredEdge: .maxX)
     }
 
-    override func mouseExited(with event: NSEvent) { dismissHoverPopover() }
-
     private func dismissHoverPopover() {
-        hoveredHunkStart = nil
         if hoverPopover.isShown { hoverPopover.close() }
     }
 }
