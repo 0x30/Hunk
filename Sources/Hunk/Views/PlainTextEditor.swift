@@ -107,6 +107,14 @@ struct PlainTextEditor: NSViewRepresentable {
         scrollView.rulersVisible = true
         context.coordinator.ruler = ruler
 
+        // 内联变动预览:点改动条 → 在该行下方就地展开差异(段后空白撑出空隙,面板嵌进去)。
+        ruler.onClickChange = { [weak coordinator = context.coordinator] line, hunk in
+            coordinator?.openChangePeek(line: line, hunk: hunk)
+        }
+        textView.onCancel = { [weak coordinator = context.coordinator] in
+            coordinator?.closeChangePeekIfOpen() ?? false
+        }
+
         // 光标行尾的 blame 注解（可悬浮/点击弹出提交卡）
         let blameLabel = BlameLabel()
         blameLabel.font = .systemFont(ofSize: 11)
@@ -271,6 +279,14 @@ struct PlainTextEditor: NSViewRepresentable {
         /// 当前已应用同词高亮的范围（临时属性，clear 时逐个撤销）
         private var occurrenceRanges: [NSRange] = []
 
+        // MARK: 内联变动预览(VS Code 式:点改动条 → 在该行下方撑开一段显示差异)
+        private var peekHunk: LineDiff.Hunk?
+        private var peekLine: Int?            // 锚定行(0 基)
+        private var peekAnchorRange: NSRange? // 锚行字符范围,段后空白加在它上面
+        private var peekAnchorGlyph: Int?     // 锚行末字符的 glyph,定位面板用
+        private var peekHeight: CGFloat = 0   // 预留空白高度
+        private var peekView: NSView?
+
         init(parent: PlainTextEditor) {
             self.parent = parent
         }
@@ -282,8 +298,137 @@ struct PlainTextEditor: NSViewRepresentable {
             ruler?.invalidateLineIndex()
             invalidateLineCache()
             clearOccurrenceHighlights()  // 编辑后旧范围失配，先清；选区变化会重算
+            closeChangePeek()            // 行号/偏移变了,内联预览锚点失效,先收起
             scheduleHighlight()
             scheduleGutterDiff()
+        }
+
+        // MARK: - 内联变动预览
+
+        /// 点改动条:在该行下方就地展开预览。再点同一处则收起(切换)。
+        func openChangePeek(line: Int, hunk: LineDiff.Hunk) {
+            if peekView != nil, peekLine == line { closeChangePeek(); return }
+            guard let textView, let lm = textView.layoutManager, let container = textView.textContainer,
+                  let ruler, let range = ruler.characterRange(forLine: line)
+            else { return }
+            if peekView != nil { restorePeekSpacing() }  // 换一处:先把旧锚行空白复原
+            removePeekState()
+
+            peekHunk = hunk
+            peekLine = line
+            peekAnchorRange = range
+            peekAnchorGlyph = lm.glyphIndexForCharacter(at: max(range.location, NSMaxRange(range) - 1))
+
+            // 面板尺寸:宽度跟内容区,高度按差异行数估算(封顶 240),都用确定值避免 ScrollView 量高发飘。
+            let inset = textView.textContainerInset
+            let width = max(120, container.size.width - inset.width * 2)
+            let rows = (hunk.kind == .added ? 0 : hunk.oldLines.count)
+                     + (hunk.kind == .deleted ? 0 : hunk.newLines.count)
+            let rowH = SettingsStore.shared.editorFontSize * 1.7
+            let bodyH = min(max(CGFloat(rows) * rowH + 8, rowH + 8), 240)
+            let contentH = 28 + 1 + bodyH      // 工具栏 + 分隔线 + 差异区
+            peekHeight = contentH + 10         // 上下留气口
+
+            let sorted = ruler.changeHunks.sorted { $0.newStart < $1.newStart }
+            let idx = sorted.firstIndex { $0.newStart == hunk.newStart && $0.kind == hunk.kind }
+            let position = idx.map { "\($0 + 1) / \(sorted.count)" } ?? ""
+
+            let panel = ChangePeekPanel(
+                hunk: hunk, width: width, bodyHeight: bodyH, position: position,
+                onPrev: { [weak self] in self?.stepChangePeek(-1) },
+                onNext: { [weak self] in self?.stepChangePeek(1) },
+                onClose: { [weak self] in self?.closeChangePeek() }
+            )
+            let host = NSHostingView(rootView: panel)
+            host.frame = NSRect(x: 0, y: 0, width: width, height: contentH)
+            textView.addSubview(host)
+            peekView = host
+
+            // 用「段后空白」在锚行下方撑出 peekHeight 的空隙,把后续文本顶下去。
+            // 改段落属性(非文本)既不弄脏文档,在非连续布局下也比布局代理可靠。
+            applyPeekSpacing(peekHeight)
+            (textView as? OverscrollTextView)?.setFrameSize(textView.frame.size)
+            DispatchQueue.main.async { [weak self] in self?.positionChangePeek() }
+        }
+
+        private func peekBaseStyle() -> NSParagraphStyle {
+            PlainTextEditor.lineParagraphStyle(parent.lineHeight, font: SettingsStore.shared.editorNSFont)
+        }
+
+        /// 给锚行加段后空白(撑出空隙)。
+        private func applyPeekSpacing(_ spacing: CGFloat) {
+            guard let storage = textView?.textStorage, let range = peekAnchorRange,
+                  NSMaxRange(range) <= storage.length else { return }
+            let style = peekBaseStyle().mutableCopy() as! NSMutableParagraphStyle
+            style.paragraphSpacing = spacing
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+
+        /// 复原锚行段落属性(去掉段后空白)。
+        private func restorePeekSpacing() {
+            guard let storage = textView?.textStorage, let range = peekAnchorRange,
+                  NSMaxRange(range) <= storage.length else { return }
+            storage.addAttribute(.paragraphStyle, value: peekBaseStyle(), range: range)
+        }
+
+        /// 语法高亮会用整篇段落样式覆盖锚行 → 若预览还开着,补回段后空白并重新摆位。
+        func reapplyPeekSpacingIfNeeded() {
+            guard peekView != nil else { return }
+            applyPeekSpacing(peekHeight)
+            (textView as? OverscrollTextView)?.setFrameSize(textView?.frame.size ?? .zero)
+            DispatchQueue.main.async { [weak self] in self?.positionChangePeek() }
+        }
+
+        /// 上一处/下一处改动:滚过去并在那儿重开预览。
+        private func stepChangePeek(_ delta: Int) {
+            guard let ruler, let cur = peekHunk else { return }
+            let sorted = ruler.changeHunks.sorted { $0.newStart < $1.newStart }
+            guard let idx = sorted.firstIndex(where: { $0.newStart == cur.newStart && $0.kind == cur.kind }),
+                  sorted.indices.contains(idx + delta) else { return }
+            let next = sorted[idx + delta]
+            parent.scrollToLine = next.newStart + 1   // 1 基,触发编辑器滚动
+            DispatchQueue.main.async { [weak self] in
+                self?.openChangePeek(line: next.newStart, hunk: next)
+            }
+        }
+
+        /// 把面板摆到锚行文字下方那段空隙里(段后空白的上沿)。
+        private func positionChangePeek() {
+            guard let textView, let lm = textView.layoutManager,
+                  let container = textView.textContainer,
+                  let host = peekView, let anchorGlyph = peekAnchorGlyph,
+                  anchorGlyph < lm.numberOfGlyphs else { return }
+            let used = lm.lineFragmentUsedRect(forGlyphAt: anchorGlyph, effectiveRange: nil)
+            let origin = textView.textContainerOrigin
+            let inset = textView.textContainerInset
+            let width = max(120, container.size.width - inset.width * 2)
+            host.frame = NSRect(x: origin.x, y: used.maxY + origin.y + 5,
+                                width: width, height: host.frame.height)
+        }
+
+        @discardableResult
+        func closeChangePeekIfOpen() -> Bool {
+            guard peekView != nil else { return false }
+            closeChangePeek()
+            return true
+        }
+
+        func closeChangePeek() {
+            guard peekView != nil else { return }
+            restorePeekSpacing()                 // 撤空白,下方文本归位
+            removePeekState()
+            (textView as? OverscrollTextView)?.setFrameSize(textView?.frame.size ?? .zero)
+        }
+
+        /// 清面板与预览状态(不碰段落属性——那由 restorePeekSpacing 负责)。
+        private func removePeekState() {
+            peekView?.removeFromSuperview()
+            peekView = nil
+            peekHunk = nil
+            peekLine = nil
+            peekHeight = 0
+            peekAnchorRange = nil
+            peekAnchorGlyph = nil
         }
 
         /// 底部留约半屏空白，末行可以滚到视野中上部。
@@ -531,6 +676,7 @@ struct PlainTextEditor: NSViewRepresentable {
 
             applyConflictBackgrounds(storage: storage, nsString: nsString)
             storage.endEditing()
+            reapplyPeekSpacingIfNeeded()  // 整篇段落样式刚被覆盖,补回预览的段后空白
         }
 
         /// 为冲突块上背景色：当前侧绿色、传入侧蓝色、标记行灰色。
@@ -668,6 +814,13 @@ final class OverscrollTextView: NSTextView {
     private var resizing = false
     /// 拖入的文件 URL 交给上层处理(打开文件/文件夹);设了它就拦下文件拖拽,不走默认插文本。
     var onDropURLs: (([URL]) -> Void)?
+    /// Esc:若有内联变动预览开着就先收起它(返回 true 表示已消费)。
+    var onCancel: (() -> Bool)?
+
+    override func cancelOperation(_ sender: Any?) {
+        if onCancel?() == true { return }
+        super.cancelOperation(sender)
+    }
 
     // MARK: - 拖入文件 → 打开(而非把内容/路径插进文本)
 
@@ -979,7 +1132,8 @@ final class LineNumberRulerView: NSRulerView {
     /// 本次绘制记录的可见行矩形（标尺坐标系），供悬浮命中测试。
     private var visibleRows: [(line: Int, rect: NSRect)] = []
     private var trackingArea: NSTrackingArea?
-    private let hoverPopover = NSPopover()
+    /// 点击改动条:把(改动行 0 基, 所属 hunk)交给上层在编辑器里就地展开变动预览。
+    var onClickChange: ((Int, LineDiff.Hunk) -> Void)?
     /// 当前鼠标悬停的改动行(0 基)；用于把改动竖线加宽(VS Code 式:平时窄,悬浮变宽)。
     private var hoveredLine: Int?
 
@@ -993,9 +1147,6 @@ final class LineNumberRulerView: NSRulerView {
         self.textView = textView
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
-        // 点击改动条弹出「变动预览」卡:.transient 让点别处自动收起(像钉了一下的小窗)。
-        hoverPopover.behavior = .transient
-        hoverPopover.animates = false
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(needsRedraw),
@@ -1060,7 +1211,6 @@ final class LineNumberRulerView: NSRulerView {
 
     @objc private func needsRedraw() {
         needsDisplay = true
-        dismissHoverPopover()   // 滚动后锚点失位，先收起悬浮卡
     }
 
     func invalidateLineIndex() {
@@ -1097,6 +1247,17 @@ final class LineNumberRulerView: NSRulerView {
     func lineNumber(forCharacterPublic location: Int) -> Int {
         rebuildLineIndexIfNeeded()
         return lineNumber(forCharacter: location)
+    }
+
+    /// 第 line 行（0 基）的字符范围（含行尾换行）；越界返回 nil。供内联变动预览定位锚点。
+    func characterRange(forLine line: Int) -> NSRange? {
+        rebuildLineIndexIfNeeded()
+        guard line >= 0, line < lineStarts.count, let textView else { return nil }
+        let start = lineStarts[line]
+        let end = line + 1 < lineStarts.count
+            ? lineStarts[line + 1]
+            : (textView.string as NSString).length
+        return NSRange(location: start, length: max(0, end - start))
     }
 
     /// 字符偏移所在行号（1 基）。
@@ -1206,15 +1367,21 @@ final class LineNumberRulerView: NSRulerView {
         trackingArea = area
     }
 
-    /// 鼠标所在的改动行(0 基),无则 nil。
-    private func changedLine(at point: NSPoint) -> Int? {
+    /// 命中点对应的改动(行 0 基, hunk),无则 nil。
+    /// 删除三角画在行边界(本行顶 = 上一行底),所以点本行或点上一行的下缘都该命中本行的删除:
+    /// 依次查 本行改动竖线 → 本行删除三角 → 下一行的删除三角(其三角落在本行底缘)。
+    private func changeHit(at point: NSPoint) -> (line: Int, hunk: LineDiff.Hunk)? {
         guard let row = visibleRows.first(where: { $0.rect.contains(point) }) else { return nil }
-        return (hunkAtLine[row.line] ?? deletionAtLine[row.line]) != nil ? row.line : nil
+        let l = row.line
+        if let h = hunkAtLine[l] { return (l, h) }
+        if let h = deletionAtLine[l] { return (l, h) }
+        if let h = deletionAtLine[l + 1] { return (l + 1, h) }
+        return nil
     }
 
     override func mouseMoved(with event: NSEvent) {
         // 悬浮在改动行上 → 把该行改动条加宽(仅重绘,不弹窗;点击才弹)。
-        let line = changedLine(at: convert(event.locationInWindow, from: nil))
+        let line = changeHit(at: convert(event.locationInWindow, from: nil))?.line
         if line != hoveredLine {
             hoveredLine = line
             needsDisplay = true
@@ -1226,32 +1393,28 @@ final class LineNumberRulerView: NSRulerView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        guard let row = visibleRows.first(where: { $0.rect.contains(point) }),
-              let hunk = hunkAtLine[row.line] ?? deletionAtLine[row.line] else {
+        guard let hit = changeHit(at: convert(event.locationInWindow, from: nil)) else {
             super.mouseDown(with: event)
             return
         }
-        // 从这一行往右展开一张变动预览卡(像在选中行处再开一个小编辑器)。
-        let anchor = NSRect(x: bounds.width - gutterRightInset - barHoverWidth,
-                            y: row.rect.minY, width: barHoverWidth, height: row.rect.height)
-        let host = NSHostingController(rootView: ChangeHunkCard(hunk: hunk))
-        host.sizingOptions = [.preferredContentSize]
-        hoverPopover.contentViewController = host
-        if hoverPopover.isShown { hoverPopover.close() }
-        hoverPopover.show(relativeTo: anchor, of: self, preferredEdge: .maxX)
-    }
-
-    private func dismissHoverPopover() {
-        if hoverPopover.isShown { hoverPopover.close() }
+        // 在编辑器里就地展开变动预览(下方插一段,像 VS Code 的内联差异)。
+        onClickChange?(hit.line, hit.hunk)
     }
 }
 
-// MARK: - 改动悬浮卡（展示某 hunk 的旧/新行）
+// MARK: - 内联变动预览面板（就地展开,展示某 hunk 的旧/新行）
 
-/// 行号槽竖线/三角的悬浮卡：标题给出改动类型，下面按红(旧)/绿(新)列出具体行。
-private struct ChangeHunkCard: View {
+/// 点击行号槽改动条后,在编辑器里那一行下方展开的内联面板:
+/// 顶部一条工具栏(改动类型 · 第几处/共几处 · 上一处/下一处/关闭),下面按红(旧)/绿(新)列出具体行。
+struct ChangePeekPanel: View {
     let hunk: LineDiff.Hunk
+    let width: CGFloat
+    let bodyHeight: CGFloat
+    /// "2 / 5" 之类的位置标记;空串则不显示。
+    let position: String
+    var onPrev: () -> Void
+    var onNext: () -> Void
+    var onClose: () -> Void
 
     private var title: String {
         switch hunk.kind {
@@ -1264,43 +1427,92 @@ private struct ChangeHunkCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-            if !hunk.oldLines.isEmpty || !hunk.newLines.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 1) {
-                        if hunk.kind != .added {
-                            ForEach(Array(hunk.oldLines.enumerated()), id: \.offset) { _, line in
-                                diffLine("−", line, .red)
-                            }
-                        }
-                        if hunk.kind != .deleted {
-                            ForEach(Array(hunk.newLines.enumerated()), id: \.offset) { _, line in
-                                diffLine("+", line, .green)
-                            }
+        VStack(spacing: 0) {
+            // 工具栏
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 6)
+                if !position.isEmpty {
+                    Text(position)
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                toolButton("chevron.up", help: tr("上一处改动", "Previous change"), action: onPrev)
+                toolButton("chevron.down", help: tr("下一处改动", "Next change"), action: onNext)
+                toolButton("xmark", help: tr("关闭（Esc）", "Close (Esc)"), action: onClose)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    if hunk.kind != .added {
+                        ForEach(Array(hunk.oldLines.enumerated()), id: \.offset) { i, line in
+                            diffLine(old: hunk.oldStart + i + 1, new: nil, "−", line, .red)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if hunk.kind != .deleted {
+                        ForEach(Array(hunk.newLines.enumerated()), id: \.offset) { i, line in
+                            diffLine(old: nil, new: hunk.newStart + i + 1, "+", line, .green)
+                        }
+                    }
                 }
-                .frame(maxHeight: 220)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
             }
+            .frame(height: bodyHeight)
         }
-        .padding(10)
-        .frame(width: 420)
+        .frame(width: width)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
     }
 
-    private func diffLine(_ sign: String, _ text: String, _ color: Color) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+    private func toolButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// 行号列宽:按 hunk 里出现的最大行号位数估算。
+    private var numColWidth: CGFloat {
+        let maxNo = max(hunk.oldStart + hunk.oldLines.count, hunk.newStart + hunk.newLines.count)
+        return CGFloat(String(max(1, maxNo)).count) * 8 + 6
+    }
+
+    /// 一行内联差异:左侧旧/新两列行号(只在对应侧有值),再 −/+ 号与文本。
+    private func diffLine(old: Int?, new: Int?, _ sign: String, _ text: String, _ color: Color) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(old.map(String.init) ?? "")
+                .frame(width: numColWidth, alignment: .trailing)
+                .foregroundStyle(.tertiary)
+            Text(new.map(String.init) ?? "")
+                .frame(width: numColWidth, alignment: .trailing)
+                .foregroundStyle(.tertiary)
+                .padding(.trailing, 8)
             Text(sign)
                 .foregroundStyle(color)
+                .frame(width: 10, alignment: .leading)
             Text(text.isEmpty ? " " : text)
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
+            Spacer(minLength: 0)
         }
         .font(SettingsStore.shared.editorFont)
-        .padding(.horizontal, 6)
+        .padding(.leading, 8)
+        .padding(.trailing, 8)
         .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.12))

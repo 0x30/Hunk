@@ -9,6 +9,8 @@ public enum LineDiff {
         public let kind: Kind
         /// 新文本中的起始行（0 基）。
         public let newStart: Int
+        /// 旧文本（基线）中的起始行（0 基）；供内联预览显示旧侧行号。
+        public let oldStart: Int
         /// 新文本中覆盖的行数（纯删除为 0）。
         public let newCount: Int
         /// 被替换/删除的旧行文本（修改、删除时非空）。
@@ -16,9 +18,10 @@ public enum LineDiff {
         /// 新增/修改后的新行文本（删除时为空）。
         public let newLines: [String]
 
-        public init(kind: Kind, newStart: Int, newCount: Int, oldLines: [String], newLines: [String]) {
+        public init(kind: Kind, newStart: Int, oldStart: Int, newCount: Int, oldLines: [String], newLines: [String]) {
             self.kind = kind
             self.newStart = newStart
+            self.oldStart = oldStart
             self.newCount = newCount
             self.oldLines = oldLines
             self.newLines = newLines
@@ -73,6 +76,7 @@ public enum LineDiff {
             hunks.append(Hunk(
                 kind: kind,
                 newStart: hunkNewStart,
+                oldStart: hunkOldStart,
                 newCount: newSlice.count,
                 oldLines: oldSlice,
                 newLines: newSlice
