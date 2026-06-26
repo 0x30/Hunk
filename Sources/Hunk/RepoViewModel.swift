@@ -1327,25 +1327,29 @@ final class RepoViewModel: ObservableObject {
         let wasActive = activeDetail == .file(path)
         openTabs.remove(at: index)
         buffers[path] = nil
-        guard editorPath == path else { return }  // 关的不是当前编辑文件:列表移除即可
-        if openTabs.isEmpty {
+
+        // editorPath 仍指向被关文件(它正被编辑器持有,哪怕此刻在看它的 diff):必须清空。
+        // 否则随后激活别的标签时,openEditor 开头的 stashActiveBuffer 会把「还留在 editorText
+        // 里的这份陈旧文本」按 editorPath 写回邻居缓冲,把邻居标签弄空/串台(⌘W 关 B 却把 A 清空)。
+        if editorPath == path {
             editorPath = nil
             editorText = ""
             editorDirty = false
-            if wasActive { activateFallback() }  // 正显示它:回退到视图标签或空
+            editorBaseline = nil
+        }
+
+        guard wasActive else { return }  // 关的不是当前激活标签:列表移除即可,不切显示
+
+        // 关的是当前激活标签:回到上一个看过的(访问历史),其次相邻文件,再次视图标签,最后清空
+        if let prev = popHistory() {
+            activate(prev)
+        } else if !openTabs.isEmpty {
+            selectTab(openTabs[min(index, openTabs.count - 1)])
+        } else if let v = openViewTabs.last {
+            activateViewTab(v)
         } else {
-            let neighbor = openTabs[min(index, openTabs.count - 1)]
-            if wasActive {
-                if let prev = popHistory() {
-                    editorPath = neighbor   // 文件行保留一个有效的当前文件指向
-                    activate(prev)          // 回到上一个看过的标签(可能是别的文件或搜索/diff)
-                } else {
-                    selection = .file(path: neighbor)  // 无历史:退回相邻文件,didSet 激活并加载
-                    openEditor(path: neighbor)
-                }
-            } else {
-                editorPath = neighbor  // 在看 diff/提交/搜索:只把指向挪到邻居,不切显示
-            }
+            activeDetail = nil
+            selection = nil
         }
     }
 
