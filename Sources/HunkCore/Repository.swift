@@ -792,17 +792,30 @@ public final class Repository: @unchecked Sendable {
 
     // MARK: - 全局搜索
 
+    /// 搜索结果块里的一行：行号、文本、是否为命中行（命中行高亮，其余是上下文）。
+    public struct GrepLine: Hashable, Sendable {
+        public let number: Int
+        public let text: String
+        public let isMatch: Bool
+    }
+
+    /// 一段搜索结果块：同一文件中相邻（含已合并）的命中，连同其前后若干行上下文。
+    /// 多个命中挨得近时（上下文窗口相接/重叠）会并入同一块，避免重复展示中间的上下文。
     public struct GrepHit: Identifiable, Hashable, Sendable {
         public let path: String
-        public let line: Int
-        public let text: String
+        public let lines: [GrepLine]
+        /// 块内首个命中行（打开文件时定位到这里，也用作稳定 id）。
+        public var line: Int { lines.first(where: { $0.isMatch })?.number ?? lines.first?.number ?? 1 }
+        /// 块内命中行数（用于统计「N 处匹配」）。
+        public var matchCount: Int { lines.reduce(0) { $0 + ($1.isMatch ? 1 : 0) } }
         public var id: String { "\(path):\(line)" }
     }
 
     /// 全仓库内容搜索（git grep，含未跟踪文件，忽略二进制）。
     /// exact=true：区分大小写的字面量匹配（`-F`），与全仓库替换的语义一致；
     /// exact=false：不区分大小写的正则（默认，搜索更宽松）。
-    public func grep(_ query: String, exact: Bool = false, limit: Int = 400) async throws -> [GrepHit] {
+    /// 命中行会带上 `context` 行前后文；同一文件里挨得近的命中合并成一块。
+    public func grep(_ query: String, exact: Bool = false, limit: Int = 400, context: Int = 2) async throws -> [GrepHit] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
         var args = ["grep", "-n", "-I", "--untracked", "--max-count=50"]
@@ -811,7 +824,9 @@ public final class Repository: @unchecked Sendable {
         let result = try await git.run(args, allowedExitCodes: [0, 1])  // 1 = 无匹配
         guard result.exitCode == 0 else { return [] }
 
-        var hits: [GrepHit] = []
+        // 先解析出命中位置（path:line），保持 git grep 的文件出现顺序。
+        var fileOrder: [String] = []
+        var matchesByFile: [String: [(line: Int, text: String)]] = [:]
         for raw in result.stdout.split(separator: "\n").prefix(limit) {
             let line = String(raw)
             guard let firstColon = line.firstIndex(of: ":"),
@@ -823,7 +838,60 @@ public final class Repository: @unchecked Sendable {
             // （UI 本就只显示前 240 字符）。截到 500 足够展示与高亮。
             var text = String(line[line.index(after: secondColon)...])
             if text.count > 500 { text = String(text.prefix(500)) }
-            hits.append(GrepHit(path: path, line: number, text: text))
+            if matchesByFile[path] == nil { fileOrder.append(path) }
+            matchesByFile[path, default: []].append((number, text))
+        }
+
+        var hits: [GrepHit] = []
+        let ctx = max(0, context)
+        for path in fileOrder {
+            let matches = matchesByFile[path] ?? []
+            guard !matches.isEmpty else { continue }
+            let matchLines = Set(matches.map(\.line))
+            // 命中行 → 文本，读盘失败时作为兜底（无上下文，仅命中行）。
+            let matchText = Dictionary(matches.map { ($0.line, $0.text) }, uniquingKeysWith: { a, _ in a })
+
+            // 读盘取整行上下文；失败（二进制/已删）则退化为只展示命中行。
+            let fileLines: [String]?
+            if let content = try? String(contentsOf: fileURL(for: path), encoding: .utf8) {
+                fileLines = content.components(separatedBy: "\n")
+            } else {
+                fileLines = nil
+            }
+
+            // 把每个命中扩成 [line-ctx, line+ctx] 的窗口；相接/重叠的窗口合并成一块。
+            let sorted = matchLines.sorted()
+            var ranges: [(lo: Int, hi: Int)] = []
+            for m in sorted {
+                let lo = max(1, m - ctx)
+                let hi = m + ctx
+                if var last = ranges.last, lo <= last.hi + 1 {
+                    last.hi = max(last.hi, hi)
+                    ranges[ranges.count - 1] = last
+                } else {
+                    ranges.append((lo, hi))
+                }
+            }
+
+            for range in ranges {
+                var blockLines: [GrepLine] = []
+                if let fileLines {
+                    let hi = min(range.hi, fileLines.count)
+                    guard range.lo <= hi else { continue }
+                    for n in range.lo...hi {
+                        var text = fileLines[n - 1]
+                        if text.count > 500 { text = String(text.prefix(500)) }
+                        blockLines.append(GrepLine(number: n, text: text, isMatch: matchLines.contains(n)))
+                    }
+                } else {
+                    // 兜底：只列命中行本身。
+                    for n in sorted where n >= range.lo && n <= range.hi {
+                        blockLines.append(GrepLine(number: n, text: matchText[n] ?? "", isMatch: true))
+                    }
+                }
+                guard !blockLines.isEmpty else { continue }
+                hits.append(GrepHit(path: path, lines: blockLines))
+            }
         }
         return hits
     }

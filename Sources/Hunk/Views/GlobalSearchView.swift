@@ -20,6 +20,8 @@ struct SearchPanelView: View {
     private var hits: [Repository.GrepHit] { vm.globalSearchHits }
     private var needle: String { vm.globalSearchQuery.trimmingCharacters(in: .whitespaces) }
     private var fileCount: Int { Set(hits.map(\.path)).count }
+    /// 命中处数（一块可含多处命中，故按命中行累计，而非块数）。
+    private var matchCount: Int { hits.reduce(0) { $0 + $1.matchCount } }
     private var canReplace: Bool {
         effectiveExact && !needle.isEmpty && !hits.isEmpty && needle != replacement
     }
@@ -187,8 +189,8 @@ struct SearchPanelView: View {
                 ProgressView().controlSize(.small).scaleEffect(0.7)
                 Text(tr("搜索中…", "Searching…"))
             } else {
-                Text(tr("\(hits.count) 处匹配 · \(fileCount) 个文件",
-                        "\(hits.count) results in \(fileCount) files"))
+                Text(tr("\(matchCount) 处匹配 · \(fileCount) 个文件",
+                        "\(matchCount) results in \(fileCount) files"))
             }
         }
         .font(.caption.monospacedDigit())
@@ -207,9 +209,9 @@ struct SearchPanelView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         ForEach(groups, id: \.path) { group in
-                            Section(header: fileHeader(group.path, count: group.hits.count)) {
+                            Section(header: fileHeader(group.path, count: groupMatchCount(group.hits))) {
                                 ForEach(group.hits) { hit in
-                                    hitRow(hit).id(hit.id)
+                                    hitBlock(hit).id(hit.id)
                                 }
                             }
                         }
@@ -262,32 +264,59 @@ struct SearchPanelView: View {
         }
     }
 
-    private func hitRow(_ hit: Repository.GrepHit) -> some View {
+    private func groupMatchCount(_ hits: [Repository.GrepHit]) -> Int {
+        hits.reduce(0) { $0 + $1.matchCount }
+    }
+
+    /// 一段上下文块：命中行高亮，前后文淡显；逐行可点跳到该行。
+    /// 整块被选中（键盘上下移动）时背景高亮。
+    private func hitBlock(_ hit: Repository.GrepHit) -> some View {
         let isSelected = hits.indices.contains(selectedIndex) && hits[selectedIndex].id == hit.id
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("\(hit.line)")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 48, alignment: .trailing)
-            Text(highlighted(hit.text))
-                .font(.system(size: 12.5, design: .monospaced))
-                .lineLimit(1)
-            Spacer(minLength: 0)
+        // 去掉整块共同的前导缩进，省横向空间又不丢相对层级。
+        let trim = commonIndent(hit.lines)
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(hit.lines, id: \.number) { line in
+                let display = String(line.text.dropFirst(trim).prefix(240))
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("\(line.number)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 48, alignment: .trailing)
+                    Text(line.isMatch ? highlighted(display) : AttributedString(display))
+                        .font(.system(size: 12.5, design: .monospaced))
+                        .foregroundStyle(line.isMatch ? .primary : .secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(line.isMatch ? Color.accentColor.opacity(0.10) : .clear)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let i = hits.firstIndex(where: { $0.id == hit.id }) { selectedIndex = i }
+                    vm.openSearchLocation(path: hit.path, line: line.number)
+                }
+            }
         }
         .padding(.trailing, 12)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.accentColor.opacity(0.18) : .clear)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if let i = hits.firstIndex(where: { $0.id == hit.id }) { selectedIndex = i }
-            vm.openSearchResult(hit)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : .clear)
+    }
+
+    /// 块内所有非空行的最小前导空白长度（按字符数），用于统一去缩进。
+    private func commonIndent(_ lines: [Repository.GrepLine]) -> Int {
+        var minIndent = Int.max
+        for line in lines {
+            guard !line.text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            let indent = line.text.prefix { $0 == " " || $0 == "\t" }.count
+            minIndent = min(minIndent, indent)
         }
+        return minIndent == Int.max ? 0 : minIndent
     }
 
     /// 命中词高亮。
-    private func highlighted(_ text: String) -> AttributedString {
-        let display = String(text.trimmingCharacters(in: .whitespaces).prefix(240))
+    private func highlighted(_ display: String) -> AttributedString {
         var attributed = AttributedString(display)
         guard !needle.isEmpty else { return attributed }
         var searchStart = display.startIndex

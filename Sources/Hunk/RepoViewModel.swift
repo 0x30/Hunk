@@ -386,14 +386,19 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 打开全局搜索结果：跳到对应文件并滚动选中该行。
+    /// 打开全局搜索结果：跳到对应文件并滚动选中该块的首个命中行。
     func openSearchResult(_ hit: Repository.GrepHit) {
+        openSearchLocation(path: hit.path, line: hit.line)
+    }
+
+    /// 跳到指定文件的指定行（块内点具体某行时用，行号 1 起）。
+    func openSearchLocation(path: String, line: Int) {
         // 打开文件标签(让搜索标签失活、保留);revealInFiles 会设 selection=.file → activeDetail=.file
-        revealInFiles(hit.path)
+        revealInFiles(path)
         Task {
             // 等编辑器装载新文件后再滚动定位
             try? await Task.sleep(nanoseconds: 250_000_000)
-            scrollToLine = hit.line - 1
+            scrollToLine = line - 1
         }
     }
 
