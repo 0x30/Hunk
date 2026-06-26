@@ -123,12 +123,53 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 当前激活的详情标签（统一标签系统的「选中」）。变更时同步搜索可见标志。
+    /// 当前激活的详情标签（统一标签系统的「选中」）。变更时同步搜索可见标志、记访问历史。
     @Published var activeDetail: ActiveDetail? {
-        didSet { showGlobalSearch = (activeDetail == .view(.search)) }
+        didSet {
+            showGlobalSearch = (activeDetail == .view(.search))
+            recordHistory(previous: oldValue)
+        }
     }
     /// 非文件类标签（diff/提交/比较/搜索），可同时存在多个，各自独立。
     @Published var openViewTabs: [ViewTab] = []
+
+    /// 标签访问历史（MRU，最近访问的「上一个」在末尾，不含当前标签）。
+    /// 关闭当前标签时据此回到上一个看过的标签，而非空间上的相邻标签。
+    private var detailHistory: [ActiveDetail] = []
+
+    /// 某标签当前是否仍开着（用于过滤历史里已关闭的脏条目）。
+    private func isOpen(_ detail: ActiveDetail) -> Bool {
+        switch detail {
+        case .file(let p): return openTabs.contains(p)
+        case .view(let t): return openViewTabs.contains(t)
+        }
+    }
+
+    /// 每次激活变更时调用：把「上一个」记进历史（仅当它仍开着，避免脏数据）。
+    private func recordHistory(previous: ActiveDetail?) {
+        guard previous != activeDetail else { return }
+        if let cur = activeDetail { detailHistory.removeAll { $0 == cur } }  // 当前的不算「上一个」
+        guard let prev = previous, isOpen(prev) else { return }
+        detailHistory.removeAll { $0 == prev }  // 去重后挪到末尾(最近)
+        detailHistory.append(prev)
+        if detailHistory.count > 50 { detailHistory.removeFirst(detailHistory.count - 50) }
+    }
+
+    /// 弹出历史里最近一个仍开着的标签（跳过已关闭的）。
+    private func popHistory() -> ActiveDetail? {
+        while let last = detailHistory.popLast() {
+            if isOpen(last) { return last }
+        }
+        return nil
+    }
+
+    /// 激活某标签（文件走编辑器、视图走对应内容加载）。
+    private func activate(_ detail: ActiveDetail) {
+        switch detail {
+        case .file(let p): selectTab(p)
+        case .view(let t): activateViewTab(t)
+        }
+    }
 
     // MARK: Diff 详情
 
@@ -208,8 +249,10 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 统一标签：激活 / 打开 / 关闭
 
-    /// 关闭当前标签后，激活并加载一个仍存在的标签（当前文件优先，其次任意文件，再其次视图标签）。
+    /// 关闭当前标签后，激活并加载一个仍存在的标签：优先回到「上一个看过的」(访问历史)，
+    /// 其次当前文件、任意文件，再其次视图标签。
     private func activateFallback() {
+        if let prev = popHistory() { activate(prev); return }
         if let p = editorPath, openTabs.contains(p) { selectTab(p); return }
         if let first = openTabs.first { selectTab(first); return }
         if let v = openViewTabs.last { activateViewTab(v); return }
@@ -692,6 +735,7 @@ final class RepoViewModel: ObservableObject {
         showGlobalSearch = false
         globalSearchHits = []
         openViewTabs = []
+        detailHistory = []
         activeDetail = nil
         // 换根重置文件树展开状态，让新根重新做首层展开
         fileTreeExpanded = []
@@ -776,6 +820,7 @@ final class RepoViewModel: ObservableObject {
         showGlobalSearch = false
         globalSearchHits = []
         openViewTabs = []
+        detailHistory = []
         activeDetail = nil
         defaults.removeObject(forKey: "lastRepo")
     }
@@ -1291,8 +1336,13 @@ final class RepoViewModel: ObservableObject {
         } else {
             let neighbor = openTabs[min(index, openTabs.count - 1)]
             if wasActive {
-                selection = .file(path: neighbor)  // didSet → 激活并加载邻居
-                openEditor(path: neighbor)
+                if let prev = popHistory() {
+                    editorPath = neighbor   // 文件行保留一个有效的当前文件指向
+                    activate(prev)          // 回到上一个看过的标签(可能是别的文件或搜索/diff)
+                } else {
+                    selection = .file(path: neighbor)  // 无历史:退回相邻文件,didSet 激活并加载
+                    openEditor(path: neighbor)
+                }
             } else {
                 editorPath = neighbor  // 在看 diff/提交/搜索:只把指向挪到邻居,不切显示
             }
