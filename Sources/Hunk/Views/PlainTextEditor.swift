@@ -36,9 +36,17 @@ struct PlainTextEditor: NSViewRepresentable {
     var highlightOccurrences: Bool = true
 
     /// 行高:按倍数生成段落样式。等宽字体默认行距偏紧,调大更透气。
-    static func lineParagraphStyle(_ multiple: Double) -> NSParagraphStyle {
+    ///
+    /// 用「固定像素行高」(min==max) 而非 lineHeightMultiple:
+    /// - 倍数会随行内最高字体放大,SF Mono 没有中文字形会回退到苹方,
+    ///   导致夹了中文的行突然变高;固定值则与回退字体无关,每行等高。
+    /// - lineHeightMultiple 只撑大行框、光标仍按字体自然高顶端对齐(下方留空,
+    ///   看着比行矮);固定行高时光标会撑满整行。
+    static func lineParagraphStyle(_ multiple: Double, font: NSFont) -> NSParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineHeightMultiple = multiple
+        let h = ceil((font.ascender - font.descender + font.leading) * multiple)
+        p.minimumLineHeight = h
+        p.maximumLineHeight = h
         return p
     }
 
@@ -81,9 +89,10 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.smartInsertDeleteEnabled = false
         textView.usesFindBar = true
         textView.textContainerInset = NSSize(width: 6, height: 8)
-        textView.font = SettingsStore.shared.editorNSFont
-        textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
-        textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
+        let editorFont = SettingsStore.shared.editorNSFont
+        textView.font = editorFont
+        textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight, font: editorFont)
+        textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight, font: editorFont)
         textView.delegate = context.coordinator
         // 惰性布局：只排版可见区域，大文件不再一次性全文布局（卡死主因之一）
         textView.layoutManager?.allowsNonContiguousLayout = true
@@ -188,8 +197,9 @@ struct PlainTextEditor: NSViewRepresentable {
             coordinator.highlightNow()
         } else if coordinator.lastLineHeight != lineHeight {
             // 行高设置改变后重新应用段落样式
-            textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight)
-            textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight)
+            let editorFont = SettingsStore.shared.editorNSFont
+            textView.defaultParagraphStyle = PlainTextEditor.lineParagraphStyle(lineHeight, font: editorFont)
+            textView.typingAttributes[.paragraphStyle] = PlainTextEditor.lineParagraphStyle(lineHeight, font: editorFont)
             coordinator.highlightNow()
         }
 
@@ -493,7 +503,7 @@ struct PlainTextEditor: NSViewRepresentable {
             storage.setAttributes([
                 .font: settings.editorNSFont,
                 .foregroundColor: theme.editorForeground ?? NSColor.labelColor,
-                .paragraphStyle: PlainTextEditor.lineParagraphStyle(parent.lineHeight),
+                .paragraphStyle: PlainTextEditor.lineParagraphStyle(parent.lineHeight, font: settings.editorNSFont),
             ], range: fullRange)
 
             lastLanguageOverride = parent.languageOverride

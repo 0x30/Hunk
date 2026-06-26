@@ -153,7 +153,10 @@ final class SelectableDiffTextView: NSTextView {
         lineSpans = built.spans
         // 行高:与编辑器同源,套到整段。空行/换行也用得上,故同时设 defaultParagraphStyle。
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = lineHeight
+        // 固定像素行高(min==max),与编辑器同策略:中文回退到苹方时行高不跳、整行底色对齐。
+        let h = ceil((font.ascender - font.descender + font.leading) * lineHeight)
+        style.minimumLineHeight = h
+        style.maximumLineHeight = h
         let attributed = NSMutableAttributedString(attributedString: built.attributed)
         attributed.addAttribute(.paragraphStyle, value: style,
                                 range: NSRange(location: 0, length: attributed.length))
