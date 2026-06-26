@@ -73,6 +73,9 @@ private final class FocusReportingTerminalView: LocalProcessTerminalView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // 拖文件进终端 → 把路径送进 shell 输入(像 macOS 终端那样),而非冒泡到窗口的
+        // 「该文件不在当前仓库内」拖拽逻辑。注册在这里避免动 SwiftTerm 的 init。
+        registerForDraggedTypes([.fileURL])
         guard let window else {
             observation = nil
             report(false)
@@ -94,6 +97,38 @@ private final class FocusReportingTerminalView: LocalProcessTerminalView {
         guard focused != lastReported else { return }
         lastReported = focused
         onFocusChange?(focused)
+    }
+
+    // MARK: 拖入文件 → 插入路径
+
+    private func droppedFileURLs(_ sender: NSDraggingInfo) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self], options: options) as? [URL], !urls.isEmpty
+        else { return nil }
+        return urls
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(sender) != nil ? .copy : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(sender) != nil ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedFileURLs(sender) else { return super.performDragOperation(sender) }
+        let text = urls.map { Self.shellQuoted($0.path) }.joined(separator: " ") + " "
+        send(txt: text)
+        return true
+    }
+
+    /// 路径含空格/特殊字符时用单引号包起来;路径内的单引号转义成 '\''。
+    private static func shellQuoted(_ path: String) -> String {
+        let safe = path.allSatisfy { $0.isLetter || $0.isNumber || "._-/".contains($0) }
+        if safe { return path }
+        return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
 
