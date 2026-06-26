@@ -72,6 +72,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
+
+    /// ⌘Q / 退出前：任一窗口有未保存改动就拦下来,弹「全部保存 / 不保存 / 取消」。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let dirty = RepoViewModel.instances.allObjects.filter { $0.hasUnsavedChanges() }
+            guard !dirty.isEmpty else { return .terminateNow }
+
+            let alert = NSAlert()
+            alert.messageText = tr("有未保存的修改", "You have unsaved changes")
+            alert.informativeText = tr("退出前是否保存所有改动?", "Save all changes before quitting?")
+            alert.addButton(withTitle: tr("全部保存", "Save All"))
+            alert.addButton(withTitle: tr("不保存", "Don't Save"))
+            alert.addButton(withTitle: tr("取消", "Cancel"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:            // 全部保存后再退
+                Task { @MainActor in
+                    for vm in dirty { await vm.saveAllDirty() }
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+                return .terminateLater
+            case .alertSecondButtonReturn:           // 不保存,直接退
+                return .terminateNow
+            default:                                 // 取消
+                return .terminateCancel
+            }
+        }
+    }
+}
+
+/// 关窗口前查未保存改动的窗口代理：拦 windowShouldClose,其余事件转发给 SwiftUI 原代理。
+final class WindowCloseGuard: NSObject, NSWindowDelegate {
+    weak var vm: RepoViewModel?
+    weak var original: NSWindowDelegate?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if let vm, vm.hasUnsavedChanges() {
+            vm.confirmCloseWindow(sender)   // 异步弹 sheet,先别关
+            return false
+        }
+        return original?.windowShouldClose?(sender) ?? true
+    }
+
+    // 未实现的 NSWindowDelegate 方法转发给 SwiftUI 原代理,别破坏其窗口管理
+    override func responds(to aSelector: Selector!) -> Bool {
+        super.responds(to: aSelector) || (original?.responds(to: aSelector) ?? false)
+    }
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        (original?.responds(to: aSelector) ?? false) ? original : super.forwardingTarget(for: aSelector)
+    }
 }
 
 /// 命令行打开请求的路由（VS Code 式）：
@@ -265,8 +314,11 @@ private struct WindowRoot: View {
             .environmentObject(vm)
             .frame(minWidth: 900, minHeight: 560)
             .focusedSceneObject(vm)
-            // 记录所在 NSWindow，供命令行路由聚焦窗口
-            .background(WindowAccessor { vm.window = $0 })
+            // 记录所在 NSWindow（供命令行路由聚焦），并装上「关闭前查未保存」代理
+            .background(WindowAccessor { window in
+                vm.window = window
+                if let window { vm.installCloseGuard(on: window) }
+            })
     }
 }
 

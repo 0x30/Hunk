@@ -613,6 +613,8 @@ final class RepoViewModel: ObservableObject {
     static let instances = NSHashTable<RepoViewModel>.weakObjects()
     /// 所在窗口（WindowAccessor 注入），用于聚焦
     weak var window: NSWindow?
+    /// 关窗口前查未保存的代理；window.delegate 是 weak，这里强持有。
+    private var closeGuard: WindowCloseGuard?
     /// 请求在新窗口打开仓库：由 ContentView 调用 openWindow 兑现
     @Published var openWindowRequest: String?
 
@@ -1479,6 +1481,77 @@ final class RepoViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - 关窗口 / 退出前的未保存提示
+
+    /// 本窗口是否有未保存改动（当前文件或任一缓冲）。
+    func hasUnsavedChanges() -> Bool {
+        if editorDirty { return true }
+        return buffers.values.contains { $0.dirty }
+    }
+
+    /// 放弃本窗口所有未保存改动（只清脏标记，不写盘）。关窗口选「不保存」时用——
+    /// 顺带让随后的退出检查不再把它当脏窗口，避免「关窗口」和「退出」各弹一次。
+    func discardAllDirty() {
+        editorDirty = false
+        for key in buffers.keys where buffers[key]?.dirty == true {
+            buffers[key]?.dirty = false
+        }
+    }
+
+    /// 落盘本窗口所有已命名的脏标签（当前文件 + 各缓冲）。未命名缓冲需另存对话框，这里跳过。
+    func saveAllDirty() async {
+        stashActiveBuffer()  // 当前编辑内容先刷回缓冲，统一从 buffers 落盘
+        for (path, buffer) in buffers where buffer.dirty && !isUntitled(path) {
+            do {
+                try buffer.text.write(to: editorFileURL(path), atomically: true, encoding: .utf8)
+                buffers[path]?.dirty = false
+                if editorPath == path { editorDirty = false }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        if repo != nil { await refresh() }
+    }
+
+    /// 关窗口前确认未保存改动：弹原生 sheet（保存 / 不保存 / 取消）。
+    /// 在 windowShouldClose 里返回 false 后调用，由这里异步决定是否真的关。
+    func confirmCloseWindow(_ window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = tr("有未保存的修改", "You have unsaved changes")
+        alert.informativeText = tr("关闭窗口前是否保存?", "Save your changes before closing this window?")
+        alert.addButton(withTitle: tr("保存", "Save"))
+        alert.addButton(withTitle: tr("不保存", "Don't Save"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] resp in
+            switch resp {
+            case .alertFirstButtonReturn:            // 保存
+                Task { @MainActor in
+                    await self?.saveAllDirty()
+                    window.close()                   // close() 不再走 windowShouldClose，直接关
+                }
+            case .alertSecondButtonReturn:           // 不保存：丢弃改动再关，避免退出检查重复弹框
+                self?.discardAllDirty()
+                window.close()
+            default:                                 // 取消：什么都不做
+                break
+            }
+        }
+    }
+
+    /// 给窗口装上「关闭前查未保存」的代理（转发其余事件给 SwiftUI 原代理）。
+    func installCloseGuard(on window: NSWindow) {
+        if let existing = window.delegate as? WindowCloseGuard {
+            existing.vm = self
+            closeGuard = existing
+            return
+        }
+        let guardDelegate = WindowCloseGuard()
+        guardDelegate.vm = self
+        guardDelegate.original = window.delegate
+        window.delegate = guardDelegate
+        closeGuard = guardDelegate  // delegate 是 weak，自己强持有
     }
 
     /// 切换当前文件的 blame 视图。
