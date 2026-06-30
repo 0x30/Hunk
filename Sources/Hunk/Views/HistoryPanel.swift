@@ -363,6 +363,7 @@ struct HistoryDetailView: View {
     @EnvironmentObject var settings: SettingsStore
     /// 已折叠的目录路径（每次打开新详情时重置）
     @State private var collapsedDirs: Set<String> = []
+    @State private var fileItems: [CommitFileListItem] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -442,33 +443,40 @@ struct HistoryDetailView: View {
     }
 
     private var fileList: some View {
-        List {
-            if settings.fileTreeStyle == .flat {
-                ForEach(vm.historyFiles) { file in
-                    fileRow(file, showDirectory: true)
-                }
-            } else {
-                let lookup = Dictionary(uniqueKeysWithValues: vm.historyFiles.map { ($0.path, $0) })
-                let tree = FileTreeBuilder.build(paths: vm.historyFiles.map(\.path))
-                let rows = settings.fileTreeStyle == .fullTree
-                    ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedDirs)
-                    : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedDirs)
-                ForEach(rows) { item in
-                    if item.node.isDirectory {
-                        directoryRow(item)
-                    } else if let file = lookup[item.node.path] {
-                        fileRow(file, showDirectory: false)
-                            .padding(.leading, CGFloat(item.depth) * 12)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(fileItems) { item in
+                    switch item {
+                    case .directory(let row):
+                        directoryRow(row)
+                            .virtualizedSidebarRow(minHeight: 26)
+                    case .file(let file, let depth, let showDirectory):
+                        fileRow(file, showDirectory: showDirectory)
+                            .padding(.leading, CGFloat(depth) * 12)
+                            .virtualizedSidebarRow(selected: vm.historyDiffPath == file.path, minHeight: 26)
                     }
                 }
             }
+            .padding(.vertical, 4)
         }
-        .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 26)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { rebuildFileItems() }
+        .onChange(of: vm.historyFiles) { _, _ in rebuildFileItems() }
+        .onChange(of: settings.fileTreeStyle) { _, _ in rebuildFileItems() }
+        .onChange(of: collapsedDirs) { _, _ in rebuildFileItems() }
         // 切换提交/比较对象时重置折叠状态
         .onChange(of: vm.historyDetail) { _, _ in
             collapsedDirs = []
+            rebuildFileItems()
         }
+    }
+
+    private func rebuildFileItems() {
+        fileItems = CommitFileListItem.build(
+            files: vm.historyFiles,
+            style: settings.fileTreeStyle,
+            collapsed: collapsedDirs
+        )
     }
 
     /// 目录行：点击折叠/展开整个子树。
@@ -521,9 +529,6 @@ struct HistoryDetailView: View {
         }
         .padding(.vertical, 1)
         .contentShape(Rectangle())
-        .listRowBackground(
-            vm.historyDiffPath == file.path ? Color.accentColor.opacity(0.12) : Color.clear
-        )
         .onTapGesture {
             vm.selectHistoryFile(file)
         }

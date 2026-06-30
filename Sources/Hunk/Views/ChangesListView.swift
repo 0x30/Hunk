@@ -8,138 +8,148 @@ struct ChangesListView: View {
     @EnvironmentObject var settings: SettingsStore
     /// 已折叠的目录（按分区记，键为 "区|路径"，同一目录在已暂存/更改里互不影响）
     @State private var collapsedDirs: Set<String> = []
+    @State private var renderedRows: [ChangeArea: [ChangeListItem]] = [:]
 
     var body: some View {
-        List(selection: $vm.selection) {
-            if !vm.conflictedChanges.isEmpty {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                if !vm.conflictedChanges.isEmpty {
+                    Section {
+                        if !isCollapsed("conflicted") {
+                            changeRows(area: .conflicted)
+                        }
+                    } header: {
+                        sectionHeader(
+                            tr("合并更改", "Merge Changes"),
+                            count: vm.conflictedChanges.count,
+                            collapseKey: "conflicted",
+                            systemImage: "exclamationmark.triangle"
+                        ) { EmptyView() }
+                    }
+                }
+
                 Section {
-                    if !isCollapsed("conflicted") {
-                        changeRows(vm.conflictedChanges, area: .conflicted)
+                    if !isCollapsed("staged") {
+                        changeRows(area: .staged)
                     }
                 } header: {
-                    sectionHeader(
-                        tr("合并更改", "Merge Changes"),
-                        count: vm.conflictedChanges.count,
-                        collapseKey: "conflicted",
-                        systemImage: "exclamationmark.triangle"
-                    ) { EmptyView() }
-                }
-            }
-
-            Section {
-                if !isCollapsed("staged") {
-                    changeRows(vm.stagedChanges, area: .staged)
-                }
-            } header: {
-                sectionHeader(tr("已暂存的更改", "Staged Changes"), count: vm.stagedChanges.count, collapseKey: "staged") {
-                    Button {
-                        vm.unstageAll()
-                    } label: {
-                        Image(systemName: "minus.circle")
+                    sectionHeader(tr("已暂存的更改", "Staged Changes"), count: vm.stagedChanges.count, collapseKey: "staged") {
+                        Button {
+                            vm.unstageAll()
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .help(tr("全部取消暂存", "Unstage All"))
+                        .disabled(vm.stagedChanges.isEmpty)
                     }
-                    .buttonStyle(.plain)
-                    .help(tr("全部取消暂存", "Unstage All"))
-                    .disabled(vm.stagedChanges.isEmpty)
                 }
-            }
 
-            Section {
-                if !isCollapsed("unstaged") {
-                    changeRows(vm.unstagedChanges, area: .unstaged)
-                }
-            } header: {
-                sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count, collapseKey: "unstaged") {
-                    HStack(spacing: 6) {
-                        Menu {
-                            Picker(tr("文件列表风格", "File list style"), selection: $settings.fileTreeStyle) {
-                                ForEach(FileTreeStyle.allCases) { style in
-                                    Text(style.displayName).tag(style)
+                Section {
+                    if !isCollapsed("unstaged") {
+                        changeRows(area: .unstaged)
+                    }
+                } header: {
+                    sectionHeader(tr("更改", "Changes"), count: vm.unstagedChanges.count, collapseKey: "unstaged") {
+                        HStack(spacing: 6) {
+                            Menu {
+                                Picker(tr("文件列表风格", "File list style"), selection: $settings.fileTreeStyle) {
+                                    ForEach(FileTreeStyle.allCases) { style in
+                                        Text(style.displayName).tag(style)
+                                    }
                                 }
+                                .pickerStyle(.inline)
+                                .labelsHidden()
+                            } label: {
+                                Image(systemName: settings.fileTreeStyle == .flat ? "list.bullet" : "list.bullet.indent")
                             }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
-                        } label: {
-                            Image(systemName: settings.fileTreeStyle == .flat ? "list.bullet" : "list.bullet.indent")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help(tr("文件列表风格", "File list style"))
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .help(tr("文件列表风格", "File list style"))
 
-                        Button {
-                            vm.stashAll()
-                        } label: {
-                            Image(systemName: "archivebox")
-                        }
-                        .buttonStyle(.plain)
-                        .help(tr("贮藏全部更改", "Stash All Changes"))
-                        .disabled(vm.unstagedChanges.isEmpty && vm.stagedChanges.isEmpty)
+                            Button {
+                                vm.stashAll()
+                            } label: {
+                                Image(systemName: "archivebox")
+                            }
+                            .buttonStyle(.plain)
+                            .help(tr("贮藏全部更改", "Stash All Changes"))
+                            .disabled(vm.unstagedChanges.isEmpty && vm.stagedChanges.isEmpty)
 
-                        Button {
-                            vm.stageAll()
-                        } label: {
-                            Image(systemName: "plus.circle")
+                            Button {
+                                vm.stageAll()
+                            } label: {
+                                Image(systemName: "plus.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .help(tr("全部暂存", "Stage All"))
+                            .disabled(vm.unstagedChanges.isEmpty)
                         }
-                        .buttonStyle(.plain)
-                        .help(tr("全部暂存", "Stage All"))
-                        .disabled(vm.unstagedChanges.isEmpty)
                     }
                 }
-            }
 
-            if !vm.stashes.isEmpty {
+                if !vm.stashes.isEmpty {
+                    Section {
+                        if !isCollapsed("stash") {
+                            ForEach(vm.stashes) { stash in
+                                StashRow(stash: stash)
+                                    .virtualizedSidebarRow()
+                            }
+                        }
+                    } header: {
+                        sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count, collapseKey: "stash") { EmptyView() }
+                    }
+                }
+
+                if !vm.worktrees.isEmpty {
+                    Section {
+                        if !isCollapsed("worktree") {
+                            ForEach(vm.worktrees) { wt in
+                                WorktreeRow(worktree: wt)
+                                    .virtualizedSidebarRow()
+                            }
+                        }
+                    } header: {
+                        sectionHeader(tr("工作树", "Worktrees"), count: vm.worktrees.count, collapseKey: "worktree") {
+                            Button {
+                                vm.showCreateWorktree = true
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .buttonStyle(.plain)
+                            .help(tr("新建工作树…", "New Worktree…"))
+                        }
+                    }
+                }
+
+                // 标签区块始终显示，保证「新建标签」入口在没有标签时也可达
                 Section {
-                    if !isCollapsed("stash") {
-                        ForEach(vm.stashes) { stash in
-                            StashRow(stash: stash)
+                    if !isCollapsed("tag") {
+                        ForEach(vm.tags) { tag in
+                            TagRow(tag: tag)
+                                .virtualizedSidebarRow()
                         }
                     }
                 } header: {
-                    sectionHeader(tr("贮藏", "Stashes"), count: vm.stashes.count, collapseKey: "stash") { EmptyView() }
-                }
-            }
-
-            if !vm.worktrees.isEmpty {
-                Section {
-                    if !isCollapsed("worktree") {
-                        ForEach(vm.worktrees) { wt in
-                            WorktreeRow(worktree: wt)
-                        }
-                    }
-                } header: {
-                    sectionHeader(tr("工作树", "Worktrees"), count: vm.worktrees.count, collapseKey: "worktree") {
+                    sectionHeader(tr("标签", "Tags"), count: vm.tags.count, collapseKey: "tag") {
                         Button {
-                            vm.showCreateWorktree = true
+                            vm.showCreateTag = true
                         } label: {
                             Image(systemName: "plus")
                         }
                         .buttonStyle(.plain)
-                        .help(tr("新建工作树…", "New Worktree…"))
+                        .help(tr("新建标签…", "New Tag…"))
                     }
                 }
             }
-
-            // 标签区块始终显示，保证「新建标签」入口在没有标签时也可达
-            Section {
-                if !isCollapsed("tag") {
-                    ForEach(vm.tags) { tag in
-                        TagRow(tag: tag)
-                    }
-                }
-            } header: {
-                sectionHeader(tr("标签", "Tags"), count: vm.tags.count, collapseKey: "tag") {
-                    Button {
-                        vm.showCreateTag = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .buttonStyle(.plain)
-                    .help(tr("新建标签…", "New Tag…"))
-                }
-            }
+            .padding(.vertical, 4)
         }
-        .listStyle(.sidebar)
-        .environment(\.defaultMinListRowHeight, 24)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { rebuildRenderedRows() }
+        .onChange(of: vm.changes) { _, _ in rebuildRenderedRows() }
+        .onChange(of: settings.fileTreeStyle) { _, _ in rebuildRenderedRows() }
+        .onChange(of: collapsedDirs) { _, _ in rebuildRenderedRows() }
         .confirmationDialog(
             discardTitle,
             isPresented: Binding(
@@ -188,35 +198,56 @@ struct ChangesListView: View {
     // MARK: - 分区内容
 
     @ViewBuilder
-    private func changeRows(_ changes: [FileChange], area: ChangeArea) -> some View {
-        if settings.fileTreeStyle == .flat {
-            ForEach(changes) { change in
-                ChangeRow(change: change, area: area, showDirectory: true)
-                    .tag(SidebarSelection.change(path: change.path, area: area))
-            }
-        } else {
-            let lookup = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-            let collapsedInArea = Set(collapsedDirs.compactMap { key -> String? in
-                let prefix = "\(area)|"
-                return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
-            })
-            let tree = FileTreeBuilder.build(paths: changes.map(\.path))
-            let rows = settings.fileTreeStyle == .fullTree
-                ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedInArea)
-                : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedInArea)
-            ForEach(rows) { item in
-                if item.node.isDirectory {
-                    let dirKey = "\(area)|\(item.node.path)"
-                    DirectoryRow(item: item, area: area, collapsed: collapsedDirs.contains(dirKey)) {
-                        if collapsedDirs.contains(dirKey) { collapsedDirs.remove(dirKey) }
-                        else { collapsedDirs.insert(dirKey) }
-                    }
-                } else if let change = lookup[item.node.path] {
-                    ChangeRow(change: change, area: area, showDirectory: false)
-                        .padding(.leading, CGFloat(item.depth) * 14)
-                        .tag(SidebarSelection.change(path: change.path, area: area))
+    private func changeRows(area: ChangeArea) -> some View {
+        ForEach(renderedRows[area] ?? []) { item in
+            switch item {
+            case .directory(let row):
+                let dirKey = "\(area)|\(row.node.path)"
+                DirectoryRow(item: row, area: area, collapsed: collapsedDirs.contains(dirKey)) {
+                    if collapsedDirs.contains(dirKey) { collapsedDirs.remove(dirKey) }
+                    else { collapsedDirs.insert(dirKey) }
                 }
+                .virtualizedSidebarRow()
+            case .file(let change, let depth, let showDirectory):
+                let selection = SidebarSelection.change(path: change.path, area: area)
+                ChangeRow(change: change, area: area, showDirectory: showDirectory)
+                    .padding(.leading, CGFloat(depth) * 14)
+                    .virtualizedSidebarRow(selected: vm.selection == selection)
+                    .onTapGesture {
+                        vm.selection = selection
+                    }
+                    .id(item.id)
             }
+        }
+    }
+
+    private func rebuildRenderedRows() {
+        renderedRows[.conflicted] = buildChangeListItems(vm.conflictedChanges, area: .conflicted)
+        renderedRows[.staged] = buildChangeListItems(vm.stagedChanges, area: .staged)
+        renderedRows[.unstaged] = buildChangeListItems(vm.unstagedChanges, area: .unstaged)
+    }
+
+    private func buildChangeListItems(_ changes: [FileChange], area: ChangeArea) -> [ChangeListItem] {
+        if settings.fileTreeStyle == .flat {
+            return changes.map { .file($0, depth: 0, showDirectory: true) }
+        }
+
+        let lookup = Dictionary(changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let collapsedInArea = Set(collapsedDirs.compactMap { key -> String? in
+            let prefix = "\(area)|"
+            return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
+        })
+        let tree = FileTreeBuilder.build(paths: changes.map(\.path))
+        let rows = settings.fileTreeStyle == .fullTree
+            ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedInArea)
+            : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedInArea)
+
+        return rows.compactMap { item in
+            if item.node.isDirectory {
+                return .directory(item)
+            }
+            guard let change = lookup[item.node.path] else { return nil }
+            return .file(change, depth: item.depth, showDirectory: false)
         }
     }
 
@@ -276,6 +307,23 @@ struct ChangesListView: View {
         }
         .padding(.vertical, 1)
         .padding(.trailing, 8)  // 操作按钮与侧边栏右缘留距
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private enum ChangeListItem: Identifiable {
+    case directory(FlatTreeRow)
+    case file(FileChange, depth: Int, showDirectory: Bool)
+
+    var id: String {
+        switch self {
+        case .directory(let item):
+            return "dir:\(item.node.path)"
+        case .file(let change, _, _):
+            return "file:\(change.path)"
+        }
     }
 }
 

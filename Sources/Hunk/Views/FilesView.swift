@@ -6,6 +6,8 @@ import HunkCore
 struct FilesView: View {
     @EnvironmentObject var vm: RepoViewModel
     @State private var localSelection: String?
+    @State private var rows: [Row] = []
+    @State private var changeLookup: [String: FileChange] = [:]
     /// 启动宽限期：窗口状态恢复会触发 selection 变化，期间不自动打开文件
     @State private var suppressAutoOpen = true
     @FocusState private var focused: Bool
@@ -14,19 +16,6 @@ struct FilesView: View {
         let node: FileNode
         let depth: Int
         var id: String { node.path }
-    }
-
-    /// 诊断：body 每次求值都会重算 rows（重新 flatten 整棵展开的树）。
-    /// 用节流计数确认暴涨期是否在被高频重算 + 当前行数规模。
-    private static var rowsEvalCount = 0
-
-    private var rows: [Row] {
-        let r = flatten(vm.workspaceTree, depth: 0)
-        Self.rowsEvalCount += 1
-        if Self.rowsEvalCount % 100 == 0 {
-            Diagnostics.log("FilesView.rows 第\(Self.rowsEvalCount)次求值 行数=\(r.count)")
-        }
-        return r
     }
 
     private func flatten(_ nodes: [FileNode], depth: Int) -> [Row] {
@@ -42,24 +31,27 @@ struct FilesView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            List(selection: $localSelection) {
-                ForEach(rows) { row in
-                    FileTreeRow(
-                        node: row.node,
-                        depth: row.depth,
-                        isExpanded: vm.fileTreeExpanded.contains(row.node.path),
-                        toggle: { toggle(row.node) },
-                        select: {
-                            // onTapGesture 会吞掉 List 的选中事件，手动同步选中态
-                            localSelection = row.node.path
-                            if !row.node.isDirectory {
-                                vm.selection = .file(path: row.node.path)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows) { row in
+                        FileTreeRow(
+                            node: row.node,
+                            depth: row.depth,
+                            isExpanded: vm.fileTreeExpanded.contains(row.node.path),
+                            change: changeLookup[row.node.path],
+                            selected: localSelection == row.node.path,
+                            toggle: { toggle(row.node) },
+                            select: {
+                                localSelection = row.node.path
+                                if !row.node.isDirectory {
+                                    vm.selection = .file(path: row.node.path)
+                                }
                             }
-                        }
-                    )
-                    .tag(row.node.path)
-                    .id(row.node.path)
+                        )
+                        .id(row.node.path)
+                    }
                 }
+                .padding(.vertical, 4)
             }
             .onChange(of: vm.revealFileRequest) { _, request in
                 guard let request else { return }
@@ -69,6 +61,7 @@ struct FilesView: View {
                     vm.fileTreeExpanded.insert(ancestor)
                     ancestor = (ancestor as NSString).deletingLastPathComponent
                 }
+                rebuildRows()
                 localSelection = request
                 DispatchQueue.main.async {
                     proxy.scrollTo(request, anchor: .center)
@@ -76,8 +69,7 @@ struct FilesView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
-        .environment(\.defaultMinListRowHeight, 24)
+        .background(Color(nsColor: .windowBackgroundColor))
         // 空白区域右键：在仓库根目录新建
         .contextMenu {
             Button(tr("新建文件…", "New File…")) {
@@ -85,6 +77,7 @@ struct FilesView: View {
             }
         }
         .focused($focused)
+        .focusable()
         // 键盘 ↑↓ 移动选择后立即打开文件（无需再按 ⏎）
         .onChange(of: localSelection) { _, selected in
             guard !suppressAutoOpen,
@@ -97,6 +90,8 @@ struct FilesView: View {
         .onAppear {
             focused = true
             initialExpandIfNeeded()
+            rebuildRows()
+            rebuildChangeLookup()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 suppressAutoOpen = false
             }
@@ -108,6 +103,17 @@ struct FilesView: View {
         }
         .onChange(of: vm.workspaceFiles) { _, _ in
             initialExpandIfNeeded()
+            rebuildRows()
+        }
+        .onChange(of: vm.workspaceTree) { _, _ in
+            initialExpandIfNeeded()
+            rebuildRows()
+        }
+        .onChange(of: vm.fileTreeExpanded) { _, _ in
+            rebuildRows()
+        }
+        .onChange(of: vm.changes) { _, _ in
+            rebuildChangeLookup()
         }
         .onKeyPress(.leftArrow) { handleLeft() }
         .onKeyPress(.rightArrow) { handleRight() }
@@ -126,6 +132,14 @@ struct FilesView: View {
         vm.fileTreeDidInitialExpand = true
         // 被忽略的目录不参与首层自动展开,保持折叠(内容点开才懒加载)
         vm.fileTreeExpanded.formUnion(vm.workspaceTree.filter { $0.isDirectory && !$0.isIgnored }.map(\.path))
+    }
+
+    private func rebuildRows() {
+        rows = flatten(vm.workspaceTree, depth: 0)
+    }
+
+    private func rebuildChangeLookup() {
+        changeLookup = Dictionary(vm.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func toggle(_ node: FileNode) {
@@ -185,12 +199,10 @@ private struct FileTreeRow: View {
     let node: FileNode
     let depth: Int
     let isExpanded: Bool
+    let change: FileChange?
+    let selected: Bool
     let toggle: () -> Void
     let select: () -> Void
-
-    private var change: FileChange? {
-        vm.changes.first { $0.path == node.path }
-    }
 
     /// 总览模式下：该目录若是扫描到的子仓库，返回其绝对 URL（用于角标 + 右键「作为仓库打开」）。
     private var repoURL: URL? {
@@ -239,6 +251,7 @@ private struct FileTreeRow: View {
         }
         .padding(.vertical, 1)
         .padding(.leading, CGFloat(depth) * 14)
+        .virtualizedSidebarRow(selected: selected)
         // 被忽略的文件/目录:照常展示,但低透明度区分
         .opacity(node.isIgnored ? 0.4 : 1)
         .contentShape(Rectangle())

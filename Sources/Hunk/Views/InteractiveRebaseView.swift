@@ -14,6 +14,7 @@ struct RebaseDetailView: View {
     @EnvironmentObject var settings: SettingsStore
     @State private var selectedID: String?
     @State private var collapsedDirs: Set<String> = []
+    @State private var fileItems: [CommitFileListItem] = []
 
     private var firstKeptIsSquash: Bool {
         vm.rebaseSteps.first(where: { $0.action != .drop })?.action == .squash
@@ -36,7 +37,10 @@ struct RebaseDetailView: View {
             }
         }
         .onChange(of: vm.rebaseBase) { _, _ in selectedID = nil }
-        .onChange(of: vm.rebaseDetailCommit?.hash) { _, _ in collapsedDirs = [] }
+        .onChange(of: vm.rebaseDetailCommit?.hash) { _, _ in
+            collapsedDirs = []
+            rebuildFileItems()
+        }
     }
 
     // MARK: 上部：编排
@@ -141,29 +145,35 @@ struct RebaseDetailView: View {
     }
 
     private var fileList: some View {
-        List {
-            if settings.fileTreeStyle == .flat {
-                ForEach(vm.rebaseDetailFiles) { file in
-                    fileRow(file, showDirectory: true)
-                }
-            } else {
-                let lookup = Dictionary(uniqueKeysWithValues: vm.rebaseDetailFiles.map { ($0.path, $0) })
-                let tree = FileTreeBuilder.build(paths: vm.rebaseDetailFiles.map(\.path))
-                let rows = settings.fileTreeStyle == .fullTree
-                    ? FileTreeBuilder.flattenFullTree(tree, collapsed: collapsedDirs)
-                    : FileTreeBuilder.flattenMergingChains(tree, collapsed: collapsedDirs)
-                ForEach(rows) { item in
-                    if item.node.isDirectory {
-                        directoryRow(item)
-                    } else if let file = lookup[item.node.path] {
-                        fileRow(file, showDirectory: false)
-                            .padding(.leading, CGFloat(item.depth) * 12)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(fileItems) { item in
+                    switch item {
+                    case .directory(let row):
+                        directoryRow(row)
+                            .virtualizedSidebarRow()
+                    case .file(let file, let depth, let showDirectory):
+                        fileRow(file, showDirectory: showDirectory)
+                            .padding(.leading, CGFloat(depth) * 12)
+                            .virtualizedSidebarRow(selected: vm.rebaseDetailDiffPath == file.path)
                     }
                 }
             }
+            .padding(.vertical, 4)
         }
-        .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 24)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { rebuildFileItems() }
+        .onChange(of: vm.rebaseDetailFiles) { _, _ in rebuildFileItems() }
+        .onChange(of: settings.fileTreeStyle) { _, _ in rebuildFileItems() }
+        .onChange(of: collapsedDirs) { _, _ in rebuildFileItems() }
+    }
+
+    private func rebuildFileItems() {
+        fileItems = CommitFileListItem.build(
+            files: vm.rebaseDetailFiles,
+            style: settings.fileTreeStyle,
+            collapsed: collapsedDirs
+        )
     }
 
     private func directoryRow(_ item: FlatTreeRow) -> some View {
@@ -211,9 +221,6 @@ struct RebaseDetailView: View {
         }
         .padding(.vertical, 1)
         .contentShape(Rectangle())
-        .listRowBackground(
-            vm.rebaseDetailDiffPath == file.path ? Color.accentColor.opacity(0.12) : Color.clear
-        )
         .onTapGesture {
             vm.selectRebaseDetailFile(file)
         }
