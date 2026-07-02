@@ -592,7 +592,8 @@ public final class Repository: @unchecked Sendable {
 
     /// 某个提交改动的文件列表。
     public func filesChanged(in hash: String) async throws -> [CommitFileChange] {
-        let result = try await git.run(["show", "--name-status", "--format=", hash])
+        // -m --first-parent:合并提交默认不输出 diff,取相对第一个 parent 的变化;普通提交无影响
+        let result = try await git.run(["show", "--name-status", "--format=", "-m", "--first-parent", hash])
         return Self.parseNameStatus(result.stdout)
     }
 
@@ -604,7 +605,7 @@ public final class Repository: @unchecked Sendable {
 
     /// 某个提交里单个文件的 diff。
     public func diff(in hash: String, path: String) async throws -> FileDiff? {
-        let result = try await git.run(["show", "--format=", hash, "--", path])
+        let result = try await git.run(["show", "--format=", "-m", "--first-parent", hash, "--", path])
         return DiffParser.parse(result.stdout).first
     }
 
