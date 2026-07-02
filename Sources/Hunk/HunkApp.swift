@@ -187,10 +187,14 @@ enum CLIOpenRouter {
             return
         }
 
-        // 单文件②：不在任何打开的项目内 → 在当前窗口打开它
+        // 单文件②:不在任何打开的项目内
         let target = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
         focus(target)
-        target.openStandaloneFile(url)
+        if target.repoRoot != nil && !target.isStandaloneFile {
+            target.previewExternalFile(url)   // 当前窗口有工作区:只预览,不切目录(VS Code 式)
+        } else {
+            target.openStandaloneFile(url)    // 空白/单文件窗口:装入该文件(无上下文可保留)
+        }
     }
 
     /// 冷启动：odoc 打开事件常早于 SwiftUI 窗口建立，pendingPath 暂存后窗口侧 .task 取不到。

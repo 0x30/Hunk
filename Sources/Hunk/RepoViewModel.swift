@@ -1243,6 +1243,13 @@ final class RepoViewModel: ObservableObject {
             : (repo?.fileURL(for: path) ?? URL(fileURLWithPath: path))
     }
 
+    /// 在当前工作区窗口里「预览」一个外部文件(VS Code 式):只把编辑器切到该文件,
+    /// 不改 repoRoot / workspace / 侧栏,当前仓库上下文原样保留。
+    func previewExternalFile(_ url: URL) {
+        Diagnostics.log("预览外部文件 \(url.lastPathComponent)(不切换目录)")
+        selection = .file(path: url.path)
+    }
+
     /// 打开单个文件（不要求 git 仓库）：以文件所在目录为根、repo=nil，纯查看/编辑。
     func openStandaloneFile(_ url: URL) {
         Diagnostics.log("单文件模式打开 \(url.lastPathComponent)（无 git 仓库）")
