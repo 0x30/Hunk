@@ -78,6 +78,7 @@ struct FilesView: View {
         }
         .focused($focused)
         .focusable()
+        .focusEffectDisabled()  // 保留可聚焦(onKeyPress 需要),但去掉整块 ScrollView 的原生蓝色焦点环
         // 键盘 ↑↓ 移动选择后立即打开文件（无需再按 ⏎）
         .onChange(of: localSelection) { _, selected in
             guard !suppressAutoOpen,
@@ -115,6 +116,8 @@ struct FilesView: View {
         .onChange(of: vm.changes) { _, _ in
             rebuildChangeLookup()
         }
+        .onKeyPress(.upArrow) { handleUp() }
+        .onKeyPress(.downArrow) { handleDown() }
         .onKeyPress(.leftArrow) { handleLeft() }
         .onKeyPress(.rightArrow) { handleRight() }
         .onKeyPress(.return) { handleReturn() }
@@ -155,6 +158,26 @@ struct FilesView: View {
     private var selectedRow: Row? {
         guard let selected = localSelection else { return nil }
         return rows.first { $0.id == selected }
+    }
+
+    private func handleUp() -> KeyPress.Result {
+        guard !rows.isEmpty else { return .ignored }
+        guard let sel = localSelection, let i = rows.firstIndex(where: { $0.id == sel }) else {
+            localSelection = rows.last?.id  // 无选中:上键选末行
+            return .handled
+        }
+        if i > 0 { localSelection = rows[i - 1].id }
+        return .handled
+    }
+
+    private func handleDown() -> KeyPress.Result {
+        guard !rows.isEmpty else { return .ignored }
+        guard let sel = localSelection, let i = rows.firstIndex(where: { $0.id == sel }) else {
+            localSelection = rows.first?.id  // 无选中:下键选首行
+            return .handled
+        }
+        if i < rows.count - 1 { localSelection = rows[i + 1].id }
+        return .handled
     }
 
     private func handleLeft() -> KeyPress.Result {
