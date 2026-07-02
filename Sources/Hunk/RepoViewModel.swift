@@ -3,7 +3,9 @@ import AppKit
 import Combine
 import HunkCore
 
-enum ChangeArea: Hashable { case staged, unstaged, conflicted }
+/// diff 详情的比较基准。staged=暂存区 vs HEAD;unstaged=工作区 vs 暂存区;
+/// head=整文件 vs HEAD(暂存+未暂存合并,「文件」栏「查看更改」用,只读预览);conflicted=冲突。
+enum ChangeArea: Hashable { case staged, unstaged, conflicted, head }
 
 enum SidebarTab: String, CaseIterable, Identifiable {
     case files, changes
@@ -1015,6 +1017,7 @@ final class RepoViewModel: ObservableObject {
     private func area(of change: FileChange, preferred: ChangeArea) -> ChangeArea {
         if change.isConflicted { return .conflicted }
         switch preferred {
+        case .head: return .head  // 「文件」栏视角:只要该文件仍有相对 HEAD 的改动就保持
         case .staged: return change.staged != nil ? .staged : .unstaged
         case .unstaged, .conflicted: return change.unstaged != nil ? .unstaged : .staged
         }
@@ -1060,7 +1063,9 @@ final class RepoViewModel: ObservableObject {
             do {
                 let change = changes.first { $0.path == path }
                 let loaded: FileDiff?
-                if area == .unstaged, change?.unstaged == .untracked {
+                if area == .head {
+                    loaded = try await repo.diffAgainstHEAD(for: path)
+                } else if area == .unstaged, change?.unstaged == .untracked {
                     loaded = try await repo.untrackedDiff(for: path)
                 } else {
                     loaded = try await repo.diff(for: path, staged: area == .staged)
@@ -1713,6 +1718,7 @@ final class RepoViewModel: ObservableObject {
         case .staged: list = stagedChanges
         case .unstaged: list = unstagedChanges
         case .conflicted: list = conflictedChanges
+        case .head: list = []  // 目录级暂存/丢弃不涉及只读的 head 视角
         }
         return list.filter { dir.isEmpty || $0.path.hasPrefix(prefix) }.map(\.path)
     }

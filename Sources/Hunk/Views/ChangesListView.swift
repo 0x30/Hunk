@@ -385,6 +385,8 @@ private struct DirectoryRow: View {
                 .help(tr("取消暂存此目录", "Unstage folder"))
             case .conflicted:
                 EmptyView()
+            case .head:
+                EmptyView()  // 「文件」栏只读视角,不进源代码管理列表
             }
         }
         .foregroundStyle(.secondary)
@@ -517,6 +519,8 @@ struct ChangeRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help(tr("标记为已解决", "Mark as Resolved"))
+            case .head:
+                EmptyView()  // 「文件」栏只读视角,不进源代码管理列表
             }
         }
         .foregroundStyle(.secondary)
@@ -537,6 +541,8 @@ struct ChangeRow: View {
             Button(tr("取消暂存", "Unstage")) { vm.unstageFile(change.path) }
         case .conflicted:
             Button(tr("标记为已解决", "Mark as Resolved")) { vm.stageFile(change.path) }
+        case .head:
+            EmptyView()  // 「文件」栏只读视角,不进源代码管理列表
         }
         Divider()
         Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(change.path) }

@@ -302,9 +302,8 @@ private struct FileTreeRow: View {
             if let change {
                 Button(tr("查看更改", "View Changes")) {
                     vm.sidebarTab = .changes
-                    let area: ChangeArea = change.isConflicted
-                        ? .conflicted
-                        : (change.unstaged != nil ? .unstaged : .staged)
+                    // 「文件」栏是工作区文件树,无暂存/未暂存之分:整文件 vs HEAD(暂存+未暂存合并)
+                    let area: ChangeArea = change.isConflicted ? .conflicted : .head
                     vm.selection = .change(path: change.path, area: area)
                 }
                 Divider()

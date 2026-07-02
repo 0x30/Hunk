@@ -16,9 +16,10 @@ struct DiffDetailView: View {
         vm.diffArea == .unstaged && change?.unstaged == .untracked
     }
 
-    /// 行级暂存对未跟踪文件不可用（git 语义如此）
+    /// 行级暂存对未跟踪文件不可用（git 语义如此）；.head 是「整文件 vs HEAD」的合并只读视图,
+    /// 行级 apply 会与索引错位,同样不支持。
     private var supportsLineStaging: Bool {
-        !isUntracked && !(vm.diff?.isBinary ?? true)
+        !isUntracked && vm.diffArea != .head && !(vm.diff?.isBinary ?? true)
     }
 
     var body: some View {

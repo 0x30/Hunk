@@ -83,6 +83,13 @@ public final class Repository: @unchecked Sendable {
         return DiffParser.parse(result.stdout).first
     }
 
+    /// 单个文件相对 HEAD 的完整 diff(暂存+未暂存合并)。用于「文件」栏「查看更改」,
+    /// 无论文件在暂存区还是工作区都能看到自上次提交以来的全部改动。
+    public func diffAgainstHEAD(for path: String) async throws -> FileDiff? {
+        let result = try await git.run(["diff", "HEAD", "-M", "--", path])
+        return DiffParser.parse(result.stdout).first
+    }
+
     /// 未跟踪文件：与 /dev/null 比对，得到整文件新增的 diff。
     public func untrackedDiff(for path: String) async throws -> FileDiff? {
         let result = try await git.run(
