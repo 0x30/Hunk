@@ -2034,6 +2034,17 @@ final class RepoViewModel: ObservableObject {
     var isLinkedWorktree: Bool { currentWorktree.map { !$0.isMain } ?? false }
     /// 主工作树名（链接工作树窗口的标志 tooltip 用）。
     var mainWorktreeName: String? { worktrees.first(where: \.isMain)?.name }
+    /// 工具栏项目名：链接工作树仍显示主项目名，避免只看到工作树目录名。
+    var repositoryDisplayName: String {
+        let fallback = repoRoot?.lastPathComponent ?? "Hunk"
+        return isLinkedWorktree && mainWorktreeName?.isEmpty == false ? mainWorktreeName! : fallback
+    }
+    /// 链接工作树工具栏副标题：显示「工作树名 · 分支」。
+    var worktreeDisplayDetail: String {
+        guard isLinkedWorktree else { return currentBranch }
+        let worktree = currentWorktree?.name ?? ""
+        return worktree.isEmpty || worktree == currentBranch ? currentBranch : "\(worktree) · \(currentBranch)"
+    }
     /// 已被某个工作树占用的分支名（新建工作树时这些分支不可再选）。
     var branchesInUse: Set<String> { Set(worktrees.compactMap(\.branch)) }
 

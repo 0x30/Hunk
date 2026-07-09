@@ -253,22 +253,16 @@ struct BranchMenu: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(vm.isLinkedWorktree ? Color.accentColor : .secondary)
                     VStack(alignment: .leading, spacing: 0) {
+                        Text(vm.repositoryDisplayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
                         HStack(spacing: 4) {
-                            Text(vm.repoRoot?.lastPathComponent ?? "Hunk")
-                                .font(.system(size: 12, weight: .semibold))
+                            Text(vm.worktreeDisplayDetail)
+                                .font(.system(size: 10.5))
                                 .lineLimit(1)
                             if vm.isLinkedWorktree {
-                                Text(tr("工作树", "worktree"))
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(Color.accentColor)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 0.5)
-                                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                                BranchTagLabel(tr("工作树", "worktree"))
                             }
-                        }
-                        HStack(spacing: 2) {
-                            Text(vm.currentBranch)
-                                .font(.system(size: 10.5))
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 7, weight: .semibold))
                         }
@@ -277,8 +271,8 @@ struct BranchMenu: View {
                 }
             }
             .help(vm.isLinkedWorktree
-                  ? tr("这是「\(vm.mainWorktreeName ?? "")」的工作树 · 分支 \(vm.currentBranch)",
-                       "Worktree of “\(vm.mainWorktreeName ?? "")” · branch \(vm.currentBranch)")
+                  ? tr("当前：\(vm.repositoryDisplayName) · \(vm.worktreeDisplayDetail)",
+                       "Current: \(vm.repositoryDisplayName) · \(vm.worktreeDisplayDetail)")
                   : tr("分支：切换 / 新建", "Branches: switch / create"))
         } else {
             // 非 git（整个文件夹总览 / 普通目录 / 单文件）：没有分支概念，
@@ -296,6 +290,21 @@ struct BranchMenu: View {
             .padding(.vertical, 5)
             .help(tr("非 git 目录（无分支）", "Non-git folder (no branches)"))
         }
+    }
+}
+
+/// 分支按钮里的小号标签（如「工作树」）。
+private struct BranchTagLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 0.5)
+            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
     }
 }
 
@@ -530,4 +539,3 @@ private struct RowActionIcon: View {
         .help(help)
     }
 }
-
