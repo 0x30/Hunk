@@ -389,13 +389,8 @@ private struct AppCommands: Commands {
             }
         }
         CommandGroup(replacing: .newItem) {
-            // 终端聚焦时 ⌘N/⌘W 切换为终端语义（VS Code 式）
-            Button(vm?.terminalFocused == true ? tr("新建终端", "New Terminal") : tr("新建文件", "New File")) {
-                if let vm, vm.terminalFocused {
-                    vm.newTerminal()
-                } else {
-                    vm?.newUntitledFile()
-                }
+            Button(tr("新建文件", "New File")) {
+                vm?.newUntitledFile()
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(vm?.repoRoot == nil)

@@ -322,7 +322,7 @@ final class RepoViewModel: ObservableObject {
     /// 终端会话列表：跨显示/隐藏保活，挂在视图模型上随窗口走
     @Published var terminals: [TerminalSession] = []
     @Published var activeTerminalID: UUID?
-    /// 终端是否持有键盘焦点（⌘N/⌘W 据此切换为终端语义）
+    /// 终端是否持有键盘焦点（⌘W 据此切换为终端语义）
     @Published var terminalFocused = false
     /// 面板高度：拖拽调整后持久化，开关面板/切换文件都不会变
     @Published var terminalHeight: CGFloat {
@@ -344,7 +344,7 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 新建一个 shell 会话并切为当前（终端聚焦时 ⌘N）。
+    /// 新建一个 shell 会话并切为当前。
     func newTerminal() {
         let session = TerminalSession()
         session.onExit = { [weak self] session in
@@ -2357,10 +2357,11 @@ final class RepoViewModel: ObservableObject {
 
     // MARK: - 拖拽打开
 
-    /// 拖入文件：仓库内的直接打开；拖入文件夹：弹出「当前/新窗口」选择。
+    /// 拖入文件：仓库内定位，仓库外直接预览；拖入文件夹：弹出「当前/新窗口」选择。
     func handleDrop(url: URL) {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+        let url = url.resolvingSymlinksInPath()
         if isDirectory.boolValue {
             // 欢迎页（空窗口）拖入文件夹：直接打开，不再询问在哪个窗口
             if repoRoot == nil {
@@ -2370,15 +2371,14 @@ final class RepoViewModel: ObservableObject {
             }
             return
         }
-        if let root = repoRoot, url.path.hasPrefix(root.path + "/") {
+        if let root = repoRoot?.resolvingSymlinksInPath(), url.path.hasPrefix(root.path + "/") {
             let relative = String(url.path.dropFirst(root.path.count + 1))
             sidebarTab = .files
             selection = .file(path: relative)
+        } else if repoRoot != nil && !isStandaloneFile {
+            previewExternalFile(url)
         } else {
-            errorMessage = tr(
-                "该文件不在当前仓库内。拖入它所在的文件夹可以打开对应仓库。",
-                "This file is outside the current repository. Drop its folder to open that repository."
-            )
+            openStandaloneFile(url)
         }
     }
 
