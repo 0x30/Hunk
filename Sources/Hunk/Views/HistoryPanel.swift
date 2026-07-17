@@ -546,6 +546,9 @@ struct HistoryDetailView: View {
                         vm.revealInFiles(file.path)
                     }
                 }
+                Button(tr("打开文件并定位到变动", "Open File at Changes")) {
+                    vm.openHistoryFile(file)
+                }
                 Button(tr("在 Finder 中显示", "Reveal in Finder")) {
                     vm.revealInFinder(file.path)
                 }

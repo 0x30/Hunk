@@ -2334,6 +2334,40 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    /// 从提交/比较详情打开工作区文件全文，并定位到该文件的第一个变动块。
+    func openHistoryFile(_ file: Repository.CommitFileChange) {
+        guard file.kind != .deleted,
+              FileManager.default.fileExists(atPath: editorFileURL(file.path).path)
+        else { return }
+
+        let path = file.path
+        let detail = historyDetail
+        Task {
+            guard let repo, let detail else { return }
+            let loadedDiff: FileDiff?
+            if historyDiffPath == path, let historyDiff {
+                loadedDiff = historyDiff
+            } else {
+                do {
+                    switch detail {
+                    case .commit(let commit):
+                        loadedDiff = try await repo.diff(in: commit.hash, path: path)
+                    case .compare(let base, let target):
+                        loadedDiff = try await repo.diff(from: base, to: target, path: path)
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
+                    return
+                }
+            }
+
+            revealInFiles(path)
+            if let line = loadedDiff?.hunks.first?.newStart {
+                scrollToLine = max(0, line - 1)
+            }
+        }
+    }
+
     /// 在文件列表中定位并打开（侧边栏收起时自动展开）。
     func revealInFiles(_ path: String) {
         sidebarVisible = true
