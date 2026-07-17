@@ -333,7 +333,7 @@ private struct HistoryRow: View {
             }
             Divider()
             Button(tr("复制提交哈希", "Copy Commit Hash")) {
-                vm.copyPath(commit.hash)
+                vm.copyText(commit.hash)
             }
         }
         .help("\(commit.subject)\n\(commit.author) · \(commit.hash)")

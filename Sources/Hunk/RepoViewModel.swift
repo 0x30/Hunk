@@ -2403,4 +2403,9 @@ final class RepoViewModel: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(editorFileURL(path).path, forType: .string)
     }
+
+    func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 }
