@@ -362,7 +362,10 @@ private struct DirectoryRow: View {
         }
         .padding(.vertical, 1)
         .padding(.leading, CGFloat(item.depth) * 14)
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .contextMenu { contextMenu }
     }
 
     @ViewBuilder
@@ -394,6 +397,26 @@ private struct DirectoryRow: View {
         }
         .foregroundStyle(.secondary)
         .padding(.trailing, 4)
+    }
+
+    @ViewBuilder
+    private var contextMenu: some View {
+        switch area {
+        case .unstaged:
+            Button(tr("暂存此目录", "Stage Folder")) {
+                vm.stageDirectory(item.node.path)
+            }
+            Divider()
+            Button(tr("丢弃此目录的全部更改…", "Discard All Changes in Folder…"), role: .destructive) {
+                vm.requestDiscardDirectory(item.node.path)
+            }
+        case .staged:
+            Button(tr("取消暂存此目录", "Unstage Folder")) {
+                vm.unstageDirectory(item.node.path)
+            }
+        case .conflicted, .head:
+            EmptyView()
+        }
     }
 }
 
@@ -475,6 +498,7 @@ struct ChangeRow: View {
             }
         }
         .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { contextMenu }
