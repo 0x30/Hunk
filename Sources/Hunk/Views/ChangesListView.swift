@@ -355,7 +355,10 @@ private struct DirectoryRow: View {
             }
             .buttonStyle(.borderless)
             Spacer(minLength: 4)
-            if hovering { hoverActions }
+            // 始终保留操作区宽度，鼠标移向按钮时不因布局重排离开 hover 区域。
+            hoverActions
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
         }
         .padding(.vertical, 1)
         .padding(.leading, CGFloat(item.depth) * 14)
@@ -468,6 +471,7 @@ struct ChangeRow: View {
                 }
                 hoverActions
                     .opacity(hovering ? 1 : 0)
+                    .allowsHitTesting(hovering)
             }
         }
         .padding(.vertical, 1)
