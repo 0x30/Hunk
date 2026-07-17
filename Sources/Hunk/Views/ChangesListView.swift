@@ -201,14 +201,14 @@ struct ChangesListView: View {
     private func changeRows(area: ChangeArea) -> some View {
         ForEach(renderedRows[area] ?? []) { item in
             switch item {
-            case .directory(let row):
+            case .directory(let row, _):
                 let dirKey = "\(area)|\(row.node.path)"
                 DirectoryRow(item: row, area: area, collapsed: collapsedDirs.contains(dirKey)) {
                     if collapsedDirs.contains(dirKey) { collapsedDirs.remove(dirKey) }
                     else { collapsedDirs.insert(dirKey) }
                 }
                 .virtualizedSidebarRow()
-            case .file(let change, let depth, let showDirectory):
+            case .file(let change, let depth, let showDirectory, _):
                 let selection = SidebarSelection.change(path: change.path, area: area)
                 ChangeRow(change: change, area: area, showDirectory: showDirectory)
                     .padding(.leading, CGFloat(depth) * 14)
@@ -229,7 +229,7 @@ struct ChangesListView: View {
 
     private func buildChangeListItems(_ changes: [FileChange], area: ChangeArea) -> [ChangeListItem] {
         if settings.fileTreeStyle == .flat {
-            return changes.map { .file($0, depth: 0, showDirectory: true) }
+            return changes.map { .file($0, depth: 0, showDirectory: true, area: area) }
         }
 
         let lookup = Dictionary(changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -244,10 +244,10 @@ struct ChangesListView: View {
 
         return rows.compactMap { item in
             if item.node.isDirectory {
-                return .directory(item)
+                return .directory(item, area: area)
             }
             guard let change = lookup[item.node.path] else { return nil }
-            return .file(change, depth: item.depth, showDirectory: false)
+            return .file(change, depth: item.depth, showDirectory: false, area: area)
         }
     }
 
@@ -314,15 +314,15 @@ struct ChangesListView: View {
 }
 
 private enum ChangeListItem: Identifiable {
-    case directory(FlatTreeRow)
-    case file(FileChange, depth: Int, showDirectory: Bool)
+    case directory(FlatTreeRow, area: ChangeArea)
+    case file(FileChange, depth: Int, showDirectory: Bool, area: ChangeArea)
 
     var id: String {
         switch self {
-        case .directory(let item):
-            return "dir:\(item.node.path)"
-        case .file(let change, _, _):
-            return "file:\(change.path)"
+        case .directory(let item, let area):
+            return "dir:\(area):\(item.node.path)"
+        case .file(let change, _, _, let area):
+            return "file:\(area):\(change.path)"
         }
     }
 }
