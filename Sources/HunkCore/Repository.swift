@@ -823,12 +823,20 @@ public final class Repository: @unchecked Sendable {
     /// exact=true：区分大小写的字面量匹配（`-F`），与全仓库替换的语义一致；
     /// exact=false：不区分大小写的正则（默认，搜索更宽松）。
     /// 命中行会带上 `context` 行前后文；同一文件里挨得近的命中合并成一块。
-    public func grep(_ query: String, exact: Bool = false, limit: Int = 400, context: Int = 2) async throws -> [GrepHit] {
+    public func grep(
+        _ query: String,
+        exact: Bool = false,
+        include: [String] = [],
+        exclude: [String] = [],
+        limit: Int = 400,
+        context: Int = 2
+    ) async throws -> [GrepHit] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
         var args = ["grep", "-n", "-I", "--untracked", "--max-count=50"]
         if exact { args.append("-F") } else { args.append("--ignore-case") }
-        args += ["-e", trimmed, "--", "."]
+        args += ["-e", trimmed, "--"]
+        args += Self.searchPathspecs(include: include, exclude: exclude)
         let result = try await git.run(args, allowedExitCodes: [0, 1])  // 1 = 无匹配
         guard result.exitCode == 0 else { return [] }
 
@@ -912,13 +920,20 @@ public final class Repository: @unchecked Sendable {
     /// 全仓库字面量替换（区分大小写，非正则）：先用 `git grep -l` 列出含匹配的文件，
     /// 再逐个读盘做精确字符串替换写回。只动确有匹配的文件，写回后由调用方刷新状态走 git 复核。
     /// query 与替换搜索保持一致（trim 后作为针），replacement 原样使用（可为空=删除）。
-    public func replaceAll(_ query: String, with replacement: String, limit: Int = 5000) async throws -> ReplaceResult {
+    public func replaceAll(
+        _ query: String,
+        with replacement: String,
+        include: [String] = [],
+        exclude: [String] = [],
+        limit: Int = 5000
+    ) async throws -> ReplaceResult {
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty, needle != replacement else { return ReplaceResult(filesChanged: 0, occurrences: 0) }
 
         // -l 只列文件名，区分大小写字面量匹配，含未跟踪、跳过二进制
         let listResult = try await git.run(
-            ["grep", "-l", "-I", "--untracked", "-F", "-e", needle, "--", "."],
+            ["grep", "-l", "-I", "--untracked", "-F", "-e", needle, "--"]
+                + Self.searchPathspecs(include: include, exclude: exclude),
             allowedExitCodes: [0, 1]
         )
         guard listResult.exitCode == 0 else { return ReplaceResult(filesChanged: 0, occurrences: 0) }
@@ -943,6 +958,12 @@ public final class Repository: @unchecked Sendable {
             }
         }
         return ReplaceResult(filesChanged: filesChanged, occurrences: occurrences)
+    }
+
+    static func searchPathspecs(include: [String], exclude: [String]) -> [String] {
+        var pathspecs = include.isEmpty ? ["."] : include
+        pathspecs += exclude.map { ":(exclude)\($0)" }
+        return pathspecs
     }
 
     // MARK: - 文件列表

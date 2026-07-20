@@ -11,15 +11,25 @@ struct SearchPanelView: View {
     @State private var searching = false
     @State private var searchTask: Task<Void, Never>?
     @State private var confirmReplace = false
+    @State private var showAdvanced = false
+    @State private var showFileTree = true
+    @State private var collapsedTreePaths: Set<String> = []
     @FocusState private var focusField: Field?
 
-    private enum Field { case search, replace }
+    private enum Field { case search, replace, include, exclude }
 
     /// 替换模式强制精确匹配（区分大小写、字面量），保证「搜得到的就是会被替换的」。
     private var effectiveExact: Bool { vm.globalSearchReplace || vm.globalSearchExact }
     private var hits: [Repository.GrepHit] { vm.globalSearchHits }
     private var needle: String { vm.globalSearchQuery.trimmingCharacters(in: .whitespaces) }
     private var fileCount: Int { Set(hits.map(\.path)).count }
+    private var selectedPath: String? {
+        hits.indices.contains(selectedIndex) ? hits[selectedIndex].path : nil
+    }
+    private var matchCountByPath: [String: Int] {
+        Dictionary(grouping: hits, by: \.path)
+            .mapValues { $0.reduce(0) { $0 + $1.matchCount } }
+    }
     /// 命中处数（一块可含多处命中，故按命中行累计，而非块数）。
     private var matchCount: Int { hits.reduce(0) { $0 + $1.matchCount } }
     private var canReplace: Bool {
@@ -37,6 +47,16 @@ struct SearchPanelView: View {
         return order.map { ($0, table[$0] ?? []) }
     }
 
+    private struct TreeRow: Identifiable {
+        let node: FileNode
+        let depth: Int
+        var id: String { node.id }
+    }
+
+    private var treeRows: [TreeRow] {
+        flattenTree(FileTreeBuilder.build(paths: Array(Set(hits.map(\.path)))))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -45,7 +65,16 @@ struct SearchPanelView: View {
                 countBar
                 Divider()
             }
-            results
+            if showFileTree && !hits.isEmpty {
+                HSplitView {
+                    resultFileTree
+                        .frame(minWidth: 150, idealWidth: 210, maxWidth: 320)
+                    results
+                        .frame(minWidth: 300)
+                }
+            } else {
+                results
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
@@ -61,6 +90,8 @@ struct SearchPanelView: View {
         }
         .onChange(of: vm.globalSearchQuery) { _, q in scheduleSearch(q) }
         .onChange(of: vm.globalSearchExact) { _, _ in scheduleSearch(vm.globalSearchQuery) }
+        .onChange(of: vm.globalSearchInclude) { _, _ in scheduleSearch(vm.globalSearchQuery) }
+        .onChange(of: vm.globalSearchExclude) { _, _ in scheduleSearch(vm.globalSearchQuery) }
         .confirmationDialog(
             tr("在 \(fileCount) 个文件中替换全部「\(needle)」？",
                "Replace all “\(needle)” in \(fileCount) file(s)?"),
@@ -103,6 +134,23 @@ struct SearchPanelView: View {
 
                 searchField
 
+                Button { showAdvanced.toggle() } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(showAdvanced ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(tr("包含与排除文件", "Include and exclude files"))
+
+                Button { showFileTree.toggle() } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 12))
+                        .foregroundStyle(showFileTree ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(hits.isEmpty)
+                .help(tr("显示搜索文件树", "Show search file tree"))
+
                 Button { vm.closeSearchTab() } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -113,6 +161,7 @@ struct SearchPanelView: View {
             }
 
             if vm.globalSearchReplace { replaceField }
+            if showAdvanced { advancedFields }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -182,6 +231,54 @@ struct SearchPanelView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5))
     }
 
+    private var advancedFields: some View {
+        HStack(spacing: 6) {
+            filterField(
+                title: tr("包含", "Include"),
+                placeholder: "*.ts | *.js",
+                text: $vm.globalSearchInclude,
+                field: .include
+            )
+            filterField(
+                title: tr("排除", "Exclude"),
+                placeholder: "*.test.ts | dist/**",
+                text: $vm.globalSearchExclude,
+                field: .exclude
+            )
+        }
+    }
+
+    private func filterField(
+        title: String,
+        placeholder: String,
+        text: Binding<String>,
+        field: Field
+    ) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5, design: .monospaced))
+                .focused($focusField, equals: field)
+                .onKeyPress(.escape) { vm.closeSearchTab(); return .handled }
+            if !text.wrappedValue.isEmpty {
+                Button { text.wrappedValue = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5))
+    }
+
     /// 结果统计条（Xcode 式居中「N results in M files」）。
     private var countBar: some View {
         HStack(spacing: 6) {
@@ -201,6 +298,90 @@ struct SearchPanelView: View {
     }
 
     // MARK: - 结果列表（文件头吸顶，一直罗列）
+
+    private var resultFileTree: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(tr("搜索文件", "Search Files"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(fileCount)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 27)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(treeRows) { row in
+                        searchTreeRow(row)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+    }
+
+    private func searchTreeRow(_ row: TreeRow) -> some View {
+        let node = row.node
+        return HStack(spacing: 5) {
+            if node.isDirectory {
+                Image(systemName: collapsedTreePaths.contains(node.path) ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Image(systemName: "folder")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else {
+                Color.clear.frame(width: 10, height: 1)
+                FileIconView(fileName: node.name)
+            }
+            Text(node.name)
+                .font(.system(size: 11.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 2)
+            if !node.isDirectory {
+                Text("\(matchCountByPath[node.path, default: 0])")
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.leading, CGFloat(row.depth) * 14 + 7)
+        .padding(.trailing, 8)
+        .frame(height: 23)
+        .background(selectedPath == node.path ? Color.accentColor.opacity(0.14) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if node.isDirectory {
+                if collapsedTreePaths.contains(node.path) {
+                    collapsedTreePaths.remove(node.path)
+                } else {
+                    collapsedTreePaths.insert(node.path)
+                }
+            } else if let index = hits.firstIndex(where: { $0.path == node.path }) {
+                selectedIndex = index
+                focusField = .search
+            }
+        }
+    }
+
+    private func flattenTree(_ nodes: [FileNode], depth: Int = 0) -> [TreeRow] {
+        var rows: [TreeRow] = []
+        for node in nodes {
+            rows.append(TreeRow(node: node, depth: depth))
+            if node.isDirectory, !collapsedTreePaths.contains(node.path) {
+                rows += flattenTree(node.children ?? [], depth: depth + 1)
+            }
+        }
+        return rows
+    }
 
     @ViewBuilder
     private var results: some View {
@@ -320,7 +501,8 @@ struct SearchPanelView: View {
         var attributed = AttributedString(display)
         guard !needle.isEmpty else { return attributed }
         var searchStart = display.startIndex
-        while let range = display.range(of: needle, options: .caseInsensitive, range: searchStart..<display.endIndex) {
+        let options: String.CompareOptions = effectiveExact ? [] : .caseInsensitive
+        while let range = display.range(of: needle, options: options, range: searchStart..<display.endIndex) {
             if let lower = AttributedString.Index(range.lowerBound, within: attributed),
                let upper = AttributedString.Index(range.upperBound, within: attributed) {
                 attributed[lower..<upper].foregroundColor = .accentColor
@@ -342,8 +524,8 @@ struct SearchPanelView: View {
     private func onSearchSubmit() {
         if vm.globalSearchReplace {
             focusField = .replace
-        } else if hits.indices.contains(selectedIndex) {
-            vm.openSearchResult(hits[selectedIndex])
+        } else if !hits.isEmpty {
+            selectedIndex = (selectedIndex + 1) % hits.count
         }
     }
 
@@ -360,13 +542,20 @@ struct SearchPanelView: View {
         }
         searching = true
         let exact = effectiveExact
+        let include = RepoViewModel.searchPatterns(vm.globalSearchInclude)
+        let exclude = RepoViewModel.searchPatterns(vm.globalSearchExclude)
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled, let repo = vm.repo else {
                 await MainActor.run { searching = false }
                 return
             }
-            let result = (try? await repo.grep(trimmed, exact: exact)) ?? []
+            let result = (try? await repo.grep(
+                trimmed,
+                exact: exact,
+                include: include,
+                exclude: exclude
+            )) ?? []
             guard !Task.isCancelled else { return }
             vm.globalSearchHits = result
             searching = false

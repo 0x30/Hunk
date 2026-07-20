@@ -91,6 +91,7 @@ struct PlainTextEditor: NSViewRepresentable {
         textView.isGrammarCheckingEnabled = false
         textView.smartInsertDeleteEnabled = false
         textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.textContainerInset = NSSize(width: 6, height: 8)
         let editorFont = SettingsStore.shared.editorNSFont
         textView.font = editorFont

@@ -246,6 +246,8 @@ final class RepoViewModel: ObservableObject {
     @Published var globalSearchQuery = ""
     @Published var globalSearchHits: [Repository.GrepHit] = []
     @Published var globalSearchExact = false
+    @Published var globalSearchInclude = ""
+    @Published var globalSearchExclude = ""
     /// 全局面板进入「替换」模式（⌘⇧R）：强制精确匹配、显示替换字段。
     @Published var globalSearchReplace = false
 
@@ -451,7 +453,12 @@ final class RepoViewModel: ObservableObject {
     func replaceAllInRepo(query: String, replacement: String) async {
         guard let repo else { return }
         do {
-            let result = try await repo.replaceAll(query, with: replacement)
+            let result = try await repo.replaceAll(
+                query,
+                with: replacement,
+                include: Self.searchPatterns(globalSearchInclude),
+                exclude: Self.searchPatterns(globalSearchExclude)
+            )
             showGlobalSearch = false
             globalSearchReplace = false
             await refresh()
@@ -464,6 +471,12 @@ final class RepoViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    static func searchPatterns(_ value: String) -> [String] {
+        value.components(separatedBy: CharacterSet(charactersIn: "|,\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。
     @Published var revealFileRequest: String?
