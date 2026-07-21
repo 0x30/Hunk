@@ -1054,7 +1054,6 @@ final class RepoViewModel: ObservableObject {
     private var emptyDiffRefreshedPath: String?
 
     func loadDetail() async {
-        guard let repo else { return }
         // 快速切换时上一个任务已被取消：直接跳过，别再跑一遍重活
         //（取消只在 await 边界生效，所以下面每个 await 之后还要再查一次）
         if Task.isCancelled { return }
@@ -1065,6 +1064,8 @@ final class RepoViewModel: ObservableObject {
             diff = nil
             diffNewSideLines = nil
         case .change(let path, let area):
+            // diff 只存在于 git 仓库；普通目录仍可走下面的 .file 分支打开文件。
+            guard let repo else { return }
             diffArea = area
             if area == .conflicted {
                 openEditor(path: path)
@@ -1120,7 +1121,7 @@ final class RepoViewModel: ObservableObject {
             // 大文件读盘移出主线程：快速切换时主线程同步 IO 会卡。
             // 预读进缓冲，openEditor 命中缓冲分支即可，不在主线程再读一次。
             // 二进制文件跳过——会走 hex 查看器，预读全文进 buffer 纯属浪费内存。
-            let url = repo.fileURL(for: path)
+            let url = editorFileURL(path)
             if buffers[path] == nil, !isUntitled(path), !FileIcon.isImage(path),
                !BinaryDetector.isBinary(url: url) {
                 let text = await Task.detached(priority: .userInitiated) {
@@ -1258,7 +1259,9 @@ final class RepoViewModel: ObservableObject {
     func editorFileURL(_ path: String) -> URL {
         path.hasPrefix("/")
             ? URL(fileURLWithPath: path)
-            : (repo?.fileURL(for: path) ?? URL(fileURLWithPath: path))
+            : (repo?.fileURL(for: path)
+               ?? repoRoot?.appendingPathComponent(path)
+               ?? URL(fileURLWithPath: path))
     }
 
     /// 在当前工作区窗口里「预览」一个外部文件(VS Code 式):只把编辑器切到该文件,
