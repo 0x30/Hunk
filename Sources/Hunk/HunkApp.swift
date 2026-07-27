@@ -141,15 +141,21 @@ enum CLIOpenRouter {
     private static var pendingReveal: String?
 
     static func route(_ path: String) {
+        guard let normalizedURL = OpenPathResolver.resolve(path) else { return }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        guard FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory) else {
+            Diagnostics.log("CLI 路径不存在 \(normalizedURL.path)")
+            return
+        }
         // 解析符号链接（如 /tmp → /private/tmp），与 git 返回的仓库根对齐
-        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let url = normalizedURL.resolvingSymlinksInPath()
         let directory = isDirectory.boolValue ? url : url.deletingLastPathComponent()
 
-        let vms = RepoViewModel.instances.allObjects
+        // NSHashTable 里可能短暂保留已关窗口的 ViewModel。请求发给这种实例后
+        // 没有 ContentView 订阅 openWindowRequest，表现为通道文件被消费但无任何窗口响应。
+        let vms = routableViewModels()
         guard !vms.isEmpty else {
-            pendingPath = path
+            pendingPath = url.path
             scheduleColdStartRetry(attempt: 0)
             return
         }
@@ -159,6 +165,7 @@ enum CLIOpenRouter {
             vm.repoRoot?.resolvingSymlinksInPath().path
         }
         func focus(_ vm: RepoViewModel) {
+            vm.window?.deminiaturize(nil)
             vm.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -168,7 +175,7 @@ enum CLIOpenRouter {
             if let vm = vms.first(where: { canonicalRoot($0) == directory.path }) {
                 focus(vm)
             } else {
-                let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+                let requester = preferredViewModel(in: vms)
                 requester.openWindowRequest = directory.path
             }
             return
@@ -188,7 +195,7 @@ enum CLIOpenRouter {
         }
 
         // 单文件②:不在任何打开的项目内
-        let target = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+        let target = preferredViewModel(in: vms)
         focus(target)
         if target.repoRoot != nil && !target.isStandaloneFile {
             target.previewExternalFile(url)   // 当前窗口有工作区:只预览,不切目录(VS Code 式)
@@ -197,13 +204,29 @@ enum CLIOpenRouter {
         }
     }
 
+    /// 只向尚有窗口的 ViewModel 路由。最小化窗口仍是有效目标。
+    private static func routableViewModels() -> [RepoViewModel] {
+        RepoViewModel.instances.allObjects.filter { vm in
+            guard let window = vm.window else { return false }
+            return window.isVisible || window.isMiniaturized
+        }
+    }
+
+    /// Hunk 被 CLI 从后台激活时，isKeyWindow 可能短暂全为 false，因此再按 main/visible 选择。
+    private static func preferredViewModel(in vms: [RepoViewModel]) -> RepoViewModel {
+        vms.first { $0.window?.isKeyWindow == true }
+            ?? vms.first { $0.window?.isMainWindow == true }
+            ?? vms.first { $0.window?.isVisible == true }
+            ?? vms[0]
+    }
+
     /// 冷启动：odoc 打开事件常早于 SwiftUI 窗口建立，pendingPath 暂存后窗口侧 .task 取不到。
     /// 轮询等窗口就绪（每 0.25s，最多 ~3s），就绪后重走路由消费暂存的路径。
     private static func scheduleColdStartRetry(attempt: Int) {
         guard attempt < 12, pendingPath != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             guard let p = pendingPath else { return }  // 已被窗口的 .task 消费
-            if !RepoViewModel.instances.allObjects.isEmpty {
+            if !routableViewModels().isEmpty {
                 _ = takePending()
                 route(p)
             } else {

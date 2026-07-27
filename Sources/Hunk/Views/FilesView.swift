@@ -304,7 +304,7 @@ private struct FileTreeRow: View {
                     vm.sidebarTab = .changes
                     // 「文件」栏是工作区文件树,无暂存/未暂存之分:整文件 vs HEAD(暂存+未暂存合并)
                     let area: ChangeArea = change.isConflicted ? .conflicted : .head
-                    vm.selection = .change(path: change.path, area: area)
+                    vm.selectChange(change.path, area: area)
                 }
                 Divider()
             }

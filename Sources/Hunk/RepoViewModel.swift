@@ -284,6 +284,23 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    /// 从侧边栏选择一个更改。即使该行已处于选中态，也要重新打开并激活 diff 标签：
+    /// 用户可能已切到其他详情，或在不清除侧栏选中的情况下关闭了这个 diff 标签。
+    func selectChange(_ path: String, area: ChangeArea) {
+        let next = SidebarSelection.change(path: path, area: area)
+        guard selection == next else {
+            selection = next
+            return
+        }
+
+        editingChangedFile = false
+        let tab = ViewTab.diff(path, area)
+        if !openViewTabs.contains(tab) { openViewTabs.append(tab) }
+        activeDetail = .view(tab)
+        loadDetailTask?.cancel()
+        loadDetailTask = Task { await loadDetail() }
+    }
+
     /// 关闭某视图标签。
     func closeViewTab(_ tab: ViewTab) {
         let wasActive = activeDetail == .view(tab)
@@ -647,8 +664,10 @@ final class RepoViewModel: ObservableObject {
                 DispatchQueue.main.async { self?.rebuildWorkspaceTree() }
             }
             .store(in: &cancellables)
-        if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
-            Task { await open(URL(fileURLWithPath: initialPath)) }
+        if let initialPath,
+           let initialURL = OpenPathResolver.resolve(initialPath),
+           FileManager.default.fileExists(atPath: initialURL.path) {
+            Task { await open(initialURL) }
         } else if restoreLast,
                   !CLIOpenRouter.hasChannelContent,
                   let last = defaults.string(forKey: "lastRepo"),
@@ -2396,10 +2415,11 @@ final class RepoViewModel: ObservableObject {
 
     /// `hunk [path]`：目录直接打开仓库；文件则打开其所在仓库并定位该文件。
     func openFromCLI(_ path: String) {
+        guard let normalizedURL = OpenPathResolver.resolve(path) else { return }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        guard FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory) else { return }
         // 解析符号链接，与 git 返回的仓库根对齐
-        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let url = normalizedURL.resolvingSymlinksInPath()
         Task {
             if isDirectory.boolValue {
                 await open(url)
