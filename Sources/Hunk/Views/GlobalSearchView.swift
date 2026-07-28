@@ -78,6 +78,7 @@ struct SearchPanelView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
+            if vm.isWorkspace { showFileTree = false }
             // 首次出现时视图刚成为第一响应者,同帧设焦点会被吞,延到下一帧(与 nonce 路径一致)
             DispatchQueue.main.async { focusField = vm.globalSearchReplace ? .replace : .search }
             // 复用缓存结果时不重搜；首次或查询变更才搜
@@ -546,16 +547,16 @@ struct SearchPanelView: View {
         let exclude = RepoViewModel.searchPatterns(vm.globalSearchExclude)
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled, let repo = vm.repo else {
+            guard !Task.isCancelled else {
                 await MainActor.run { searching = false }
                 return
             }
-            let result = (try? await repo.grep(
+            let result = await vm.searchWorkspace(
                 trimmed,
                 exact: exact,
                 include: include,
                 exclude: exclude
-            )) ?? []
+            )
             guard !Task.isCancelled else { return }
             vm.globalSearchHits = result
             searching = false

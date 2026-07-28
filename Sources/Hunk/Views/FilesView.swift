@@ -57,8 +57,12 @@ struct FilesView: View {
                 guard let request else { return }
                 // 展开祖先目录并定位文件
                 var ancestor = (request as NSString).deletingLastPathComponent
+                let workspaceRoot = request.hasPrefix("/")
+                    ? vm.workspaceFolder(containing: URL(fileURLWithPath: request))?.path
+                    : nil
                 while !ancestor.isEmpty {
                     vm.fileTreeExpanded.insert(ancestor)
+                    if ancestor == workspaceRoot { break }
                     ancestor = (ancestor as NSString).deletingLastPathComponent
                 }
                 rebuildRows()
@@ -142,7 +146,10 @@ struct FilesView: View {
     }
 
     private func rebuildChangeLookup() {
-        changeLookup = Dictionary(vm.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        changeLookup = Dictionary(
+            vm.changes.map { (vm.documentPath(forRepositoryPath: $0.path), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private func toggle(_ node: FileNode) {
@@ -290,6 +297,12 @@ private struct FileTreeRow: View {
             if let repoURL {
                 Button(tr("作为仓库打开", "Open as Repository")) {
                     Task { await vm.selectRepo(repoURL) }
+                }
+                Divider()
+            }
+            if node.isDirectory, vm.isWorkspaceFolderRoot(node.path), vm.workspaceFolders.count > 1 {
+                Button(tr("从工作区移除", "Remove from Workspace"), role: .destructive) {
+                    Task { await vm.removeWorkspaceFolder(at: node.path) }
                 }
                 Divider()
             }

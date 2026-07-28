@@ -304,6 +304,31 @@ struct PlainTextEditor: NSViewRepresentable {
             scheduleGutterDiff()
         }
 
+        /// Markdown 列表智能回车。规则在 HunkCore 中保持为纯函数；这里仅负责语言判定
+        /// 与应用编辑。其它语言、选区、多光标和输入法合成全部保留 NSTextView 原生行为。
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)),
+                  !textView.hasMarkedText(),
+                  textView.selectedRanges.count == 1,
+                  currentLanguageIsMarkdown,
+                  let edit = MarkdownSmartNewline.edit(
+                    in: textView.string,
+                    selectedRange: textView.selectedRange()
+                  )
+            else { return false }
+
+            textView.insertText(edit.replacement, replacementRange: edit.range)
+            textView.setSelectedRange(edit.selectedRange)
+            textView.scrollRangeToVisible(edit.selectedRange)
+            return true
+        }
+
+        private var currentLanguageIsMarkdown: Bool {
+            let language = parent.languageOverride.flatMap { Lexer.language(forFileExtension: $0) }
+                ?? Lexer.language(forFileName: parent.fileName)
+            return language?.name == "Markdown"
+        }
+
         // MARK: - 内联变动预览
 
         /// 点改动条:在该行下方就地展开预览。再点同一处则收起(切换)。

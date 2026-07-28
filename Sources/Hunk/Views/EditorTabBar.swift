@@ -16,7 +16,7 @@ struct EditorTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             // blame 视图开关：仅在编辑文件标签激活时有意义
-            if vm.isGitRepo, activeFilePath != nil {
+            if (vm.isGitRepo || vm.isWorkspace), activeFilePath != nil {
                 Button {
                     vm.toggleBlameView()
                 } label: {
@@ -158,7 +158,9 @@ private struct ViewTabItem: View {
             // diff 标签:可在文件列表中定位对应文件
             if case .diff(let path, _) = tab, !vm.workspaceTree.isEmpty {
                 Divider()
-                Button(tr("在文件列表中显示", "Reveal in Files")) { vm.revealInFiles(path) }
+                Button(tr("在文件列表中显示", "Reveal in Files")) {
+                    vm.revealInFiles(vm.documentPath(forRepositoryPath: path))
+                }
             }
         }
     }
@@ -182,12 +184,12 @@ private struct EditorTabItem: View {
     let isActive: Bool
     @State private var hovering = false
 
-    private var fileName: String { vm.displayName(for: path) }
+    private var fileName: String { vm.tabDisplayName(for: path) }
     private var isDirty: Bool { vm.isTabDirty(path) }
 
     var body: some View {
         HStack(spacing: 5) {
-            FileIconView(fileName: fileName)
+            FileIconView(fileName: vm.displayName(for: path))
 
             Text(fileName)
                 .font(.system(size: 12))

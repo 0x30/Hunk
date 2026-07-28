@@ -29,10 +29,19 @@ struct ContentView: View {
             ),
             titleVisibility: .visible
         ) {
+            if vm.repoRoot != nil {
+                Button(tr("添加到当前工作区", "Add to Workspace")) {
+                    if let url = vm.pendingFolderDrop {
+                        vm.pendingFolderDrop = nil
+                        Task { await vm.addFolderToWorkspace(url) }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+            }
             Button(tr("在当前窗口打开", "Open in This Window")) {
                 if let url = vm.pendingFolderDrop {
                     vm.pendingFolderDrop = nil
-                    Task { await vm.open(url) }
+                    vm.openReplacingCurrent(url)
                 }
             }
             Button(tr("在新窗口打开", "Open in New Window")) {
@@ -359,7 +368,11 @@ struct MainSplitView: View {
                     "Applies this commit’s changes as a new commit on the current branch; conflicts appear in Merge Changes."))
         }
         // 仓库名并入分支胶囊（Xcode 式），标题栏不再单独显示项目名与副标题
-        .navigationTitle(vm.repoRoot?.lastPathComponent ?? "Hunk")
+        .navigationTitle(
+            vm.isWorkspace && vm.activeWorkspaceRepo == nil
+                ? tr("工作区", "Workspace")
+                : (vm.repoRoot?.lastPathComponent ?? "Hunk")
+        )
         .modifier(HideToolbarTitle())
         .toolbar {
             // 同步操作在「历史」模块头部，工具栏只保留分支

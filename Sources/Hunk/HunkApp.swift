@@ -172,7 +172,10 @@ enum CLIOpenRouter {
 
         // 文件夹（VS Code 式）：已打开则聚焦，否则在新窗口打开
         if isDirectory.boolValue {
-            if let vm = vms.first(where: { canonicalRoot($0) == directory.path }) {
+            if let vm = vms.first(where: {
+                canonicalRoot($0) == directory.path
+                    || $0.workspaceFolders.contains(where: { $0.path == directory.path })
+            }) {
                 focus(vm)
             } else {
                 let requester = preferredViewModel(in: vms)
@@ -184,11 +187,14 @@ enum CLIOpenRouter {
         // 单文件①：落在某个已打开项目内 → 聚焦那个项目窗口并定位到该文件
         let file = url.path
         if let vm = vms.first(where: { vm in
+            if vm.workspaceFolder(containing: url) != nil { return true }
             guard let root = canonicalRoot(vm) else { return false }
             return file.hasPrefix(root + "/")
         }) {
             focus(vm)
-            if let root = canonicalRoot(vm) {
+            if vm.isWorkspace {
+                vm.revealInFiles(file)
+            } else if let root = canonicalRoot(vm) {
                 vm.revealInFiles(String(file.dropFirst(root.count + 1)))
             }
             return
@@ -428,6 +434,11 @@ private struct AppCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: .command)
             .disabled(vm == nil)
+
+            Button(tr("添加文件夹到工作区…", "Add Folder to Workspace…")) {
+                vm?.addFolderPanel()
+            }
+            .disabled(vm?.repoRoot == nil)
 
             // 「最近打开」子菜单由 RecentMenuController（AppKit）插入，
             // 用 attributedTitle 实现两行（项目名 + 灰色路径），此处不再用 SwiftUI Menu

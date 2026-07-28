@@ -50,6 +50,45 @@ struct HistoryPanel: View {
                     .foregroundStyle(Color.accentColor)
                 }
 
+                if vm.isWorkspace, let active = vm.activeWorkspaceRepo {
+                    Menu {
+                        Button {
+                            Task { await vm.selectWorkspaceOverview() }
+                        } label: {
+                            Label(tr("所有仓库", "All Repositories"), systemImage: "folder")
+                        }
+                        Divider()
+                        ForEach(vm.discoveredRepos, id: \.self) { url in
+                            Button {
+                                Task { await vm.selectRepo(url) }
+                            } label: {
+                                Label(
+                                    vm.repositoryDisplayName(url),
+                                    systemImage: url.path == active.path
+                                        ? "checkmark"
+                                        : "arrow.triangle.branch"
+                                )
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(vm.repositoryDisplayName(active))
+                                .font(.system(size: 9.5, weight: .medium))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 6.5, weight: .semibold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(.quaternary.opacity(0.6)))
+                        .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .help(tr("切换历史仓库", "Switch history repository"))
+                }
+
                 Spacer()
 
                 // 远端同步：刷新 / 拉取(落后数) / 推送(领先数)
@@ -543,7 +582,7 @@ struct HistoryDetailView: View {
                 if !vm.workspaceTree.isEmpty {
                     Button(tr("在文件列表中显示", "Reveal in Files")) {
                         vm.closeHistoryDetail()
-                        vm.revealInFiles(file.path)
+                        vm.revealInFiles(vm.documentPath(forRepositoryPath: file.path))
                     }
                 }
                 Button(tr("打开文件并定位到变动", "Open File at Changes")) {

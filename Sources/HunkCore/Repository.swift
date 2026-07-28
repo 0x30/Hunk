@@ -812,6 +812,10 @@ public final class Repository: @unchecked Sendable {
     public struct GrepHit: Identifiable, Hashable, Sendable {
         public let path: String
         public let lines: [GrepLine]
+        public init(path: String, lines: [GrepLine]) {
+            self.path = path
+            self.lines = lines
+        }
         /// 块内首个命中行（打开文件时定位到这里，也用作稳定 id）。
         public var line: Int { lines.first(where: { $0.isMatch })?.number ?? lines.first?.number ?? 1 }
         /// 块内命中行数（用于统计「N 处匹配」）。
