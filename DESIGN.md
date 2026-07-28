@@ -1,5 +1,8 @@
 # Hunk — macOS Git 预览编辑器 设计文档
 
+多项目工作区的后续设计见
+[`docs/multi-project-workspace-design.md`](docs/multi-project-workspace-design.md)。
+
 ## 目标
 
 一个轻量的 macOS 原生 Git 工作区工具，定位介于 `git status/diff` 命令行和完整 IDE 之间：

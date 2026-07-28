@@ -68,11 +68,28 @@ struct QuickOpenView: View {
     }
 
     private func resultRow(path: String, highlighted: Bool) -> some View {
-        HStack(spacing: 8) {
+        let url = URL(fileURLWithPath: path)
+        let normalizedPath = path.hasPrefix("/")
+            ? url.resolvingSymlinksInPath().standardizedFileURL.path
+            : path
+        let folder = path.hasPrefix("/") ? vm.workspaceFolder(containing: url) : nil
+        let directory: String = {
+            guard let folder else {
+                return (normalizedPath as NSString).deletingLastPathComponent
+            }
+            let relative = normalizedPath.hasPrefix(folder.path + "/")
+                ? String(normalizedPath.dropFirst(folder.path.count + 1))
+                : normalizedPath
+            let parent = (relative as NSString).deletingLastPathComponent
+            return parent.isEmpty
+                ? vm.workspaceFolderDisplayName(folder)
+                : vm.workspaceFolderDisplayName(folder) + " / " + parent
+        }()
+        return HStack(spacing: 8) {
             FileIconView(fileName: (path as NSString).lastPathComponent)
             Text((path as NSString).lastPathComponent)
                 .font(.system(size: 13))
-            Text((path as NSString).deletingLastPathComponent)
+            Text(directory)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

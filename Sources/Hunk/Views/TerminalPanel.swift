@@ -6,6 +6,8 @@ import SwiftTerm
 /// 单个 shell 会话：持有终端视图与进程，面板隐藏/切换标签时只是移出层级，会话不中断。
 final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDelegate {
     let id = UUID()
+    let root: URL?
+    let projectName: String?
     /// 标签显示用的 shell 名（zsh / bash…）
     let shellName = ((ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh") as NSString).lastPathComponent
     /// shell 退出（用户输入 exit）时回调
@@ -15,8 +17,14 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
 
     private var terminalView: FocusReportingTerminalView?
 
+    init(root: URL?, projectName: String?) {
+        self.root = root
+        self.projectName = projectName
+        super.init()
+    }
+
     /// 返回现有会话视图；没有则启动用户默认 shell（登录式，工作目录为仓库根）。
-    func view(root: URL?, font: NSFont) -> LocalProcessTerminalView {
+    func view(font: NSFont) -> LocalProcessTerminalView {
         if let terminalView { return terminalView }
         let view = FocusReportingTerminalView(frame: .zero)
         view.onFocusChange = { [weak self] focused in self?.onFocusChange?(focused) }
@@ -222,7 +230,6 @@ struct TerminalPanel: View {
             if let session = vm.activeTerminal {
                 TerminalHostView(
                     session: session,
-                    root: vm.repoRoot,
                     font: settings.terminalNSFont
                 )
                 .id(session.id)  // 切换会话时重挂对应的终端视图
@@ -251,7 +258,8 @@ private struct TerminalTabItem: View {
                 .font(.system(size: 10))
                 .foregroundStyle(isActive ? Color.accentColor : .secondary)
 
-            Text("\(session.shellName) \(index + 1)")
+            Text(session.projectName.map { "\($0) · \(session.shellName) \(index + 1)" }
+                 ?? "\(session.shellName) \(index + 1)")
                 .font(.system(size: 12))
                 .lineLimit(1)
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -331,11 +339,10 @@ struct TerminalResizeDivider: View {
 /// 终端 NSView 桥接：复用 TerminalSession 持有的视图实例。
 private struct TerminalHostView: NSViewRepresentable {
     let session: TerminalSession
-    let root: URL?
     let font: NSFont
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let view = session.view(root: root, font: font)
+        let view = session.view(font: font)
         // 面板弹出后直接可输入
         DispatchQueue.main.async {
             view.window?.makeFirstResponder(view)

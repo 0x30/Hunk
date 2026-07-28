@@ -304,6 +304,31 @@ struct PlainTextEditor: NSViewRepresentable {
             scheduleGutterDiff()
         }
 
+        /// Markdown 列表智能回车。规则在 HunkCore 中保持为纯函数；这里仅负责语言判定
+        /// 与应用编辑。其它语言、选区、多光标和输入法合成全部保留 NSTextView 原生行为。
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)),
+                  !textView.hasMarkedText(),
+                  textView.selectedRanges.count == 1,
+                  currentLanguageIsMarkdown,
+                  let edit = MarkdownSmartNewline.edit(
+                    in: textView.string,
+                    selectedRange: textView.selectedRange()
+                  )
+            else { return false }
+
+            textView.insertText(edit.replacement, replacementRange: edit.range)
+            textView.setSelectedRange(edit.selectedRange)
+            textView.scrollRangeToVisible(edit.selectedRange)
+            return true
+        }
+
+        private var currentLanguageIsMarkdown: Bool {
+            let language = parent.languageOverride.flatMap { Lexer.language(forFileExtension: $0) }
+                ?? Lexer.language(forFileName: parent.fileName)
+            return language?.name == "Markdown"
+        }
+
         // MARK: - 内联变动预览
 
         /// 点改动条:在该行下方就地展开预览。再点同一处则收起(切换)。
@@ -887,9 +912,6 @@ final class OverscrollTextView: NSTextView {
     // 词 = 字母/数字/下划线（含 CJK 等非 ASCII 文字），其余标点皆为分隔符。
     // 重写选词与按词移动/扩选/删除，让它们都用这套边界。
 
-    /// 连续两次按词扩选之间保持的锚点；其它任何改选区的动作都会清空它（见 setSelectedRanges）。
-    private static let wordAnchorKey = "OverscrollTextView.wordAnchor"
-
     private static func isWordChar(_ ch: unichar) -> Bool {
         if ch == 0x5F { return true }                       // _
         if let scalar = Unicode.Scalar(ch) {
@@ -944,13 +966,70 @@ final class OverscrollTextView: NSTextView {
         return NSRange(location: start, length: end - start)
     }
 
-    // 锚点跟踪:只有连续按词扩选才保留锚点,其它改选区动作经此漏斗清空。
-    private var wordAnchor: Int?
-    private var inWordExtend = false
+    // 扩选必须保留“锚点”和“活动端”两个位置。NSTextView 的公开 selectedRange
+    // 只有排序后的范围，方向反转时不能仅靠范围推断原来的锚点。
+    private var selectionAnchor: Int?
+    private var inSelectionExtend = false
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting flag: Bool) {
-        if !inWordExtend { wordAnchor = nil }
+        // 鼠标拖选、普通方向键、点击等都会经过这里，意味着用户开始了新一轮选择。
+        // 自己设置扩展范围时暂时保留锚点，确保 Shift+左/右反向先收缩选区。
+        if !inSelectionExtend { selectionAnchor = nil }
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: flag)
+    }
+
+    /// 返回当前扩选轮次的锚点和活动端。已有选区默认活动端在右侧，之后始终保留锚点。
+    private func selectionEndpoints(for selection: NSRange) -> (anchor: Int, active: Int) {
+        if let anchor = selectionAnchor {
+            let active: Int
+            if selection.length == 0 {
+                active = anchor
+            } else if anchor <= selection.location {
+                active = NSMaxRange(selection)
+            } else if anchor >= NSMaxRange(selection) {
+                active = selection.location
+            } else {
+                // 文本被外部改动导致锚点落入范围内，重新从当前选区开始。
+                let newAnchor = selection.location
+                selectionAnchor = newAnchor
+                active = NSMaxRange(selection)
+                return (newAnchor, active)
+            }
+            return (anchor, active)
+        }
+
+        let anchor = selection.location
+        selectionAnchor = anchor
+        let active = NSMaxRange(selection)
+        return (anchor, active)
+    }
+
+    private func nextCharacterBoundary(from index: Int, in s: NSString) -> Int {
+        guard index < s.length else { return s.length }
+        return NSMaxRange(s.rangeOfComposedCharacterSequence(at: max(0, index)))
+    }
+
+    private func previousCharacterBoundary(from index: Int, in s: NSString) -> Int {
+        guard index > 0 else { return 0 }
+        return s.rangeOfComposedCharacterSequence(at: index - 1).location
+    }
+
+    private func applyExtendedSelection(anchor: Int, target: Int) {
+        let lower = min(anchor, target)
+        let upper = max(anchor, target)
+        inSelectionExtend = true
+        setSelectedRange(NSRange(location: lower, length: upper - lower))
+        inSelectionExtend = false
+        scrollRangeToVisible(selectedRange())
+    }
+
+    private func extendSelectionByCharacter(forward: Bool) {
+        let s = string as NSString
+        let endpoints = selectionEndpoints(for: selectedRange())
+        let target = forward
+            ? nextCharacterBoundary(from: endpoints.active, in: s)
+            : previousCharacterBoundary(from: endpoints.active, in: s)
+        applyExtendedSelection(anchor: endpoints.anchor, target: target)
     }
 
     private func moveCaretByWord(forward: Bool) {
@@ -965,22 +1044,11 @@ final class OverscrollTextView: NSTextView {
 
     private func extendSelectionByWord(forward: Bool) {
         let s = string as NSString
-        let sel = selectedRange()
-        let anchor: Int
-        if let a = wordAnchor {
-            anchor = a
-        } else {
-            anchor = forward ? sel.location : NSMaxRange(sel)   // 新一轮:锚定移动方向的反端
-            wordAnchor = anchor
-        }
-        let active = sel.length == 0 ? anchor : (anchor == sel.location ? NSMaxRange(sel) : sel.location)
-        let target = forward ? nextWordBoundary(from: active, in: s) : prevWordBoundary(from: active, in: s)
-        let lower = min(anchor, target)
-        let upper = max(anchor, target)
-        inWordExtend = true
-        setSelectedRange(NSRange(location: lower, length: upper - lower))
-        inWordExtend = false
-        scrollRangeToVisible(selectedRange())
+        let endpoints = selectionEndpoints(for: selectedRange())
+        let target = forward
+            ? nextWordBoundary(from: endpoints.active, in: s)
+            : prevWordBoundary(from: endpoints.active, in: s)
+        applyExtendedSelection(anchor: endpoints.anchor, target: target)
     }
 
     private func deleteByWord(forward: Bool) {
@@ -1001,6 +1069,10 @@ final class OverscrollTextView: NSTextView {
     // ⌥←→ 走 Right/Left 绑定(LTR 下 Right=Forward);Forward/Backward 一并覆盖以防其它绑定。
     override func moveWordRight(_ sender: Any?) { moveCaretByWord(forward: true) }
     override func moveWordLeft(_ sender: Any?) { moveCaretByWord(forward: false) }
+    override func moveRightAndModifySelection(_ sender: Any?) { extendSelectionByCharacter(forward: true) }
+    override func moveLeftAndModifySelection(_ sender: Any?) { extendSelectionByCharacter(forward: false) }
+    override func moveForwardAndModifySelection(_ sender: Any?) { extendSelectionByCharacter(forward: true) }
+    override func moveBackwardAndModifySelection(_ sender: Any?) { extendSelectionByCharacter(forward: false) }
     override func moveWordForward(_ sender: Any?) { moveCaretByWord(forward: true) }
     override func moveWordBackward(_ sender: Any?) { moveCaretByWord(forward: false) }
     override func moveWordRightAndModifySelection(_ sender: Any?) { extendSelectionByWord(forward: true) }

@@ -214,7 +214,7 @@ struct ChangesListView: View {
                     .padding(.leading, CGFloat(depth) * 14)
                     .virtualizedSidebarRow(selected: vm.selection == selection)
                     .onTapGesture {
-                        vm.selection = selection
+                        vm.selectChange(change.path, area: area)
                     }
                     .id(item.id)
             }

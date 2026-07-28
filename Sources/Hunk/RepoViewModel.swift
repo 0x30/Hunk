@@ -53,6 +53,8 @@ final class RepoViewModel: ObservableObject {
     @Published var isGitRepo = false
     /// 单文件模式（无文件树；tab 右键只保留复制路径 / Finder）
     @Published var isStandaloneFile = false
+    /// 用户显式加入当前窗口的文件夹根。单项目也保存为一项，添加第二项时无需重新解释旧根。
+    @Published var workspaceFolders: [URL] = []
     /// 工作区根：打开的是「装了多个 git 项目的文件夹」时，记录这个父目录。
     /// 非空且 discoveredRepos 非空 ⇒ 侧边栏出现仓库切换器。单仓库/普通目录时为 nil。
     @Published var workspaceRoot: URL?
@@ -61,8 +63,24 @@ final class RepoViewModel: ObservableObject {
     /// 当前激活的工作区子仓库（nil = 正在看「整个文件夹」总览）。
     @Published var activeWorkspaceRepo: URL?
 
-    /// 是否处于多仓库工作区（决定是否显示切换器）。
-    var isWorkspace: Bool { workspaceRoot != nil && !discoveredRepos.isEmpty }
+    struct RepositorySummary: Identifiable, Equatable {
+        let url: URL
+        var branch: String
+        var changeCount: Int
+        var conflictCount: Int
+        var sync: SyncStatus
+        var headSummary: String?
+        var id: String { url.path }
+    }
+
+    @Published var repositorySummaries: [RepositorySummary] = []
+
+    /// 是否处于工作区模式：多个显式文件夹，或一个容器里发现了多个 git 仓库。
+    var isWorkspace: Bool {
+        workspaceFolders.count > 1 || discoveredRepos.count > 1 || workspaceRoot != nil
+    }
+    /// 文件树是否需要显示用户添加的多个根节点。
+    var showsWorkspaceRoots: Bool { isWorkspace || workspaceFolders.count > 1 }
     @Published var changes: [FileChange] = []
     @Published var branches: [Branch] = []
     @Published var stashes: [Stash] = []
@@ -284,6 +302,23 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    /// 从侧边栏选择一个更改。即使该行已处于选中态，也要重新打开并激活 diff 标签：
+    /// 用户可能已切到其他详情，或在不清除侧栏选中的情况下关闭了这个 diff 标签。
+    func selectChange(_ path: String, area: ChangeArea) {
+        let next = SidebarSelection.change(path: path, area: area)
+        guard selection == next else {
+            selection = next
+            return
+        }
+
+        editingChangedFile = false
+        let tab = ViewTab.diff(path, area)
+        if !openViewTabs.contains(tab) { openViewTabs.append(tab) }
+        activeDetail = .view(tab)
+        loadDetailTask?.cancel()
+        loadDetailTask = Task { await loadDetail() }
+    }
+
     /// 关闭某视图标签。
     func closeViewTab(_ tab: ViewTab) {
         let wasActive = activeDetail == .view(tab)
@@ -348,7 +383,18 @@ final class RepoViewModel: ObservableObject {
 
     /// 新建一个 shell 会话并切为当前。
     func newTerminal() {
-        let session = TerminalSession()
+        let root: URL? = {
+            if let path = editorPath, path.hasPrefix("/"),
+               let folder = workspaceFolder(containing: URL(fileURLWithPath: path)) {
+                return folder
+            }
+            return activeWorkspaceRepo ?? workspaceFolders.first ?? repoRoot
+        }()
+        let projectName = root.map {
+            workspaceFolder(containing: $0).map(workspaceFolderDisplayName)
+                ?? repositoryDisplayName($0)
+        }
+        let session = TerminalSession(root: root, projectName: projectName)
         session.onExit = { [weak self] session in
             Task { @MainActor in self?.removeTerminal(session) }
         }
@@ -451,22 +497,40 @@ final class RepoViewModel: ObservableObject {
 
     /// 全仓库字面量替换（⌘⇧R，区分大小写）：写回文件后刷新状态，改动进工作区交 git 复核。
     func replaceAllInRepo(query: String, replacement: String) async {
-        guard let repo else { return }
+        if isWorkspace, hasUnsavedChanges() {
+            notice = tr("工作区还有未保存的文件，请先保存后再执行跨项目替换。",
+                        "Save open files before replacing across the workspace.")
+            return
+        }
         do {
-            let result = try await repo.replaceAll(
-                query,
-                with: replacement,
-                include: Self.searchPatterns(globalSearchInclude),
-                exclude: Self.searchPatterns(globalSearchExclude)
-            )
+            let include = Self.searchPatterns(globalSearchInclude)
+            let exclude = Self.searchPatterns(globalSearchExclude)
+            var filesChanged = 0
+            var occurrences = 0
+            let roots = isWorkspace ? discoveredRepos : (repo.map { [$0.root] } ?? [])
+            for root in roots {
+                guard let targetRepo = try? await Repository.discover(at: root) else { continue }
+                let result = try await targetRepo.replaceAll(
+                    query,
+                    with: replacement,
+                    include: include,
+                    exclude: exclude
+                )
+                filesChanged += result.filesChanged
+                occurrences += result.occurrences
+            }
             showGlobalSearch = false
             globalSearchReplace = false
             await refresh()
-            if result.filesChanged == 0 {
+            if isWorkspace {
+                await refreshWorkspaceFiles()
+                await refreshRepositorySummaries()
+            }
+            if filesChanged == 0 {
                 notice = tr("没有可替换的内容", "Nothing to replace")
             } else {
-                notice = tr("已在 \(result.filesChanged) 个文件替换 \(result.occurrences) 处",
-                            "Replaced \(result.occurrences) occurrence(s) in \(result.filesChanged) file(s)")
+                notice = tr("已在 \(filesChanged) 个文件替换 \(occurrences) 处",
+                            "Replaced \(occurrences) occurrence(s) in \(filesChanged) file(s)")
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -477,6 +541,36 @@ final class RepoViewModel: ObservableObject {
         value.components(separatedBy: CharacterSet(charactersIn: "|,\n"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    func searchWorkspace(
+        _ query: String,
+        exact: Bool,
+        include: [String],
+        exclude: [String]
+    ) async -> [Repository.GrepHit] {
+        if !isWorkspace {
+            guard let repo else { return [] }
+            return (try? await repo.grep(
+                query, exact: exact, include: include, exclude: exclude
+            )) ?? []
+        }
+
+        var result: [Repository.GrepHit] = []
+        for root in discoveredRepos {
+            guard let repository = try? await Repository.discover(at: root) else { continue }
+            let hits = (try? await repository.grep(
+                query, exact: exact, include: include, exclude: exclude
+            )) ?? []
+            result.append(contentsOf: hits.map {
+                Repository.GrepHit(
+                    path: root.appendingPathComponent($0.path).standardizedFileURL.path,
+                    lines: $0.lines
+                )
+            })
+            if result.count >= 400 { break }
+        }
+        return Array(result.prefix(400))
     }
     /// 请求文件列表定位某个文件（展开祖先目录并选中）。
     @Published var revealFileRequest: String?
@@ -512,6 +606,17 @@ final class RepoViewModel: ObservableObject {
         return number == "1" ? tr("未命名", "Untitled") : tr("未命名 \(number)", "Untitled \(number)")
     }
 
+    func tabDisplayName(for path: String) -> String {
+        let name = displayName(for: path)
+        guard isWorkspace, path.hasPrefix("/"),
+              let folder = workspaceFolder(containing: URL(fileURLWithPath: path))
+        else { return name }
+        let hasDuplicate = openTabs.contains {
+            $0 != path && displayName(for: $0).caseInsensitiveCompare(name) == .orderedSame
+        }
+        return hasDuplicate ? "\(name) · \(workspaceFolderDisplayName(folder))" : name
+    }
+
     /// ⌘N：立即新建一个未命名标签（仅内存），保存/关闭时才询问文件名。
     func newUntitledFile() {
         guard repoRoot != nil else { return }
@@ -536,14 +641,30 @@ final class RepoViewModel: ObservableObject {
     }
 
     func confirmNewFile() {
-        guard let prompt = newFilePrompt, let repo else { return }
+        guard let prompt = newFilePrompt else { return }
         newFilePrompt = nil
         let name = newFileName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        let relativePath = prompt.directory.isEmpty ? name : prompt.directory + "/" + name
-        let url = repo.fileURL(for: relativePath)
+        let url: URL
+        if prompt.directory.hasPrefix("/") {
+            url = URL(fileURLWithPath: prompt.directory).appendingPathComponent(name)
+        } else {
+            let root = repo?.root ?? repoRoot ?? workspaceFolders.first
+            guard let root else { return }
+            let relativePath = prompt.directory.isEmpty ? name : prompt.directory + "/" + name
+            url = root.appendingPathComponent(relativePath)
+        }
+        let documentPath: String
+        if isWorkspace {
+            documentPath = url.standardizedFileURL.path
+        } else if let root = repo?.root ?? repoRoot,
+                  url.path.hasPrefix(root.path + "/") {
+            documentPath = String(url.path.dropFirst(root.path.count + 1))
+        } else {
+            documentPath = url.path
+        }
         guard !FileManager.default.fileExists(atPath: url.path) else {
-            errorMessage = tr("「\(relativePath)」已存在", "“\(relativePath)” already exists")
+            errorMessage = tr("「\(documentPath)」已存在", "“\(documentPath)” already exists")
             return
         }
 
@@ -568,27 +689,27 @@ final class RepoViewModel: ObservableObject {
 
         if let untitled = prompt.untitledPath {
             // 未命名 tab 原位替换为真实路径
-            buffers[relativePath] = EditorBuffer(text: content, dirty: false)
+            buffers[documentPath] = EditorBuffer(text: content, dirty: false)
             buffers[untitled] = nil
             if let index = openTabs.firstIndex(of: untitled) {
-                openTabs[index] = relativePath
+                openTabs[index] = documentPath
             }
             if editorPath == untitled {
-                editorPath = relativePath
+                editorPath = documentPath
                 editorDirty = false
             }
             if case .file(let selected) = selection, selected == untitled {
-                selection = .file(path: relativePath)
+                selection = .file(path: documentPath)
             }
             if prompt.closeAfterSave {
-                performCloseTab(relativePath)
+                performCloseTab(documentPath)
             }
         }
 
         Task {
             await refresh()
             if prompt.untitledPath == nil || !prompt.closeAfterSave {
-                revealInFiles(relativePath)
+                revealInFiles(documentPath)
             }
         }
     }
@@ -621,6 +742,31 @@ final class RepoViewModel: ObservableObject {
 
     private(set) var repo: Repository?
     private let defaults = UserDefaults.standard
+    private static let workspaceFolderDefaultsKey = "lastWorkspaceFolders"
+
+    /// 每个仓库保留自己的 Git/History UI 快照。切换仓库只切 scope，不再销毁文件标签与缓冲。
+    private struct RepositoryUIState {
+        var changes: [FileChange] = []
+        var branches: [Branch] = []
+        var stashes: [Stash] = []
+        var worktrees: [Worktree] = []
+        var tags: [Tag] = []
+        var headReachable: Set<String> = []
+        var currentBranch = ""
+        var sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
+        var headSummary: String?
+        var history: [GraphRow] = []
+        var historyMaxColumns = 1
+        var historyFilterPath: String?
+        var historyLimit = 300
+        var hasMoreHistory = true
+        var commitMessage = ""
+        var rebaseInProgress = false
+    }
+
+    private var repositoryStates: [String: RepositoryUIState] = [:]
+    /// 根/仓库 scope 版本。异步任务只能回写启动时的版本，避免 back 的结果落到 front。
+    private var rootGeneration: UInt64 = 0
 
     // MARK: 多窗口路由
 
@@ -647,8 +793,22 @@ final class RepoViewModel: ObservableObject {
                 DispatchQueue.main.async { self?.rebuildWorkspaceTree() }
             }
             .store(in: &cancellables)
-        if let initialPath, FileManager.default.fileExists(atPath: initialPath) {
-            Task { await open(URL(fileURLWithPath: initialPath)) }
+        if let initialPath,
+           let initialURL = OpenPathResolver.resolve(initialPath),
+           FileManager.default.fileExists(atPath: initialURL.path) {
+            Task { await open(initialURL) }
+        } else if restoreLast,
+                  !CLIOpenRouter.hasChannelContent,
+                  let savedFolders = defaults.stringArray(forKey: Self.workspaceFolderDefaultsKey),
+                  savedFolders.count > 1 {
+            let urls = savedFolders
+                .map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            if urls.count > 1 {
+                Task { await openWorkspace(folders: urls) }
+            } else if let first = urls.first {
+                Task { await open(first) }
+            }
         } else if restoreLast,
                   !CLIOpenRouter.hasChannelContent,
                   let last = defaults.string(forKey: "lastRepo"),
@@ -684,11 +844,54 @@ final class RepoViewModel: ObservableObject {
         panel.message = tr("选择一个 git 仓库目录", "Choose a git repository folder")
         panel.prompt = tr("打开", "Open")
         if panel.runModal() == .OK, let url = panel.url {
+            openReplacingCurrent(url)
+        }
+    }
+
+    func openReplacingCurrent(_ url: URL) {
+        guard hasUnsavedChanges(), let window else {
             Task { await open(url) }
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = tr("当前窗口有未保存的修改", "This window has unsaved changes")
+        alert.informativeText = tr("打开另一个项目之前是否保存这些修改？",
+                                   "Save these changes before opening another project?")
+        alert.addButton(withTitle: tr("保存并打开", "Save & Open"))
+        alert.addButton(withTitle: tr("不保存并打开", "Don’t Save & Open"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                Task { @MainActor in
+                    await self.saveAllDirty()
+                    await self.open(url)
+                }
+            case .alertSecondButtonReturn:
+                self.discardAllDirty()
+                Task { await self.open(url) }
+            default:
+                break
+            }
+        }
+    }
+
+    func addFolderPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = tr("选择要添加到当前工作区的文件夹",
+                           "Choose a folder to add to this workspace")
+        panel.prompt = tr("添加", "Add")
+        if panel.runModal() == .OK, let url = panel.url {
+            Task { await addFolderToWorkspace(url) }
         }
     }
 
     func open(_ url: URL) async {
+        let url = url.resolvingSymlinksInPath().standardizedFileURL
         Diagnostics.log("open repo \(url.path)")
         // 非 git 目录也能打开：discover 失败就以 url 本身作根（无 git 功能），不报错
         let repository = try? await Repository.discover(at: url)
@@ -699,64 +902,225 @@ final class RepoViewModel: ObservableObject {
             }.value
             if !subs.isEmpty {
                 Diagnostics.log("工作区模式：\(url.lastPathComponent) 含 \(subs.count) 个 git 仓库")
+                workspaceFolders = [url]
                 workspaceRoot = url
                 discoveredRepos = subs
                 persistRecent(url)             // 记住父目录，重开仍进工作区
+                persistWorkspaceFolders()
                 // 默认激活第一个仓库（完整 git UI），切换器可换别的或看整个文件夹
                 let first = try? await Repository.discover(at: subs[0])
                 activeWorkspaceRepo = subs[0]
-                await activateRoot(subs[0], repository: first)
+                await activateRoot(subs[0], repository: first, preserveDocuments: false)
+                await refreshRepositorySummaries()
                 return
             }
         }
         // 单仓库 / 普通非 git 目录：清掉工作区状态
-        workspaceRoot = nil
-        discoveredRepos = []
-        activeWorkspaceRepo = nil
         let root = repository?.root ?? url
+        workspaceFolders = [root]
+        workspaceRoot = nil
+        discoveredRepos = repository == nil ? [] : [root]
+        activeWorkspaceRepo = repository == nil ? nil : root
         persistRecent(root)
-        await activateRoot(root, repository: repository)
+        persistWorkspaceFolders()
+        await activateRoot(root, repository: repository, preserveDocuments: false)
     }
 
-    /// 工作区内切换激活仓库（保留切换器与 discoveredRepos）。
+    /// 打开一个由任意多个文件夹组成的显式工作区。
+    func openWorkspace(folders rawFolders: [URL]) async {
+        let folders = normalizedNonOverlappingFolders(rawFolders)
+        guard !folders.isEmpty else { return }
+
+        var repositories: [URL] = []
+        for folder in folders {
+            repositories.append(contentsOf: await repositoryRoots(in: folder))
+        }
+        repositories = uniqueURLs(repositories).sorted { $0.path < $1.path }
+
+        workspaceFolders = folders
+        workspaceRoot = nil
+        discoveredRepos = repositories
+        persistWorkspaceFolders()
+        persistRecent(folders[0])
+
+        if let active = repositories.first {
+            activeWorkspaceRepo = active
+            let repository = try? await Repository.discover(at: active)
+            await activateRoot(active, repository: repository, preserveDocuments: false)
+            await refreshRepositorySummaries()
+        } else {
+            activeWorkspaceRepo = nil
+            await activateRoot(folders[0], repository: nil, preserveDocuments: false)
+        }
+    }
+
+    /// 把文件夹加入当前窗口。保留已有标签、缓冲、终端与 Git scope。
+    func addFolderToWorkspace(_ rawURL: URL) async {
+        let url = rawURL.resolvingSymlinksInPath().standardizedFileURL
+        var folders = workspaceFolders
+        if folders.isEmpty, let root = workspaceRoot ?? repoRoot {
+            folders = [root.resolvingSymlinksInPath().standardizedFileURL]
+        }
+
+        if folders.contains(where: { sameOrNested($0, url) }) {
+            notice = tr("这个文件夹已经在当前工作区中，或与现有根目录重叠。",
+                        "This folder is already in the workspace or overlaps an existing root.")
+            return
+        }
+
+        // 单根模式下标签仍是相对路径；进入多根前提升为绝对路径，避免两个 README.md 冲突。
+        if !isWorkspace, let oldRoot = repoRoot {
+            promoteDocumentsToAbsolutePaths(root: oldRoot)
+        }
+
+        folders.append(url)
+        workspaceFolders = folders
+        workspaceRoot = nil
+        // 单仓库首次升级为多根工作区时，FilesView 已完成过“首次展开”；
+        // 主动展开所有工作区根，让刚加入的项目立即可见。
+        fileTreeExpanded.formUnion(folders.map(\.path))
+        var repos = discoveredRepos
+        if repos.isEmpty, let current = repo?.root { repos.append(current) }
+        repos.append(contentsOf: await repositoryRoots(in: url))
+        discoveredRepos = uniqueURLs(repos).sorted { $0.path < $1.path }
+        if activeWorkspaceRepo == nil, let current = repo?.root {
+            activeWorkspaceRepo = current
+        }
+        persistWorkspaceFolders()
+        await refreshWorkspaceFiles()
+        await refreshRepositorySummaries()
+    }
+
+    func isWorkspaceFolderRoot(_ path: String) -> Bool {
+        workspaceFolders.contains { $0.path == path }
+    }
+
+    func removeWorkspaceFolder(at path: String) async {
+        guard workspaceFolders.count > 1,
+              let folder = workspaceFolders.first(where: { $0.path == path })
+        else { return }
+        stashActiveBuffer()
+        let prefix = folder.path + "/"
+        let dirty = buffers.contains { key, value in
+            value.dirty && (key == folder.path || key.hasPrefix(prefix))
+        }
+        if dirty {
+            notice = tr("这个文件夹还有未保存的文件，请先保存或关闭这些标签。",
+                        "This folder has unsaved files. Save or close those tabs first.")
+            return
+        }
+
+        let tabsInFolder = openTabs.filter { path in
+            path == folder.path || path.hasPrefix(prefix)
+        }
+        for path in tabsInFolder {
+            performCloseTab(path)
+        }
+        workspaceFolders.removeAll { $0.path == folder.path }
+        discoveredRepos.removeAll { $0.path == folder.path || $0.path.hasPrefix(prefix) }
+        repositoryStates = repositoryStates.filter { key, _ in
+            key != folder.path && !key.hasPrefix(prefix)
+        }
+
+        let activeWasRemoved = activeWorkspaceRepo.map {
+            $0.path == folder.path || $0.path.hasPrefix(prefix)
+        } ?? false
+        persistWorkspaceFolders()
+        await refreshWorkspaceFiles()
+        await refreshRepositorySummaries()
+
+        if activeWasRemoved {
+            if let next = discoveredRepos.first {
+                await selectRepo(next)
+            } else if let first = workspaceFolders.first {
+                activeWorkspaceRepo = nil
+                await activateRoot(first, repository: nil, preserveDocuments: true)
+            }
+        }
+    }
+
+    /// 工作区内切换 Git scope。文件树和文件标签属于整个工作区，不随仓库切换而销毁。
     func selectRepo(_ url: URL) async {
-        guard activeWorkspaceRepo != url else { return }
+        let url = url.resolvingSymlinksInPath().standardizedFileURL
+        guard activeWorkspaceRepo?.path != url.path else { return }
+        cancelPendingRepositoryActions()
+        stashActiveBuffer()
+        saveActiveRepositoryState()
         let repository = try? await Repository.discover(at: url)
         activeWorkspaceRepo = url
-        await activateRoot(url, repository: repository)
+        await activateRoot(url, repository: repository, preserveDocuments: true)
     }
 
-    /// 工作区：切到「整个文件夹」总览（无 git、平铺文件树）。
+    private func cancelPendingRepositoryActions() {
+        pendingDiscard = nil
+        pendingDiscardDir = nil
+        pendingDiscardHunk = nil
+        pendingUndoLastCommit = false
+        commitToRevert = nil
+        commitToReset = nil
+        commitToCherryPick = nil
+        branchesToDelete = nil
+        worktreeToRemove = nil
+        tagToDelete = nil
+        showRewordCommit = false
+        showCreateWorktree = false
+        showCreateTag = false
+    }
+
+    /// 工作区：切到「所有仓库」摘要。文件树保持整个工作区，Git 写操作在此模式禁用。
     func selectWorkspaceOverview() async {
-        guard let ws = workspaceRoot, activeWorkspaceRepo != nil else { return }
+        guard let overviewRoot = workspaceRoot ?? workspaceFolders.first,
+              activeWorkspaceRepo != nil
+        else { return }
+        stashActiveBuffer()
+        saveActiveRepositoryState()
         activeWorkspaceRepo = nil
-        await activateRoot(ws, repository: nil)
+        await activateRoot(overviewRoot, repository: nil, preserveDocuments: true)
+        await refreshRepositorySummaries()
     }
 
     /// 切到某个根并刷新。repository 非空=git 仓库，否则按非 git 目录处理。
     /// 不动 workspaceRoot/discoveredRepos/activeWorkspaceRepo——由调用方维护。
-    private func activateRoot(_ root: URL, repository: Repository?) async {
+    private func activateRoot(_ root: URL, repository: Repository?, preserveDocuments: Bool) async {
+        rootGeneration &+= 1
         repo = repository
         isGitRepo = repository != nil
         isStandaloneFile = false
         repoRoot = repository?.root ?? root
-        selection = nil
+        if case .change = selection { selection = nil }
         diff = nil
-        editorPath = nil
-        // 换根：编辑器 tab/缓冲都是按旧根的相对路径，必须清掉避免错位
-        openTabs = []
-        buffers = [:]
-        blameCache = [:]
-        // 换根关掉搜索标签（结果是旧仓库的，作废）
-        searchTabOpen = false
-        showGlobalSearch = false
-        globalSearchHits = []
-        openViewTabs = []
-        detailHistory = []
-        activeDetail = nil
-        // 换根重置文件树展开状态，让新根重新做首层展开
-        fileTreeExpanded = []
-        fileTreeDidInitialExpand = false
+        if preserveDocuments {
+            // Git diff/提交/比较标签仍以当前仓库的相对路径为 ID，切 scope 时先关闭；
+            // 文件标签使用绝对路径继续保留。后续 ViewTab 会进一步改为 RepositoryID 命名空间。
+            openViewTabs.removeAll { $0 != .search }
+            detailHistory.removeAll {
+                if case .view = $0 { return true }
+                return false
+            }
+            if case .view = activeDetail {
+                activeDetail = editorPath.map(ActiveDetail.file)
+            }
+            historyDetail = nil
+            historyFiles = []
+            historyDiff = nil
+            historyDiffPath = nil
+            restoreRepositoryState(for: repository?.root ?? root)
+        } else {
+            selection = nil
+            editorPath = nil
+            openTabs = []
+            buffers = [:]
+            blameCache = [:]
+            searchTabOpen = false
+            showGlobalSearch = false
+            globalSearchHits = []
+            openViewTabs = []
+            detailHistory = []
+            activeDetail = nil
+            fileTreeExpanded = []
+            fileTreeDidInitialExpand = false
+            resetRepositoryState()
+        }
         loadedIgnoredDirs = []
         ignoredDirContents = []
         await refresh()
@@ -771,10 +1135,156 @@ final class RepoViewModel: ObservableObject {
         defaults.set(Array(recents.prefix(8)), forKey: "recentRepos")
     }
 
+    private func persistWorkspaceFolders() {
+        defaults.set(workspaceFolders.map(\.path), forKey: Self.workspaceFolderDefaultsKey)
+    }
+
+    private func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        return urls.compactMap {
+            let url = $0.resolvingSymlinksInPath().standardizedFileURL
+            return seen.insert(url.path).inserted ? url : nil
+        }
+    }
+
+    private func normalizedNonOverlappingFolders(_ urls: [URL]) -> [URL] {
+        var result: [URL] = []
+        for url in uniqueURLs(urls) {
+            if result.contains(where: { sameOrNested($0, url) }) { continue }
+            result.append(url)
+        }
+        return result
+    }
+
+    /// 两个目录相同，或其中一个是另一个的祖先。
+    private func sameOrNested(_ lhs: URL, _ rhs: URL) -> Bool {
+        let a = lhs.resolvingSymlinksInPath().standardizedFileURL.path
+        let b = rhs.resolvingSymlinksInPath().standardizedFileURL.path
+        return a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+    }
+
+    /// 一个用户文件夹里可包含一个根仓库或多个嵌套仓库。
+    private func repositoryRoots(in folder: URL) async -> [URL] {
+        if let repository = try? await Repository.discover(at: folder),
+           repository.root.resolvingSymlinksInPath().standardizedFileURL.path == folder.path {
+            return [repository.root.resolvingSymlinksInPath().standardizedFileURL]
+        }
+        return await Task.detached(priority: .userInitiated) {
+            RepoViewModel.discoverRepos(in: folder)
+        }.value
+    }
+
+    private func saveActiveRepositoryState() {
+        guard let root = repo?.root.resolvingSymlinksInPath().standardizedFileURL else { return }
+        repositoryStates[root.path] = RepositoryUIState(
+            changes: changes,
+            branches: branches,
+            stashes: stashes,
+            worktrees: worktrees,
+            tags: tags,
+            headReachable: headReachable,
+            currentBranch: currentBranch,
+            sync: sync,
+            headSummary: headSummary,
+            history: history,
+            historyMaxColumns: historyMaxColumns,
+            historyFilterPath: historyFilterPath,
+            historyLimit: historyLimit,
+            hasMoreHistory: hasMoreHistory,
+            commitMessage: commitMessage,
+            rebaseInProgress: rebaseInProgress
+        )
+    }
+
+    private func restoreRepositoryState(for root: URL) {
+        let key = root.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let state = repositoryStates[key] else {
+            resetRepositoryState()
+            return
+        }
+        changes = state.changes
+        branches = state.branches
+        stashes = state.stashes
+        worktrees = state.worktrees
+        tags = state.tags
+        headReachable = state.headReachable
+        currentBranch = state.currentBranch
+        sync = state.sync
+        headSummary = state.headSummary
+        history = state.history
+        historyMaxColumns = state.historyMaxColumns
+        historyFilterPath = state.historyFilterPath
+        historyLimit = state.historyLimit
+        hasMoreHistory = state.hasMoreHistory
+        commitMessage = state.commitMessage
+        rebaseInProgress = state.rebaseInProgress
+    }
+
+    private func resetRepositoryState() {
+        changes = []
+        branches = []
+        stashes = []
+        worktrees = []
+        tags = []
+        headReachable = []
+        currentBranch = ""
+        sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
+        headSummary = nil
+        history = []
+        historyMaxColumns = 1
+        historyFilterPath = nil
+        historyLimit = 300
+        hasMoreHistory = true
+        isLoadingMoreHistory = false
+        historyDetail = nil
+        historyFiles = []
+        historyDiff = nil
+        historyDiffPath = nil
+        commitMessage = ""
+        rebaseInProgress = false
+    }
+
+    /// 从单根进入工作区前，把文档 key 提升为绝对路径，避免跨根同名冲突。
+    private func promoteDocumentsToAbsolutePaths(root: URL) {
+        func promoted(_ path: String) -> String {
+            guard !isUntitled(path), !path.hasPrefix("/") else { return path }
+            return root.appendingPathComponent(path).standardizedFileURL.path
+        }
+
+        openTabs = openTabs.map(promoted)
+        var promotedBuffers: [String: EditorBuffer] = [:]
+        for (path, buffer) in buffers { promotedBuffers[promoted(path)] = buffer }
+        buffers = promotedBuffers
+        editorPath = editorPath.map(promoted)
+        pendingCloseTab = pendingCloseTab.map(promoted)
+        blameViewPath = blameViewPath.map(promoted)
+        revealFileRequest = revealFileRequest.map(promoted)
+        switch selection {
+        case .file(let path): selection = .file(path: promoted(path))
+        default: break
+        }
+        switch activeDetail {
+        case .file(let path): activeDetail = .file(promoted(path))
+        default: break
+        }
+        detailHistory = detailHistory.compactMap {
+            if case .file(let path) = $0 { return .file(promoted(path)) }
+            return nil
+        }
+        openViewTabs.removeAll { $0 != .search }
+    }
+
     /// 总览模式下，某个文件树目录是否是扫描到的子仓库（用于树里加角标 + 右键「作为仓库打开」）。
     func discoveredRepoURL(forTreePath path: String) -> URL? {
-        guard repo == nil, let ws = workspaceRoot else { return nil }  // 仅总览模式
-        let abs = ws.appendingPathComponent(path).standardizedFileURL
+        guard isWorkspace else { return nil }
+        let abs: URL
+        if path.hasPrefix("/") {
+            abs = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+        } else if let ws = workspaceRoot {
+            abs = ws.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+        } else {
+            return nil
+        }
         return discoveredRepos.first { $0.path == abs.path }
     }
 
@@ -819,13 +1329,16 @@ final class RepoViewModel: ObservableObject {
     }
 
     func closeRepo() {
+        rootGeneration &+= 1
         repo = nil
         isGitRepo = false
         isStandaloneFile = false
         repoRoot = nil
+        workspaceFolders = []
         workspaceRoot = nil
         discoveredRepos = []
         activeWorkspaceRepo = nil
+        repositorySummaries = []
         changes = []
         selection = nil
         diff = nil
@@ -840,6 +1353,7 @@ final class RepoViewModel: ObservableObject {
         detailHistory = []
         activeDetail = nil
         defaults.removeObject(forKey: "lastRepo")
+        defaults.removeObject(forKey: Self.workspaceFolderDefaultsKey)
     }
 
     // MARK: - 刷新
@@ -847,63 +1361,108 @@ final class RepoViewModel: ObservableObject {
     /// refresh 防重入：窗口频繁激活/连续触发时合并，避免并发刷新风暴
     /// （每个 refresh 会起 7 个 git 子进程 + 重建文件树/graph，并发会拖垮主线程渲染）
     private var isRefreshing = false
+    private var refreshPending = false
 
     func refresh() async {
-        guard !isRefreshing else { return }
+        if isRefreshing {
+            refreshPending = true
+            return
+        }
         isRefreshing = true
-        defer { isRefreshing = false }
+        repeat {
+            refreshPending = false
+            await refreshOnce()
+        } while refreshPending
+        isRefreshing = false
+    }
+
+    private func refreshOnce() async {
+        let generation = rootGeneration
         // 非 git 目录：每次刷新尝试重新 discover（用户可能刚 git init），仍不是就只刷文件树
-        if repo == nil, !isStandaloneFile, let root = repoRoot,
+        if repo == nil, !isWorkspace, !isStandaloneFile, let root = repoRoot,
            let rediscovered = try? await Repository.discover(at: root) {
+            guard generation == rootGeneration else { return }
             repo = rediscovered
             isGitRepo = true
         }
-        guard let repo else {
+        guard let targetRepo = repo else {
             await refreshNonGit()
             return
         }
+        let targetRootPath = targetRepo.root.resolvingSymlinksInPath().standardizedFileURL.path
+        let filterPath = historyFilterPath
+        let limit = historyLimit
         Diagnostics.log("refresh 开始（变更 \(changes.count)）")
         defer { Diagnostics.log("refresh 结束") }
         do {
-            async let status = repo.status()
-            async let branches = repo.branches()
-            async let stashes = repo.stashes()
-            async let worktrees = repo.worktrees()
-            async let tags = repo.tags()
-            async let headReachable = repo.headReachableHashes()
-            async let rebaseInProgress = repo.rebaseInProgress()
-            async let branch = repo.currentBranch()
-            async let sync = repo.syncStatus()
-            async let head = repo.headSummary()
-            async let files = repo.listFiles()
-            async let ignoredFiles = repo.listIgnored()
+            async let statusTask = targetRepo.status()
+            async let branchesTask = targetRepo.branches()
+            async let stashesTask = targetRepo.stashes()
+            async let worktreesTask = targetRepo.worktrees()
+            async let tagsTask = targetRepo.tags()
+            async let reachableTask = targetRepo.headReachableHashes()
+            async let rebaseTask = targetRepo.rebaseInProgress()
+            async let branchTask = targetRepo.currentBranch()
+            async let syncTask = targetRepo.syncStatus()
+            async let headTask = targetRepo.headSummary()
+            async let filesTask = targetRepo.listFiles()
+            async let ignoredTask = targetRepo.listIgnored()
+            async let commitsTask = targetRepo.history(limit: limit, path: filterPath)
 
-            // 只在值真正变化时赋值：避免每次激活刷新都触发整树重绘
-            // （工具栏项重建会吞掉紧随其后的第一次点击）
-            assignIfChanged(try await status, to: \.changes)
-            assignIfChanged(try await branches, to: \.branches)
-            assignIfChanged(try await stashes, to: \.stashes)
-            assignIfChanged(try await worktrees, to: \.worktrees)
-            assignIfChanged(try await tags, to: \.tags)
-            assignIfChanged(try await headReachable, to: \.headReachable)
-            assignIfChanged(try await rebaseInProgress, to: \.rebaseInProgress)
-            assignIfChanged(try await branch, to: \.currentBranch)
-            assignIfChanged(try await sync, to: \.sync)
-            assignIfChanged(try await head, to: \.headSummary)
-            let newFiles = try await files
-            let newIgnored = (try? await ignoredFiles) ?? []
-            if newFiles != self.workspaceFiles || newIgnored != self.workspaceIgnored {
+            let nextChanges = try await statusTask
+            let nextBranches = try await branchesTask
+            let nextStashes = try await stashesTask
+            let nextWorktrees = try await worktreesTask
+            let nextTags = try await tagsTask
+            let nextReachable = try await reachableTask
+            let nextRebase = try await rebaseTask
+            let nextBranch = try await branchTask
+            let nextSync = try await syncTask
+            let nextHead = try await headTask
+            let newFiles = try await filesTask
+            let newIgnored = (try? await ignoredTask) ?? []
+            let commits = (try? await commitsTask) ?? []
+
+            guard generation == rootGeneration,
+                  repo?.root.resolvingSymlinksInPath().standardizedFileURL.path == targetRootPath
+            else { return }
+
+            // 同一批查询完成后再集中应用，避免短暂出现跨时间的混合状态。
+            assignIfChanged(nextChanges, to: \.changes)
+            assignIfChanged(nextBranches, to: \.branches)
+            assignIfChanged(nextStashes, to: \.stashes)
+            assignIfChanged(nextWorktrees, to: \.worktrees)
+            assignIfChanged(nextTags, to: \.tags)
+            assignIfChanged(nextReachable, to: \.headReachable)
+            assignIfChanged(nextRebase, to: \.rebaseInProgress)
+            assignIfChanged(nextBranch, to: \.currentBranch)
+            assignIfChanged(nextSync, to: \.sync)
+            assignIfChanged(nextHead, to: \.headSummary)
+            if !isWorkspace, newFiles != self.workspaceFiles || newIgnored != self.workspaceIgnored {
                 self.workspaceFiles = newFiles
                 self.workspaceIgnored = newIgnored
                 self.rebuildWorkspaceTree()
                 Diagnostics.log("工作区树重建 文件=\(newFiles.count) 忽略=\(newIgnored.count) 顶层节点=\(self.workspaceTree.count)")
             }
-            // 保持已加载的分页量（用户触底加载到多少，刷新后维持多少）
-            let commits = (try? await repo.history(limit: self.historyLimit, path: self.historyFilterPath)) ?? []
-            hasMoreHistory = commits.count >= self.historyLimit
+            hasMoreHistory = commits.count >= limit
             let graph = GraphBuilder.rows(from: commits)
             assignIfChanged(graph.rows, to: \.history)
             assignIfChanged(graph.maxColumns, to: \.historyMaxColumns)
+            saveActiveRepositoryState()
+            if let index = repositorySummaries.firstIndex(where: { $0.url.path == targetRootPath }) {
+                repositorySummaries[index] = RepositorySummary(
+                    url: repositorySummaries[index].url,
+                    branch: nextBranch,
+                    changeCount: nextChanges.count,
+                    conflictCount: nextChanges.filter(\.isConflicted).count,
+                    sync: nextSync,
+                    headSummary: nextHead
+                )
+            }
+
+            if isWorkspace {
+                await refreshWorkspaceFiles()
+            }
 
             // 选中的更改已不存在时清掉详情
             if case .change(let path, let area) = selection {
@@ -922,23 +1481,17 @@ final class RepoViewModel: ObservableObject {
                 loadEditorBaseline(editorPath)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if generation == rootGeneration { errorMessage = error.localizedDescription }
         }
     }
 
     /// 非 git 根的刷新：清空所有 git 状态，文件树改用文件系统列。
     private func refreshNonGit() async {
-        changes = []
-        branches = []
-        stashes = []
-        worktrees = []
-        tags = []
-        headReachable = []
-        rebaseInProgress = false
-        history = []
-        currentBranch = ""
-        sync = SyncStatus(upstream: nil, ahead: 0, behind: 0)
-        headSummary = nil
+        resetRepositoryState()
+        if isWorkspace {
+            await refreshWorkspaceFiles()
+            return
+        }
         guard let root = repoRoot, !isStandaloneFile else {
             workspaceFiles = []        // 单文件模式：无文件树
             workspaceIgnored = []
@@ -963,12 +1516,14 @@ final class RepoViewModel: ObservableObject {
             "DerivedData", ".venv", "venv", "__pycache__", ".gradle", "Pods", ".idea", ".cache",
         ]
         let fm = FileManager.default
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let rootPath = canonicalRoot.path
         guard let enumerator = fm.enumerator(
-            at: root,
+            at: canonicalRoot,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
-        let prefixLen = root.path.count + 1
+        let prefix = rootPath + "/"
         var result: [String] = []
         for case let url as URL in enumerator {
             if result.count >= limit { break }
@@ -977,16 +1532,101 @@ final class RepoViewModel: ObservableObject {
                 if skip.contains(url.lastPathComponent) { enumerator.skipDescendants() }
                 continue
             }
-            if url.path.count > prefixLen {
-                result.append(String(url.path.dropFirst(prefixLen)))
+            // FileManager 可能把 /private/tmp 枚举回 /tmp；两边都规范化后再做相对截取，
+            // 避免按字符串长度误切出 “6Z/back/…” 一类伪目录。
+            let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if canonicalPath.hasPrefix(prefix) {
+                result.append(String(canonicalPath.dropFirst(prefix.count)))
             }
         }
         return result
     }
 
+    /// 多根工作区文件树独立于当前 Git scope；所有文档 path 使用规范化绝对路径。
+    private func refreshWorkspaceFiles() async {
+        let folders = workspaceFolders
+        guard !folders.isEmpty else { return }
+        let expected = folders.map(\.path)
+        let filesByFolder = await withTaskGroup(
+            of: (URL, [String]).self,
+            returning: [(URL, [String])].self
+        ) { group in
+            for folder in folders {
+                group.addTask {
+                    (folder, RepoViewModel.listFilesOnDisk(root: folder))
+                }
+            }
+            var result: [(URL, [String])] = []
+            for await item in group { result.append(item) }
+            return result
+        }
+        guard workspaceFolders.map(\.path) == expected else { return }
+
+        let absoluteFiles = filesByFolder.flatMap { folder, files in
+            files.map { folder.appendingPathComponent($0).standardizedFileURL.path }
+        }.sorted()
+        if absoluteFiles != workspaceFiles || !workspaceIgnored.isEmpty {
+            workspaceFiles = absoluteFiles
+            workspaceIgnored = []
+            rebuildWorkspaceTree()
+            Diagnostics.log("多根文件树重建 根=\(folders.count) 文件=\(absoluteFiles.count)")
+        }
+    }
+
+    func refreshRepositorySummaries() async {
+        let roots = discoveredRepos
+        guard !roots.isEmpty else {
+            repositorySummaries = []
+            return
+        }
+        var summaries: [RepositorySummary] = []
+        for root in roots {
+            guard let repository = try? await Repository.discover(at: root) else { continue }
+            async let statusTask = repository.status()
+            async let branchTask = repository.currentBranch()
+            async let syncTask = repository.syncStatus()
+            async let headTask = repository.headSummary()
+            let status = (try? await statusTask) ?? []
+            let branch = (try? await branchTask) ?? ""
+            let sync = (try? await syncTask) ?? SyncStatus(upstream: nil, ahead: 0, behind: 0)
+            let head = (try? await headTask) ?? nil
+            summaries.append(RepositorySummary(
+                url: root,
+                branch: branch,
+                changeCount: status.count,
+                conflictCount: status.filter(\.isConflicted).count,
+                sync: sync,
+                headSummary: head
+            ))
+        }
+        guard discoveredRepos.map(\.path) == roots.map(\.path) else { return }
+        repositorySummaries = roots.compactMap { root in
+            summaries.first { $0.url.path == root.path }
+        }
+    }
+
     /// 用当前缓存(跟踪文件 + 忽略折叠项 + 已懒加载的忽略目录内容)重建文件树。
     /// 隐藏名单按用户设置过滤(仅作用于文件树视图)。
     private func rebuildWorkspaceTree() {
+        if isWorkspace {
+            let hidden = SettingsStore.shared.hiddenFileNames
+            workspaceTree = workspaceFolders.map { folder in
+                let prefix = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
+                let relativeFiles = workspaceFiles.compactMap { path -> String? in
+                    guard path.hasPrefix(prefix) else { return nil }
+                    return String(path.dropFirst(prefix.count))
+                }
+                let children = FileTreeBuilder.build(paths: relativeFiles, hidden: hidden)
+                    .map { absoluteNode($0, under: folder) }
+                return FileNode(
+                    path: folder.path,
+                    name: workspaceFolderDisplayName(folder),
+                    isDirectory: true,
+                    children: children
+                )
+            }
+            return
+        }
         workspaceTree = FileTreeBuilder.build(
             paths: workspaceFiles,
             ignored: workspaceIgnored + ignoredDirContents,
@@ -994,9 +1634,77 @@ final class RepoViewModel: ObservableObject {
         )
     }
 
+    private func absoluteNode(_ node: FileNode, under root: URL) -> FileNode {
+        FileNode(
+            path: root.appendingPathComponent(node.path).standardizedFileURL.path,
+            name: node.name,
+            isDirectory: node.isDirectory,
+            isIgnored: node.isIgnored,
+            children: node.children?.map { absoluteNode($0, under: root) }
+        )
+    }
+
+    func workspaceFolderDisplayName(_ folder: URL) -> String {
+        let duplicates = workspaceFolders.filter {
+            $0.lastPathComponent.caseInsensitiveCompare(folder.lastPathComponent) == .orderedSame
+        }
+        if duplicates.count <= 1 { return folder.lastPathComponent }
+        return folder.deletingLastPathComponent().lastPathComponent + "/" + folder.lastPathComponent
+    }
+
+    func workspaceFolder(containing url: URL) -> URL? {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return workspaceFolders
+            .filter { path == $0.path || path.hasPrefix($0.path + "/") }
+            .max { $0.path.count < $1.path.count }
+    }
+
+    func repositoryRoot(containing url: URL) -> URL? {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return discoveredRepos
+            .filter { path == $0.path || path.hasPrefix($0.path + "/") }
+            .max { $0.path.count < $1.path.count }
+    }
+
+    func repositoryDisplayName(_ url: URL) -> String {
+        if let folder = workspaceFolder(containing: url) {
+            if folder.path == url.path { return workspaceFolderDisplayName(folder) }
+            let relative = String(url.path.dropFirst(folder.path.count + 1))
+            return workspaceFolderDisplayName(folder) + "/" + relative
+        }
+        return url.lastPathComponent
+    }
+
+    private func repositoryRelativePath(for absolutePath: String, root: URL) -> String? {
+        let normalized = URL(fileURLWithPath: absolutePath).resolvingSymlinksInPath().standardizedFileURL.path
+        guard normalized.hasPrefix(root.path + "/") else { return nil }
+        return String(normalized.dropFirst(root.path.count + 1))
+    }
+
+    private func repositoryContext(forDocumentPath path: String) async -> (Repository, String)? {
+        guard !isUntitled(path) else { return nil }
+        if !path.hasPrefix("/") {
+            guard let repo else { return nil }
+            return (repo, path)
+        }
+        let url = URL(fileURLWithPath: path)
+        guard let root = repositoryRoot(containing: url),
+              let relative = repositoryRelativePath(for: path, root: root)
+        else { return nil }
+        if let repo, repo.root.path == root.path { return (repo, relative) }
+        guard let discovered = try? await Repository.discover(at: root) else { return nil }
+        return (discovered, relative)
+    }
+
+    func documentPath(forRepositoryPath path: String) -> String {
+        guard isWorkspace, let root = repo?.root else { return path }
+        return root.appendingPathComponent(path).standardizedFileURL.path
+    }
+
     /// 展开某个被忽略的目录时,懒加载其直接子项(只一层),让用户可逐级浏览内部内容。
     /// 因为 build 用了「父忽略则子继承忽略」,加载进来的条目会自动以淡色展示。
     func loadIgnoredDirIfNeeded(_ relPath: String) {
+        guard !relPath.hasPrefix("/") else { return }  // 多根树来自文件系统扫描，无忽略目录懒加载
         guard let root = repoRoot, !loadedIgnoredDirs.contains(relPath) else { return }
         loadedIgnoredDirs.insert(relPath)
         let children = RepoViewModel.listDirectChildren(root: root, relDir: relPath)
@@ -1036,15 +1744,21 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
-    /// 包一层错误处理 + 刷新的通用操作入口。
-    func perform(_ action: @escaping () async throws -> Void) {
+    /// 包一层错误处理 + 刷新的通用操作入口。启动时固定目标仓库，切换 scope 不会改变操作对象。
+    func perform(_ action: @escaping (Repository) async throws -> Void) {
+        guard let targetRepo = repo else { return }
+        let targetRoot = targetRepo.root.path
         Task {
             do {
-                try await action()
+                try await action(targetRepo)
             } catch {
                 errorMessage = error.localizedDescription
             }
-            await refresh()
+            if repo?.root.path == targetRoot {
+                await refresh()
+            } else {
+                await refreshRepositorySummaries()
+            }
         }
     }
 
@@ -1240,14 +1954,19 @@ final class RepoViewModel: ObservableObject {
     /// 加载改动标记的基线：取该文件的 HEAD 版本。未跟踪/尚无提交 → 基线设为空串，
     /// 让编辑器把整文件当作新增（全绿）。无仓库/单文件模式不画标记（基线保持 nil）。
     func loadEditorBaseline(_ path: String) {
-        guard let repo, !isUntitled(path), !path.hasPrefix("/") else {
+        guard !isUntitled(path) else {
             editorBaseline = nil
             return
         }
         Task { [weak self] in
-            let content = try? await repo.headContent(of: path)
+            guard let self else { return }
+            guard let (repository, relativePath) = await self.repositoryContext(forDocumentPath: path) else {
+                if self.editorPath == path { self.editorBaseline = nil }
+                return
+            }
+            let content = try? await repository.headContent(of: relativePath)
             await MainActor.run {
-                guard let self, self.editorPath == path else { return }
+                guard self.editorPath == path else { return }
                 // headContent 为 nil = 文件未跟踪 → 整文件视为新增
                 let next = content ?? ""
                 if self.editorBaseline != next { self.editorBaseline = next }  // 不变就不重发，省一次重绘
@@ -1277,9 +1996,11 @@ final class RepoViewModel: ObservableObject {
         repo = nil
         isGitRepo = false
         isStandaloneFile = true
+        workspaceFolders = []
         workspaceRoot = nil
         discoveredRepos = []
         activeWorkspaceRepo = nil
+        repositorySummaries = []
         repoRoot = url.deletingLastPathComponent()  // 目录作根（无 git），让主界面显示编辑器
         sidebarVisible = false                       // 单文件无文件树，收起侧边栏只看文件
         workspaceFiles = []
@@ -1390,9 +2111,9 @@ final class RepoViewModel: ObservableObject {
             return
         }
         Task {
-            if let buffer = buffers[path], buffer.dirty, let repo {
+            if let buffer = buffers[path], buffer.dirty {
                 do {
-                    try buffer.text.write(to: repo.fileURL(for: path), atomically: true, encoding: .utf8)
+                    try buffer.text.write(to: editorFileURL(path), atomically: true, encoding: .utf8)
                     buffers[path]?.dirty = false
                     if editorPath == path { editorDirty = false }
                 } catch {
@@ -1505,7 +2226,16 @@ final class RepoViewModel: ObservableObject {
             editorDirty = false
             buffers[path] = EditorBuffer(text: editorText, dirty: false)
             blameCache = blameCache.filter { !$0.key.hasPrefix("\(path)#") }
-            if repo != nil { await refresh() }  // 单文件模式无 git，无需刷新状态
+            if isWorkspace {
+                await refreshWorkspaceFiles()
+                await refreshRepositorySummaries()
+                if let root = repositoryRoot(containing: editorFileURL(path)),
+                   activeWorkspaceRepo?.path == root.path {
+                    await refresh()
+                }
+            } else if repo != nil {
+                await refresh()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1540,7 +2270,13 @@ final class RepoViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
-        if repo != nil { await refresh() }
+        if isWorkspace {
+            await refreshWorkspaceFiles()
+            await refreshRepositorySummaries()
+            await refresh()
+        } else if repo != nil {
+            await refresh()
+        }
     }
 
     /// 关窗口前确认未保存改动：弹原生 sheet（保存 / 不保存 / 取消）。
@@ -1592,8 +2328,10 @@ final class RepoViewModel: ObservableObject {
         blameViewPath = path
         fileBlame = []
         Task {
-            guard let repo else { return }
-            fileBlame = (try? await repo.blameFile(path: path)) ?? []
+            guard let (repository, relativePath) = await repositoryContext(forDocumentPath: path) else { return }
+            let lines = (try? await repository.blameFile(path: relativePath)) ?? []
+            guard blameViewPath == path else { return }
+            fileBlame = lines
         }
     }
 
@@ -1602,7 +2340,7 @@ final class RepoViewModel: ObservableObject {
     func requestBlame(line: Int) {
         blameTask?.cancel()
         blameHash = nil
-        guard let repo, let path = editorPath, !isUntitled(path) else { return }
+        guard let path = editorPath, !isUntitled(path) else { return }
         if editorDirty {
             blameText = tr("未保存的更改", "Unsaved changes")
             return
@@ -1616,9 +2354,11 @@ final class RepoViewModel: ObservableObject {
         blameText = nil
         blameTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            let info = try? await repo.blame(path: path, line: line)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self,
+                  let (repository, relativePath) = await self.repositoryContext(forDocumentPath: path)
+            else { return }
+            let info = try? await repository.blame(path: relativePath, line: line)
+            guard !Task.isCancelled, self.editorPath == path else { return }
             let text: String
             var hash: String?
             if let info {
@@ -1646,10 +2386,13 @@ final class RepoViewModel: ObservableObject {
 
     /// 取提交详情（blame 悬浮卡用），带进程内缓存。
     func commitDetail(hash: String) async -> Repository.CommitDetail? {
-        if let cached = commitDetailCache[hash] { return cached }
-        guard let repo else { return nil }
-        guard let detail = try? await repo.commitDetail(hash: hash) else { return nil }
-        commitDetailCache[hash] = detail
+        guard let path = editorPath,
+              let (repository, _) = await repositoryContext(forDocumentPath: path)
+        else { return nil }
+        let key = repository.root.path + "#" + hash
+        if let cached = commitDetailCache[key] { return cached }
+        guard let detail = try? await repository.commitDetail(hash: hash) else { return nil }
+        commitDetailCache[key] = detail
         return detail
     }
 
@@ -1680,31 +2423,35 @@ final class RepoViewModel: ObservableObject {
     /// 保存并 git add，标记冲突已解决。
     func markConflictResolved() {
         guard let path = editorPath else { return }
-        perform { [self] in
-            if editorDirty, let repo = self.repo {
-                try editorText.write(to: repo.fileURL(for: path), atomically: true, encoding: .utf8)
+        perform { [self] targetRepo in
+            let relativePath = path.hasPrefix("/")
+                ? repositoryRelativePath(for: path, root: targetRepo.root)
+                : path
+            guard let relativePath else { return }
+            if editorDirty {
+                try editorText.write(to: editorFileURL(path), atomically: true, encoding: .utf8)
                 await MainActor.run { editorDirty = false }
             }
-            try await self.repo?.stage(paths: [path])
+            try await targetRepo.stage(paths: [relativePath])
         }
     }
 
     // MARK: - 暂存操作
 
     func stageFile(_ path: String) {
-        perform { try await self.repo?.stage(paths: [path]) }
+        perform { try await $0.stage(paths: [path]) }
     }
 
     func unstageFile(_ path: String) {
-        perform { try await self.repo?.unstage(paths: [path]) }
+        perform { try await $0.unstage(paths: [path]) }
     }
 
     func stageAll() {
-        perform { try await self.repo?.stageAll() }
+        perform { try await $0.stageAll() }
     }
 
     func unstageAll() {
-        perform { try await self.repo?.unstageAll() }
+        perform { try await $0.unstageAll() }
     }
 
     func requestDiscard(_ change: FileChange) {
@@ -1714,8 +2461,7 @@ final class RepoViewModel: ObservableObject {
     func confirmDiscard() {
         guard let change = pendingDiscard else { return }
         pendingDiscard = nil
-        perform { [self] in
-            guard let repo = self.repo else { return }
+        perform { repo in
             if change.unstaged == .untracked {
                 try repo.deleteUntracked(path: change.path)
             } else {
@@ -1743,14 +2489,14 @@ final class RepoViewModel: ObservableObject {
     func stageDirectory(_ dir: String) {
         let paths = changePaths(under: dir, area: .unstaged)
         guard !paths.isEmpty else { return }
-        perform { try await self.repo?.stage(paths: paths) }
+        perform { try await $0.stage(paths: paths) }
     }
 
     /// 取消暂存某目录下的全部更改。
     func unstageDirectory(_ dir: String) {
         let paths = changePaths(under: dir, area: .staged)
         guard !paths.isEmpty else { return }
-        perform { try await self.repo?.unstage(paths: paths) }
+        perform { try await $0.unstage(paths: paths) }
     }
 
     /// 待确认丢弃的目录（非 nil 时弹确认框）。
@@ -1766,8 +2512,7 @@ final class RepoViewModel: ObservableObject {
         pendingDiscardDir = nil
         let prefix = dir.isEmpty ? "" : dir + "/"
         let targets = unstagedChanges.filter { dir.isEmpty || $0.path.hasPrefix(prefix) }
-        perform { [self] in
-            guard let repo = self.repo else { return }
+        perform { repo in
             let tracked = targets.filter { $0.unstaged != .untracked }.map(\.path)
             if !tracked.isEmpty { try await repo.discardWorktree(paths: tracked) }
             for c in targets where c.unstaged == .untracked {
@@ -1807,7 +2552,7 @@ final class RepoViewModel: ObservableObject {
         guard let diff, let hunk = pendingDiscardHunk else { return }
         pendingDiscardHunk = nil
         guard let patch = PatchBuilder.stagePatch(diff: diff, selectedLineIDs: Set(hunk.changedLineIDs)) else { return }
-        perform { try await self.repo?.applyPatch(patch, reverse: true, cached: false) }
+        perform { try await $0.applyPatch(patch, reverse: true, cached: false) }
     }
 
     private func applySelectedLines(reverse: Bool, lineIDs: Set<Int>) {
@@ -1816,7 +2561,7 @@ final class RepoViewModel: ObservableObject {
             ? PatchBuilder.unstagePatch(diff: diff, selectedLineIDs: lineIDs)
             : PatchBuilder.stagePatch(diff: diff, selectedLineIDs: lineIDs)
         guard let patch else { return }
-        perform { try await self.repo?.applyPatch(patch, reverse: reverse) }
+        perform { try await $0.applyPatch(patch, reverse: reverse) }
     }
 
     // MARK: - 提交
@@ -1824,8 +2569,8 @@ final class RepoViewModel: ObservableObject {
     func commit() {
         let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty, !stagedChanges.isEmpty else { return }
-        perform { [self] in
-            try await self.repo?.commit(message: message)
+        perform { [self] targetRepo in
+            try await targetRepo.commit(message: message)
             await MainActor.run { commitMessage = "" }
         }
     }
@@ -1877,7 +2622,7 @@ final class RepoViewModel: ObservableObject {
         let msg = rewordMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !msg.isEmpty else { return }
         showRewordCommit = false
-        perform { try await self.repo?.commit(message: msg, amend: true) }
+        perform { try await $0.commit(message: msg, amend: true) }
     }
 
     /// 待确认还原(revert)的提交
@@ -1891,7 +2636,7 @@ final class RepoViewModel: ObservableObject {
     func confirmRevertCommit() {
         guard let commit = commitToRevert else { return }
         commitToRevert = nil
-        perform { try await self.repo?.revert(commit: commit.hash) }
+        perform { try await $0.revert(commit: commit.hash) }
     }
 
     /// 待选择模式并重置到的目标提交
@@ -1904,7 +2649,7 @@ final class RepoViewModel: ObservableObject {
     func resetToCommit(_ mode: Repository.ResetMode) {
         guard let commit = commitToReset else { return }
         commitToReset = nil
-        perform { try await self.repo?.reset(to: commit.hash, mode: mode) }
+        perform { try await $0.reset(to: commit.hash, mode: mode) }
     }
 
     /// 待确认摘取(cherry-pick)的提交
@@ -1917,7 +2662,7 @@ final class RepoViewModel: ObservableObject {
     func confirmCherryPick() {
         guard let commit = commitToCherryPick else { return }
         commitToCherryPick = nil
-        perform { try await self.repo?.cherryPick(commit: commit.hash) }
+        perform { try await $0.cherryPick(commit: commit.hash) }
     }
 
     // MARK: - 交互式变基
@@ -2005,36 +2750,36 @@ final class RepoViewModel: ObservableObject {
     }
 
     func runInteractiveRebase() {
-        guard let repo, let base = rebaseBase else { return }
+        guard repo != nil, let base = rebaseBase else { return }
         let todo = rebaseSteps.map { (hash: $0.commit.hash, action: $0.action) }
         closeViewTab(.rebase)
-        perform { try await repo.interactiveRebase(onto: base, todo: todo) }
+        perform { try await $0.interactiveRebase(onto: base, todo: todo) }
     }
 
     func continueRebase() {
-        perform { try await self.repo?.rebaseContinue() }
+        perform { try await $0.rebaseContinue() }
     }
 
     func abortRebase() {
-        perform { try await self.repo?.rebaseAbort() }
+        perform { try await $0.rebaseAbort() }
     }
 
     // MARK: - 贮藏
 
     func stashAll() {
-        perform { try await self.repo?.stashPushAll(message: nil) }
+        perform { try await $0.stashPushAll(message: nil) }
     }
 
     func stashFile(_ path: String) {
-        perform { try await self.repo?.stashPush(paths: [path]) }
+        perform { try await $0.stashPush(paths: [path]) }
     }
 
     func applyStash(_ stash: Stash, pop: Bool) {
-        perform { try await self.repo?.stashApply(index: stash.index, pop: pop) }
+        perform { try await $0.stashApply(index: stash.index, pop: pop) }
     }
 
     func dropStash(_ stash: Stash) {
-        perform { try await self.repo?.stashDrop(index: stash.index) }
+        perform { try await $0.stashDrop(index: stash.index) }
     }
 
     // MARK: - 工作树
@@ -2098,7 +2843,7 @@ final class RepoViewModel: ObservableObject {
         let b = branch.trimmingCharacters(in: .whitespaces)
         guard !p.isEmpty, !b.isEmpty else { return }
         showCreateWorktree = false
-        perform { try await self.repo?.addWorktree(path: p, branch: b, createBranch: createBranch) }
+        perform { try await $0.addWorktree(path: p, branch: b, createBranch: createBranch) }
     }
 
     func promptRemoveWorktree(_ wt: Worktree) {
@@ -2109,7 +2854,7 @@ final class RepoViewModel: ObservableObject {
     func confirmRemoveWorktree(force: Bool) {
         guard let wt = worktreeToRemove else { return }
         worktreeToRemove = nil
-        perform { try await self.repo?.removeWorktree(path: wt.path, force: force) }
+        perform { try await $0.removeWorktree(path: wt.path, force: force) }
     }
 
     // MARK: - 标签
@@ -2123,7 +2868,7 @@ final class RepoViewModel: ObservableObject {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty else { return }
         showCreateTag = false
-        perform { try await self.repo?.createTag(name: n, message: message, ref: ref) }
+        perform { try await $0.createTag(name: n, message: message, ref: ref) }
     }
 
     func promptDeleteTag(_ tag: Tag) {
@@ -2133,11 +2878,11 @@ final class RepoViewModel: ObservableObject {
     func confirmDeleteTag() {
         guard let tag = tagToDelete else { return }
         tagToDelete = nil
-        perform { try await self.repo?.deleteTag(tag.name) }
+        perform { try await $0.deleteTag(tag.name) }
     }
 
     func pushTag(_ tag: Tag) {
-        perform { try await self.repo?.pushTag(tag.name) }
+        perform { try await $0.pushTag(tag.name) }
     }
 
     /// 把标签与当前 HEAD 对比，复用比较视图。
@@ -2149,13 +2894,13 @@ final class RepoViewModel: ObservableObject {
 
     func checkout(_ branch: Branch) {
         guard !branch.isCurrent else { return }
-        perform { try await self.repo?.checkout(branch: branch.name) }
+        perform { try await $0.checkout(branch: branch.name) }
     }
 
     func createBranch(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        perform { try await self.repo?.createBranch(trimmed) }
+        perform { try await $0.createBranch(trimmed) }
     }
 
     /// 把分支与当前 HEAD 做对比（历史详情的比较视图）。
@@ -2165,7 +2910,7 @@ final class RepoViewModel: ObservableObject {
 
     /// 把指定分支合并进当前分支；冲突文件会出现在「合并更改」区。
     func mergeBranch(_ branch: Branch) {
-        perform { try await self.repo?.merge(branch: branch.name) }
+        perform { try await $0.merge(branch: branch.name) }
     }
 
     // MARK: 删除分支
@@ -2256,9 +3001,12 @@ final class RepoViewModel: ObservableObject {
         historyFilterPath = path
         historyLimit = 300       // 换过滤条件，分页从头开始
         hasMoreHistory = true
+        let generation = rootGeneration
         Task {
-            guard let repo else { return }
-            let commits = (try? await repo.history(limit: historyLimit, path: path)) ?? []
+            guard let targetRepo = repo else { return }
+            let targetRoot = targetRepo.root.path
+            let commits = (try? await targetRepo.history(limit: historyLimit, path: path)) ?? []
+            guard generation == rootGeneration, repo?.root.path == targetRoot else { return }
             hasMoreHistory = commits.count >= historyLimit
             let graph = GraphBuilder.rows(from: commits)
             history = graph.rows
@@ -2268,12 +3016,15 @@ final class RepoViewModel: ObservableObject {
 
     /// 历史列表触底：再多加载一批（泳道线要连续，所以整段重拉重算，不能简单 append）。
     func loadMoreHistory() {
-        guard hasMoreHistory, !isLoadingMoreHistory, let repo else { return }
+        guard hasMoreHistory, !isLoadingMoreHistory, let targetRepo = repo else { return }
         isLoadingMoreHistory = true
         let newLimit = historyLimit + 500
         let path = historyFilterPath
+        let generation = rootGeneration
+        let targetRoot = targetRepo.root.path
         Task {
-            let commits = (try? await repo.history(limit: newLimit, path: path)) ?? []
+            let commits = (try? await targetRepo.history(limit: newLimit, path: path)) ?? []
+            guard generation == rootGeneration, repo?.root.path == targetRoot else { return }
             historyLimit = newLimit
             hasMoreHistory = commits.count >= newLimit
             let graph = GraphBuilder.rows(from: commits)
@@ -2285,10 +3036,25 @@ final class RepoViewModel: ObservableObject {
 
     /// 在历史面板查看某个文件的全部提交（侧边栏收起时自动展开）。
     func showFileHistory(_ path: String) {
-        sidebarVisible = true
-        sidebarTab = .changes
-        historyPanelCollapsed = false
-        setHistoryFilter(path)
+        Task {
+            var relativePath = path
+            if path.hasPrefix("/") {
+                let fileURL = URL(fileURLWithPath: path)
+                guard let root = repositoryRoot(containing: fileURL),
+                      let relative = repositoryRelativePath(for: path, root: root)
+                else {
+                    notice = tr("这个文件不属于工作区中的 Git 仓库。",
+                                "This file does not belong to a Git repository in the workspace.")
+                    return
+                }
+                if activeWorkspaceRepo?.path != root.path { await selectRepo(root) }
+                relativePath = relative
+            }
+            sidebarVisible = true
+            sidebarTab = .changes
+            historyPanelCollapsed = false
+            setHistoryFilter(relativePath)
+        }
     }
 
     func openHistoryDetail(_ detail: HistoryDetail) {
@@ -2304,14 +3070,20 @@ final class RepoViewModel: ObservableObject {
         }
         if !openViewTabs.contains(tab) { openViewTabs.append(tab) }
         activeDetail = .view(tab)
+        let generation = rootGeneration
         Task {
-            guard let repo else { return }
+            guard let targetRepo = repo else { return }
+            let targetRoot = targetRepo.root.path
             do {
                 switch detail {
                 case .commit(let commit):
-                    historyFiles = try await repo.filesChanged(in: commit.hash)
+                    let files = try await targetRepo.filesChanged(in: commit.hash)
+                    guard generation == rootGeneration, repo?.root.path == targetRoot else { return }
+                    historyFiles = files
                 case .compare(let base, let target):
-                    historyFiles = try await repo.filesChanged(from: base, to: target)
+                    let files = try await targetRepo.filesChanged(from: base, to: target)
+                    guard generation == rootGeneration, repo?.root.path == targetRoot else { return }
+                    historyFiles = files
                 }
                 Diagnostics.log("历史详情文件数=\(historyFiles.count)")
                 // 历史详情里若只改了一个文件，直接展示它的 diff
@@ -2377,7 +3149,7 @@ final class RepoViewModel: ObservableObject {
                 }
             }
 
-            revealInFiles(path)
+            revealInFiles(documentPath(forRepositoryPath: path))
             if let line = loadedDiff?.hunks.first?.newStart {
                 scrollToLine = max(0, line - 1)
             }
@@ -2396,10 +3168,11 @@ final class RepoViewModel: ObservableObject {
 
     /// `hunk [path]`：目录直接打开仓库；文件则打开其所在仓库并定位该文件。
     func openFromCLI(_ path: String) {
+        guard let normalizedURL = OpenPathResolver.resolve(path) else { return }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return }
+        guard FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory) else { return }
         // 解析符号链接，与 git 返回的仓库根对齐
-        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let url = normalizedURL.resolvingSymlinksInPath()
         Task {
             if isDirectory.boolValue {
                 await open(url)
@@ -2432,7 +3205,10 @@ final class RepoViewModel: ObservableObject {
             }
             return
         }
-        if let root = repoRoot?.resolvingSymlinksInPath(), url.path.hasPrefix(root.path + "/") {
+        if isWorkspace, workspaceFolder(containing: url) != nil {
+            sidebarTab = .files
+            selection = .file(path: url.path)
+        } else if let root = repoRoot?.resolvingSymlinksInPath(), url.path.hasPrefix(root.path + "/") {
             let relative = String(url.path.dropFirst(root.path.count + 1))
             sidebarTab = .files
             selection = .file(path: relative)

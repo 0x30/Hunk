@@ -57,8 +57,12 @@ struct FilesView: View {
                 guard let request else { return }
                 // 展开祖先目录并定位文件
                 var ancestor = (request as NSString).deletingLastPathComponent
+                let workspaceRoot = request.hasPrefix("/")
+                    ? vm.workspaceFolder(containing: URL(fileURLWithPath: request))?.path
+                    : nil
                 while !ancestor.isEmpty {
                     vm.fileTreeExpanded.insert(ancestor)
+                    if ancestor == workspaceRoot { break }
                     ancestor = (ancestor as NSString).deletingLastPathComponent
                 }
                 rebuildRows()
@@ -142,7 +146,10 @@ struct FilesView: View {
     }
 
     private func rebuildChangeLookup() {
-        changeLookup = Dictionary(vm.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        changeLookup = Dictionary(
+            vm.changes.map { (vm.documentPath(forRepositoryPath: $0.path), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private func toggle(_ node: FileNode) {
@@ -293,6 +300,12 @@ private struct FileTreeRow: View {
                 }
                 Divider()
             }
+            if node.isDirectory, vm.isWorkspaceFolderRoot(node.path), vm.workspaceFolders.count > 1 {
+                Button(tr("从工作区移除", "Remove from Workspace"), role: .destructive) {
+                    Task { await vm.removeWorkspaceFolder(at: node.path) }
+                }
+                Divider()
+            }
             Button(tr("新建文件…", "New File…")) {
                 vm.promptNewFile(in: node.isDirectory
                                  ? node.path
@@ -304,7 +317,7 @@ private struct FileTreeRow: View {
                     vm.sidebarTab = .changes
                     // 「文件」栏是工作区文件树,无暂存/未暂存之分:整文件 vs HEAD(暂存+未暂存合并)
                     let area: ChangeArea = change.isConflicted ? .conflicted : .head
-                    vm.selection = .change(path: change.path, area: area)
+                    vm.selectChange(change.path, area: area)
                 }
                 Divider()
             }

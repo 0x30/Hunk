@@ -17,30 +17,40 @@ struct SidebarView: View {
                 FilesView()
             case .changes:
                 VStack(spacing: 0) {
-                    // 「文件变化」模块：提交输入框 + 变更列表，一起折叠
-                    PanelHeader(
-                        title: tr("文件变化", "Changes"),
-                        count: vm.changes.count,
-                        collapsed: $vm.changesPanelCollapsed
-                    ) {
-                        // 手动刷新工作区状态：不必再失焦/回焦才更新
-                        Button {
-                            Task { await vm.refresh() }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .semibold))
+                    if vm.isWorkspace {
+                        WorkspaceRepositoryScopeBar()
+                        Divider()
+                    }
+                    if vm.isWorkspace && vm.activeWorkspaceRepo == nil {
+                        WorkspaceGitOverview()
+                    } else {
+                        VStack(spacing: 0) {
+                            // 「文件变化」模块：提交输入框 + 变更列表，一起折叠
+                            PanelHeader(
+                                title: tr("文件变化", "Changes"),
+                                count: vm.changes.count,
+                                collapsed: $vm.changesPanelCollapsed
+                            ) {
+                                // 手动刷新工作区状态：不必再失焦/回焦才更新
+                                Button {
+                                    Task { await vm.refresh() }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .buttonStyle(.plain)
+                                .help(tr("刷新更改", "Refresh changes"))
+                            }
+                            if !vm.changesPanelCollapsed {
+                                CommitBarView()
+                                ChangesListView()
+                            }
+                            Divider()
+                            HistoryPanel()
+                            if vm.changesPanelCollapsed && vm.historyPanelCollapsed {
+                                Spacer(minLength: 0)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .help(tr("刷新更改", "Refresh changes"))
-                    }
-                    if !vm.changesPanelCollapsed {
-                        CommitBarView()
-                        ChangesListView()
-                    }
-                    Divider()
-                    HistoryPanel()
-                    if vm.changesPanelCollapsed && vm.historyPanelCollapsed {
-                        Spacer(minLength: 0)
                     }
                 }
             }
@@ -60,6 +70,106 @@ struct SidebarView: View {
     }
 }
 
+/// 多仓库 Source Control 的就近 scope 导航。仓库像 section header 一样并排展示，
+/// 当前项用底部强调线标记；查看 History 时无需再移动到底部状态栏。
+private struct WorkspaceRepositoryScopeBar: View {
+    @EnvironmentObject var vm: RepoViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(tr("仓库", "Repositories"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    Task { await vm.refreshRepositorySummaries() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help(tr("刷新所有仓库", "Refresh all repositories"))
+                Button {
+                    vm.addFolderPanel()
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help(tr("添加文件夹到工作区", "Add folder to workspace"))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    scopeButton(
+                        title: tr("全部", "All"),
+                        detail: "\(vm.repositorySummaries.count)",
+                        count: vm.repositorySummaries.reduce(0) { $0 + $1.changeCount },
+                        selected: vm.activeWorkspaceRepo == nil
+                    ) {
+                        Task { await vm.selectWorkspaceOverview() }
+                    }
+
+                    ForEach(vm.repositorySummaries) { summary in
+                        scopeButton(
+                            title: vm.repositoryDisplayName(summary.url),
+                            detail: summary.branch,
+                            count: summary.changeCount,
+                            selected: vm.activeWorkspaceRepo?.path == summary.url.path
+                        ) {
+                            Task { await vm.selectRepo(summary.url) }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+            .scrollIndicators(.hidden)
+            .frame(height: 36)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func scopeButton(
+        title: String,
+        detail: String,
+        count: Int,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                        .lineLimit(1)
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    }
+                }
+                Text(detail.isEmpty ? tr("无提交", "No commits") : detail)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .frame(minWidth: 62, minHeight: 32, alignment: .leading)
+            .background(selected ? Color.accentColor.opacity(0.08) : .clear)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(selected ? Color.accentColor : .clear)
+                    .frame(height: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// 多仓库工作区的底部状态条：一条芯片显示当前激活的仓库（或「整个文件夹」），
 /// 点击弹出下拉，列「整个文件夹」总览 + 扫描到的各子仓库（带 ✓）来切换。不占文件树空间。
 private struct WorkspaceStatusBar: View {
@@ -67,15 +177,13 @@ private struct WorkspaceStatusBar: View {
 
     /// 子仓库相对工作区根的显示名（如 foo、group/bar）。
     private func displayName(_ url: URL) -> String {
-        guard let ws = vm.workspaceRoot else { return url.lastPathComponent }
-        let prefix = ws.path.hasSuffix("/") ? ws.path : ws.path + "/"
-        return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.lastPathComponent
+        vm.repositoryDisplayName(url)
     }
 
     /// 当前激活范围的显示名。
     private var activeName: String {
         if let active = vm.activeWorkspaceRepo { return displayName(active) }
-        return vm.workspaceRoot?.lastPathComponent ?? tr("整个文件夹", "Whole folder")
+        return tr("所有仓库", "All Repositories")
     }
 
     var body: some View {
@@ -84,8 +192,7 @@ private struct WorkspaceStatusBar: View {
                 Task { await vm.selectWorkspaceOverview() }
             } label: {
                 Label(
-                    tr("整个文件夹（\(vm.workspaceRoot?.lastPathComponent ?? "")）",
-                       "Whole folder (\(vm.workspaceRoot?.lastPathComponent ?? ""))"),
+                    tr("所有仓库", "All Repositories"),
                     systemImage: vm.activeWorkspaceRepo == nil ? "checkmark" : "folder"
                 )
             }
@@ -97,6 +204,12 @@ private struct WorkspaceStatusBar: View {
                     Label(displayName(url),
                           systemImage: vm.activeWorkspaceRepo == url ? "checkmark" : "arrow.triangle.branch")
                 }
+            }
+            Divider()
+            Button {
+                vm.addFolderPanel()
+            } label: {
+                Label(tr("添加文件夹…", "Add Folder…"), systemImage: "folder.badge.plus")
             }
         } label: {
             HStack(spacing: 5) {
@@ -192,11 +305,13 @@ struct SidebarNavButtons: View {
                 help: tr("文件 (⌘1)", "Files (⌘1)")
             )
             // 源代码管理仅 git 仓库可用
-            if vm.isGitRepo {
+            if vm.isGitRepo || vm.isWorkspace {
                 navButton(
                     tab: .changes,
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    badge: vm.changes.count,
+                    badge: vm.activeWorkspaceRepo == nil
+                        ? vm.repositorySummaries.reduce(0) { $0 + $1.changeCount }
+                        : vm.changes.count,
                     help: tr("源代码管理 (⌘2)", "Source Control (⌘2)")
                 )
             }
@@ -233,6 +348,104 @@ struct SidebarNavButtons: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// “所有仓库”只做安全摘要；选择一个仓库后进入完整 Changes + History。
+private struct WorkspaceGitOverview: View {
+    @EnvironmentObject var vm: RepoViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(tr("所有仓库", "All Repositories"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(vm.repositorySummaries.count)")
+                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    Task { await vm.refreshRepositorySummaries() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help(tr("刷新所有仓库", "Refresh all repositories"))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+
+            Divider()
+
+            if vm.repositorySummaries.isEmpty {
+                ContentUnavailableView(
+                    tr("没有 Git 仓库", "No Git Repositories"),
+                    systemImage: "arrow.triangle.branch",
+                    description: Text(tr("添加一个 Git 项目后会在这里显示。",
+                                         "Add a Git project to see it here."))
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(vm.repositorySummaries) { summary in
+                            Button {
+                                Task { await vm.selectRepo(summary.url) }
+                            } label: {
+                                repositoryRow(summary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func repositoryRow(_ summary: RepoViewModel.RepositorySummary) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(summary.conflictCount > 0 ? Color.orange : Color.accentColor)
+                Text(vm.repositoryDisplayName(summary.url))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Spacer()
+                if summary.changeCount > 0 {
+                    Text("\(summary.changeCount)")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(summary.conflictCount > 0 ? Color.orange : .secondary)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 6) {
+                Text(summary.branch.isEmpty ? tr("无提交", "No commits") : summary.branch)
+                if summary.sync.ahead > 0 { Text("↑\(summary.sync.ahead)") }
+                if summary.sync.behind > 0 { Text("↓\(summary.sync.behind)") }
+                if summary.conflictCount > 0 {
+                    Text(tr("\(summary.conflictCount) 个冲突", "\(summary.conflictCount) conflict(s)"))
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            if let head = summary.headSummary {
+                Text(head)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
     }
 }
 
@@ -274,9 +487,29 @@ struct BranchMenu: View {
                   ? tr("当前：\(vm.repositoryDisplayName) · \(vm.worktreeDisplayDetail)",
                        "Current: \(vm.repositoryDisplayName) · \(vm.worktreeDisplayDetail)")
                   : tr("分支：切换 / 新建", "Branches: switch / create"))
+        } else if vm.isWorkspace && vm.activeWorkspaceRepo == nil {
+            // 多仓库总览不是“非 git 目录”，明确标成工作区范围，避免用户误以为
+            // back/front 的 Git 仓库失效。
+            HStack(spacing: 5) {
+                Image(systemName: "folder")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(tr("所有仓库", "All Repositories"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    Text(tr("\(vm.workspaceFolders.count) 个文件夹",
+                            "\(vm.workspaceFolders.count) folders"))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .help(tr("当前显示整个工作区的 Git 摘要",
+                     "Showing the Git summary for the whole workspace"))
         } else {
-            // 非 git（整个文件夹总览 / 普通目录 / 单文件）：没有分支概念，
-            // 只静态显示当前文件夹名——不可点、不弹分支面板、无下拉箭头。
+            // 普通非 git 目录 / 单文件：没有分支概念，只静态显示当前文件夹名。
             HStack(spacing: 5) {
                 Image(systemName: "folder")
                     .font(.system(size: 12, weight: .medium))

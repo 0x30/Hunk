@@ -11,6 +11,10 @@ enum CLIInstaller {
     # 用法：hunk            在 Hunk 中打开当前目录
     #       hunk <path>     在 Hunk 中打开指定目录或文件
     TARGET="${1:-.}"
+    # 引用的 "~/..." 不会由 shell 展开，在这里安全处理（不使用 eval）。
+    case "$TARGET" in
+        "~"|"~/"*) TARGET="$HOME${TARGET#?}" ;;
+    esac
     if [ -d "$TARGET" ]; then
         TARGET="$(cd "$TARGET" && pwd)"
     elif [ -f "$TARGET" ]; then
