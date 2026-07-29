@@ -33,7 +33,25 @@
 
 ## 安装
 
-到 [Releases](https://github.com/0x30/Hunk/releases/latest) 下载 `Hunk.app.zip`，解压后拖进「应用程序」。
+Homebrew：
+
+```sh
+brew tap 0x30/tap
+brew install --cask hunk
+```
+
+之后升级只需运行：
+
+```sh
+brew upgrade --cask hunk
+```
+
+Homebrew 安装与升级会自动处理当前未公证版本的隔离属性，不需要额外执行
+`xattr` 命令。
+
+手动安装：
+
+到 [Releases](https://github.com/0x30/Hunk/releases/latest) 下载 `Hunk.zip`，解压后拖进「应用程序」。
 
 > 包暂未经过 Apple 公证，首次打开若提示「已损坏，移到废纸篓」，执行一次：
 > ```sh
