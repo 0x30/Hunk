@@ -92,3 +92,32 @@ jobs:
           name: Hunk ${{ env.HUNK_MARKETING }} (build ${{ github.run_number }})
           body_path: release-notes.md
           files: dist/Hunk.zip
+
+      - name: 检出 Homebrew Tap
+        uses: actions/checkout@v5
+        with:
+          repository: 0x30/homebrew-tap
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: 立即更新 Homebrew Cask
+        working-directory: homebrew-tap
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ruby scripts/update-hunk-cask.rb
+          ruby -c Casks/hunk.rb
+          brew style Casks/hunk.rb
+          git diff --check
+
+          if git diff --quiet -- Casks/hunk.rb; then
+            echo "Homebrew Cask 已是最新版本"
+            exit 0
+          fi
+
+          VERSION=$(ruby -ne 'puts $1 if $_ =~ /^  version "([^"]+)"/' Casks/hunk.rb)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/hunk.rb
+          git commit -m "chore(hunk): update cask to ${VERSION}"
+          git push
