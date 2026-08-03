@@ -36,8 +36,28 @@ if [ -z "$BUNDLES" ]; then
     exit 1
 fi
 echo "$BUNDLES" | while IFS= read -r bundle; do
-    cp -R "$bundle" "$APP/Contents/MacOS/"
-    echo "  ⬆︎ $(basename "$bundle")"
+    BUNDLE_NAME="$(basename "$bundle")"
+    DEST="$APP/Contents/MacOS/$BUNDLE_NAME"
+    BUNDLE_ID="$(basename "$bundle" .bundle | tr '[:upper:]_' '[:lower:]-')"
+    cp -R "$bundle" "$DEST"
+    # SwiftPM executable resource bundles are flat directories without bundle
+    # metadata. codesign treats *.bundle as nested code, so give each one the
+    # minimal metadata required for a valid, signable resource bundle.
+    cat > "$DEST/Info.plist" <<BUNDLE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>app.hunk.resource.$BUNDLE_ID</string>
+    <key>CFBundleName</key>
+    <string>$BUNDLE_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+</dict>
+</plist>
+BUNDLE_PLIST
+    echo "  ⬆︎ $BUNDLE_NAME"
 done
 # 语言表是高亮的命脉，单独兜底校验，缺则视为打包失败
 if [ ! -e "$APP/Contents/MacOS/Hunk_HunkCore.bundle" ]; then
@@ -122,5 +142,6 @@ fi
 if [ -z "$SIGN_ID" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hunk Dev"; then
     SIGN_ID="Hunk Dev"
 fi
-codesign --force --sign "${SIGN_ID:--}" "$APP" 2>/dev/null || true
+codesign --force --deep --sign "${SIGN_ID:--}" "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP"
 echo "✅ $APP（签名：${SIGN_ID:-ad-hoc}）"

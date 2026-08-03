@@ -184,6 +184,7 @@ private struct EditorTabItem: View {
 
     private var fileName: String { vm.displayName(for: path) }
     private var isDirty: Bool { vm.isTabDirty(path) }
+    private var isDeleted: Bool { vm.isTabDeleted(path) }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -194,7 +195,8 @@ private struct EditorTabItem: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: 160, alignment: .leading)
-                .foregroundStyle(isActive ? .primary : .secondary)
+                .strikethrough(isDeleted)
+                .foregroundStyle(isDeleted ? .secondary : (isActive ? .primary : .secondary))
 
             // 关闭按钮与未保存圆点共用同一块区域
             ZStack {
@@ -234,7 +236,7 @@ private struct EditorTabItem: View {
         .contentShape(Rectangle())
         .onTapGesture { vm.selectTab(path) }
         .onHover { hovering = $0 }
-        .help(path)
+        .help(isDeleted ? tr("已删除 · \(path)", "Deleted · \(path)") : path)
         .contextMenu {
             Button(tr("关闭", "Close")) { vm.closeTab(path) }
             Button(tr("关闭其他", "Close Others")) { vm.closeOtherTabs(keeping: path) }
@@ -250,8 +252,16 @@ private struct EditorTabItem: View {
                     Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(path) }
                 }
                 Divider()
-                Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
+                if vm.fileExists(path) {
+                    Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(path) }
+                }
                 Button(tr("复制路径", "Copy Path")) { vm.copyPath(path) }
+                if vm.fileExists(path) {
+                    Divider()
+                    Button(tr("删除…", "Delete…"), role: .destructive) {
+                        vm.requestDelete(path, isDirectory: false)
+                    }
+                }
             }
         }
     }

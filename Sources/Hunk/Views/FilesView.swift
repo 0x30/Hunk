@@ -232,6 +232,8 @@ private struct FileTreeRow: View {
         node.isDirectory ? vm.discoveredRepoURL(forTreePath: node.path) : nil
     }
 
+    private var existsOnDisk: Bool { vm.fileExists(node.path) }
+
     var body: some View {
         HStack(spacing: 4) {
             // 展开箭头（目录）/ 占位（文件）
@@ -312,8 +314,16 @@ private struct FileTreeRow: View {
                 Button(tr("查看文件历史", "View File History")) { vm.showFileHistory(node.path) }
                 Divider()
             }
-            Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(node.path) }
+            if existsOnDisk {
+                Button(tr("在 Finder 中显示", "Reveal in Finder")) { vm.revealInFinder(node.path) }
+            }
             Button(tr("复制路径", "Copy Path")) { vm.copyPath(node.path) }
+            if existsOnDisk {
+                Divider()
+                Button(tr("删除…", "Delete…"), role: .destructive) {
+                    vm.requestDelete(node.path, isDirectory: node.isDirectory)
+                }
+            }
         }
     }
 }
