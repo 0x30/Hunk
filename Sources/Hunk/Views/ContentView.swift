@@ -6,6 +6,14 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var updater = UpdateChecker.shared
 
+    private var fileDeletionTitle: String {
+        guard let prompt = vm.pendingFileDeletion else { return "" }
+        let name = vm.displayName(for: prompt.path)
+        return prompt.isDirectory
+            ? tr("将文件夹「\(name)」移到废纸篓？", "Move folder “\(name)” to Trash?")
+            : tr("将文件「\(name)」移到废纸篓？", "Move file “\(name)” to Trash?")
+    }
+
     var body: some View {
         Group {
             if vm.repoRoot == nil {
@@ -44,6 +52,24 @@ struct ContentView: View {
             Button(tr("取消", "Cancel"), role: .cancel) {
                 vm.pendingFolderDrop = nil
             }
+        }
+        .confirmationDialog(
+            fileDeletionTitle,
+            isPresented: Binding(
+                get: { vm.pendingFileDeletion != nil },
+                set: { if !$0 { vm.pendingFileDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(tr("移到废纸篓", "Move to Trash"), role: .destructive) {
+                vm.confirmDeleteFile()
+            }
+            Button(tr("取消", "Cancel"), role: .cancel) {
+                vm.pendingFileDeletion = nil
+            }
+        } message: {
+            Text(tr("可从废纸篓恢复。已打开的标签会保留，并用删除线标记。",
+                    "You can restore it from Trash. Open tabs stay open and are shown with a strikethrough."))
         }
         .alert(
             tr("新建文件", "New File"),

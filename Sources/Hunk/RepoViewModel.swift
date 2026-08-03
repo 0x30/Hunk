@@ -189,6 +189,12 @@ final class RepoViewModel: ObservableObject {
         var dirty: Bool
     }
 
+    struct FileDeletionPrompt: Identifiable {
+        let path: String
+        let isDirectory: Bool
+        var id: String { path }
+    }
+
     @Published var editorText = ""
     @Published var editorPath: String?
     @Published var editorDirty = false
@@ -206,6 +212,8 @@ final class RepoViewModel: ObservableObject {
     /// 新建未保存文件没有扩展名时，可借此提前选语言高亮（如 Markdown）。
     @Published var editorLanguageOverride: String?
     @Published var openTabs: [String] = []
+    /// 仍开着、但对应路径已从磁盘消失的文件标签。
+    @Published private(set) var missingTabPaths: Set<String> = []
     @Published var pendingCloseTab: String?
     @Published var editingChangedFile = false  // 在更改详情里切到了编辑模式
     @Published var conflictBlocks: [ConflictBlock] = []
@@ -233,6 +241,7 @@ final class RepoViewModel: ObservableObject {
     @Published var notice: String?
     @Published var isSyncing = false
     @Published var pendingDiscard: FileChange?
+    @Published var pendingFileDeletion: FileDeletionPrompt?
     @Published var pendingFolderDrop: URL?
     @Published var showQuickOpen = false
     @Published var showBranchPanel = false
@@ -593,6 +602,64 @@ final class RepoViewModel: ObservableObject {
         }
     }
 
+    // MARK: 删除文件
+
+    func fileExists(_ path: String) -> Bool {
+        !isUntitled(path) && FileManager.default.fileExists(atPath: editorFileURL(path).path)
+    }
+
+    func isTabDeleted(_ path: String) -> Bool {
+        missingTabPaths.contains(path)
+    }
+
+    func requestDelete(_ path: String, isDirectory: Bool) {
+        guard !path.isEmpty, !isUntitled(path) else { return }
+        guard fileExists(path) else {
+            syncMissingTabPaths()
+            return
+        }
+        pendingFileDeletion = FileDeletionPrompt(path: path, isDirectory: isDirectory)
+    }
+
+    /// 使用系统废纸篓，保留已打开的标签与编辑缓冲，便于识别或恢复误删文件。
+    func confirmDeleteFile() {
+        guard let prompt = pendingFileDeletion else { return }
+        pendingFileDeletion = nil
+        let url = editorFileURL(prompt.path)
+
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                }.value
+                discardIgnoredTreeCache(for: prompt.path)
+                syncMissingTabPaths()
+                await refresh()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func syncMissingTabPaths() {
+        let missing = Set(openTabs.filter {
+            !isUntitled($0) && !FileManager.default.fileExists(atPath: editorFileURL($0).path)
+        })
+        if missing != missingTabPaths {
+            missingTabPaths = missing
+        }
+    }
+
+    private func discardIgnoredTreeCache(for path: String) {
+        let prefix = path + "/"
+        loadedIgnoredDirs = loadedIgnoredDirs.filter { $0 != path && !$0.hasPrefix(prefix) }
+        ignoredDirContents.removeAll { entry in
+            let normalized = entry.hasSuffix("/") ? String(entry.dropLast()) : entry
+            return normalized == path || normalized.hasPrefix(prefix)
+        }
+        fileTreeExpanded = fileTreeExpanded.filter { $0 != path && !$0.hasPrefix(prefix) }
+    }
+
     // MARK: 历史
 
     enum HistoryDetail: Equatable {
@@ -745,6 +812,7 @@ final class RepoViewModel: ObservableObject {
         editorPath = nil
         // 换根：编辑器 tab/缓冲都是按旧根的相对路径，必须清掉避免错位
         openTabs = []
+        missingTabPaths = []
         buffers = [:]
         blameCache = [:]
         // 换根关掉搜索标签（结果是旧仓库的，作废）
@@ -831,6 +899,7 @@ final class RepoViewModel: ObservableObject {
         diff = nil
         editorPath = nil
         openTabs = []
+        missingTabPaths = []
         buffers = [:]
         blameCache = [:]
         searchTabOpen = false
@@ -849,9 +918,14 @@ final class RepoViewModel: ObservableObject {
     private var isRefreshing = false
 
     func refresh() async {
+        // 即便完整刷新正在执行，也先同步磁盘存在性；切回应用时删除线不应被刷新防重入吞掉。
+        syncMissingTabPaths()
         guard !isRefreshing else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            syncMissingTabPaths()
+            isRefreshing = false
+        }
         // 非 git 目录：每次刷新尝试重新 discover（用户可能刚 git init），仍不是就只刷文件树
         if repo == nil, !isStandaloneFile, let root = repoRoot,
            let rediscovered = try? await Repository.discover(at: root) {
@@ -1171,6 +1245,7 @@ final class RepoViewModel: ObservableObject {
             openTabs.append(path)
             pruneTabsIfNeeded(active: path)
         }
+        syncMissingTabPaths()
 
         if FileIcon.isImage(path) {
             editorPath = path
@@ -1357,6 +1432,7 @@ final class RepoViewModel: ObservableObject {
         let wasActive = activeDetail == .file(path)
         openTabs.remove(at: index)
         buffers[path] = nil
+        syncMissingTabPaths()
 
         // editorPath 仍指向被关文件(它正被编辑器持有,哪怕此刻在看它的 diff):必须清空。
         // 否则随后激活别的标签时,openEditor 开头的 stashActiveBuffer 会把「还留在 editorText
