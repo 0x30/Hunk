@@ -134,8 +134,7 @@ enum CLIOpenRouter {
     /// restoreLast，避免「恢复上次仓库」抢掉 CLI 文件。必须用 nonisolated 标志，
     /// 不能在 init 里跨 actor 读 @MainActor 状态（assumeIsolated 会崩溃）。
     nonisolated static var hasChannelContent: Bool {
-        ((try? String(contentsOf: channelFile, encoding: .utf8)) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        CLIOpenRequestStore.hasPendingRequest(in: channelDirectory)
     }
     /// 等新窗口仓库打开后要定位的文件
     private static var pendingReveal: String?
@@ -148,7 +147,11 @@ enum CLIOpenRouter {
         let directory = isDirectory.boolValue ? url : url.deletingLastPathComponent()
 
         let vms = RepoViewModel.instances.allObjects
-        guard !vms.isEmpty else {
+        // RepoViewModel 会在 WindowRoot 初始化时注册，但此时 ContentView 还没有
+        // 挂载。若现在把请求写进 openWindowRequest，.onChange 监听尚未建立，目录
+        // 请求会静默丢失；暂存到窗口真正出现后再路由。
+        let readyVMs = vms.filter { $0.window != nil }
+        guard !readyVMs.isEmpty else {
             pendingPath = path
             scheduleColdStartRetry(attempt: 0)
             return
@@ -165,18 +168,26 @@ enum CLIOpenRouter {
 
         // 文件夹（VS Code 式）：已打开则聚焦，否则在新窗口打开
         if isDirectory.boolValue {
-            if let vm = vms.first(where: { canonicalRoot($0) == directory.path }) {
+            if let vm = readyVMs.first(where: { vm in
+                guard let root = canonicalRoot(vm) else { return false }
+                return directory.path == root || directory.path.hasPrefix(root + "/")
+            }) {
                 focus(vm)
             } else {
-                let requester = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
-                requester.openWindowRequest = directory.path
+                let requester = readyVMs.first { $0.window?.isKeyWindow == true } ?? readyVMs[0]
+                if requester.repoRoot == nil && !requester.isStandaloneFile {
+                    // 已有空白欢迎窗口时直接装入，避免依赖尚未建立的 WindowGroup 监听。
+                    requester.openFromCLI(directory.path)
+                } else {
+                    requester.openWindowRequest = directory.path
+                }
             }
             return
         }
 
         // 单文件①：落在某个已打开项目内 → 聚焦那个项目窗口并定位到该文件
         let file = url.path
-        if let vm = vms.first(where: { vm in
+        if let vm = readyVMs.first(where: { vm in
             guard let root = canonicalRoot(vm) else { return false }
             return file.hasPrefix(root + "/")
         }) {
@@ -188,7 +199,7 @@ enum CLIOpenRouter {
         }
 
         // 单文件②:不在任何打开的项目内
-        let target = vms.first { $0.window?.isKeyWindow == true } ?? vms[0]
+        let target = readyVMs.first { $0.window?.isKeyWindow == true } ?? readyVMs[0]
         focus(target)
         if target.repoRoot != nil && !target.isStandaloneFile {
             target.previewExternalFile(url)   // 当前窗口有工作区:只预览,不切目录(VS Code 式)
@@ -203,7 +214,7 @@ enum CLIOpenRouter {
         guard attempt < 12, pendingPath != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             guard let p = pendingPath else { return }  // 已被窗口的 .task 消费
-            if !RepoViewModel.instances.allObjects.isEmpty {
+            if RepoViewModel.instances.allObjects.contains(where: { $0.window != nil }) {
                 _ = takePending()
                 route(p)
             } else {
@@ -227,18 +238,20 @@ enum CLIOpenRouter {
     /// darwin 通知名，与安装的 hunk 脚本约定一致
     nonisolated static let notifyName = "app.hunk.cli.open"
 
-    /// 路径中转文件：脚本写入，应用读取后删除
+    /// 路径中转文件：脚本写入，应用读取后删除（保留旧版单文件名兼容）。
     nonisolated static var channelFile: URL {
+        channelDirectory.appendingPathComponent(CLIOpenRequestStore.legacyFileName)
+    }
+
+    nonisolated static var channelDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Hunk/cli-open")
+            .appendingPathComponent("Library/Application Support/Hunk")
     }
 
     static func consumeChannelFile() {
-        guard let raw = try? String(contentsOf: channelFile, encoding: .utf8) else { return }
-        try? FileManager.default.removeItem(at: channelFile)
-        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return }
-        route(path)
+        for path in CLIOpenRequestStore.consume(in: channelDirectory) {
+            route(path)
+        }
     }
 
     // 监视通道目录：脚本写入 cli-open 立即领取，不依赖应用「激活」事件。
@@ -248,7 +261,7 @@ enum CLIOpenRouter {
     private static var channelWatchSource: DispatchSourceFileSystemObject?
 
     static func startWatchingChannel() {
-        let dir = channelFile.deletingLastPathComponent()
+        let dir = channelDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // 消费后会删文件，下次脚本写入即「新建」，目录 .write 事件可靠触发
         let fd = Darwin.open(dir.path, O_EVTONLY)

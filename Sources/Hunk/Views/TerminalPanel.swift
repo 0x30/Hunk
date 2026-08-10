@@ -24,7 +24,7 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
         view.font = font
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
-        view.configureUnlimitedScrollback()
+        view.configureScrollback()
 
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color")
@@ -71,11 +71,13 @@ private final class FocusReportingTerminalView: LocalProcessTerminalView {
     var onFocusChange: ((Bool) -> Void)?
     private var observation: NSKeyValueObservation?
     private var lastReported: Bool?
-    /// SwiftTerm 默认只保留 500 行；按输出量扩容，避免长命令输出被循环缓冲覆盖。
-    private var scrollbackLines = 8_192
+    /// SwiftTerm 默认只保留 500 行；按输出量扩容，但设置硬上限避免多个窗口/会话
+    /// 因超长输出持续分配 BufferLine，拖慢渲染并推高进程内存。
+    private var scrollbackLines = 2_048
+    private let maxScrollbackLines = 8_192
     private var estimatedOutputLines = 0
 
-    func configureUnlimitedScrollback() {
+    func configureScrollback() {
         changeScrollback(scrollbackLines)
     }
 
@@ -98,8 +100,9 @@ private final class FocusReportingTerminalView: LocalProcessTerminalView {
         let required = estimatedOutputLines + getTerminal().rows + 1_024
         guard required >= scrollbackLines - 1_024 else { return }
         let next = max(scrollbackLines * 2, required)
-        guard next > scrollbackLines, next <= Int.max / 2 else { return }
-        scrollbackLines = next
+        let boundedNext = min(next, maxScrollbackLines)
+        guard boundedNext > scrollbackLines else { return }
+        scrollbackLines = boundedNext
         changeScrollback(scrollbackLines)
     }
 

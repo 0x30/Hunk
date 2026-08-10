@@ -22,10 +22,18 @@ enum CLIInstaller {
     fi
     # 走轻量通道送路径，再普通激活/启动应用。open 不带文件参数：带文件会走系统 odoc
     # 打开事件，冷启动时 SwiftUI 不建窗口、路径无处落地（且每次触发 LaunchServices
-    # 整库拷贝的内存尖峰）。应用在启动/激活时读取通道并路由（见 consumeChannelFile）。
+    # 整库拷贝的内存尖峰）。先写隐藏临时文件再原子改名，避免应用读到半截路径；
+    # 每次请求使用独立文件，连续调用也不会互相覆盖。
     CHANNEL_DIR="$HOME/Library/Application Support/Hunk"
     /bin/mkdir -p "$CHANNEL_DIR"
-    printf '%s' "$TARGET" > "$CHANNEL_DIR/cli-open"
+    TEMP=$(/usr/bin/mktemp "$CHANNEL_DIR/.cli-open.XXXXXX") || exit 1
+    if ! printf '%s' "$TARGET" > "$TEMP"; then
+        /bin/rm -f "$TEMP"
+        exit 1
+    fi
+    REQUEST="$CHANNEL_DIR/cli-open.$(/bin/date +%s).$$"
+    /bin/mv "$TEMP" "$REQUEST" || exit 1
+    /usr/bin/notifyutil -p "app.hunk.cli.open" >/dev/null 2>&1 || true
     exec /usr/bin/open -a "Hunk"
     """
 

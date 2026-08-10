@@ -55,21 +55,31 @@ public enum Lexer {
             return tokenizeMarkdown(text)
         }
         var tokens: [Token] = []
-        let chars = Array(text.utf16)
         let scalars = Array(text)  // 按 Character 扫描，utf16 偏移单独累计
-        _ = chars
+        let lineComments = language.lineComments.map { Array($0) }
+        let blockCommentStart = language.blockCommentStart.map {
+            (characters: Array($0), utf16Length: $0.utf16.count)
+        }
+        let blockCommentEnd = language.blockCommentEnd.map {
+            (characters: Array($0), utf16Length: $0.utf16.count)
+        }
+        let stringDelimiters = Set(language.stringDelimiters)
 
         var utf16Offset = 0
         var i = 0
         var guardI = -1  // 上一轮的扫描位置，用于死循环防御（见循环顶部）
         let count = scalars.count
 
-        func utf16Length(_ c: Character) -> Int { String(c).utf16.count }
+        func utf16Length(_ c: Character) -> Int {
+            if c.isASCII { return 1 }
+            return c.unicodeScalars.reduce(into: 0) { length, scalar in
+                length += scalar.value <= 0xFFFF ? 1 : 2
+            }
+        }
 
-        func matches(_ literal: String, at index: Int) -> Bool {
-            let lit = Array(literal)
-            guard index + lit.count <= count else { return false }
-            for k in 0..<lit.count where scalars[index + k] != lit[k] { return false }
+        func matches(_ literal: [Character], at index: Int) -> Bool {
+            guard index + literal.count <= count else { return false }
+            for k in literal.indices where scalars[index + k] != literal[k] { return false }
             return true
         }
 
@@ -90,9 +100,7 @@ public enum Lexer {
             let c = scalars[i]
 
             // 行注释
-            if let comment = language.lineComments.first(where: { matches($0, at: i) }) {
-                // SQL 的 "--" 不能吞掉 "-->" 之类；简单处理即可
-                _ = comment
+            if lineComments.contains(where: { matches($0, at: i) }) {
                 let start = utf16Offset
                 while i < count, scalars[i] != "\n" {
                     utf16Offset += utf16Length(scalars[i])
@@ -103,19 +111,19 @@ public enum Lexer {
             }
 
             // 块注释
-            if let bcStart = language.blockCommentStart,
-               let bcEnd = language.blockCommentEnd,
-               matches(bcStart, at: i) {
+            if let bcStart = blockCommentStart,
+               let bcEnd = blockCommentEnd,
+               matches(bcStart.characters, at: i) {
                 let start = utf16Offset
-                var k = i + bcStart.count
-                utf16Offset += bcStart.utf16.count
-                while k < count, !matches(bcEnd, at: k) {
+                var k = i + bcStart.characters.count
+                utf16Offset += bcStart.utf16Length
+                while k < count, !matches(bcEnd.characters, at: k) {
                     utf16Offset += utf16Length(scalars[k])
                     k += 1
                 }
                 if k < count {
-                    utf16Offset += bcEnd.utf16.count
-                    k += bcEnd.count
+                    utf16Offset += bcEnd.utf16Length
+                    k += bcEnd.characters.count
                 }
                 i = k
                 tokens.append(Token(range: NSRange(location: start, length: utf16Offset - start), type: .comment))
@@ -123,7 +131,7 @@ public enum Lexer {
             }
 
             // 字符串（同行终止；遇换行视为结束，避免错误状态蔓延）
-            if language.stringDelimiters.contains(c) {
+            if stringDelimiters.contains(c) {
                 let delimiter = c
                 let start = utf16Offset
                 utf16Offset += utf16Length(c)

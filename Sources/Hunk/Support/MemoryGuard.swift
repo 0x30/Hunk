@@ -18,6 +18,13 @@ enum MemoryGuard {
     private static var lastSampleMB: UInt64 = 0
     /// 已抓过「进行中」快照，避免每 2s 重复 dump（覆盖写，只留最近一张）
     private static var grewDumped = false
+    /// heap/vmmap 会暂停目标进程做一致性扫描，必须串行放到后台，不能阻塞 AppKit 主线程。
+    private static var snapshotInFlight = false
+    private static let snapshotQueue = DispatchQueue(
+        label: "app.hunk.memory-snapshot", qos: .utility
+    )
+    /// 低于此值才认为一次内存高峰已经结束，避免软阈值附近反复抓快照。
+    private static let recoveryLimitMB: UInt64 = 1000
 
     /// 当前内存占用（字节）：取 phys_footprint 与 RSS(resident_size) 的较大值。
     /// 关键：图形/图层内存（CoreAnimation 图层、IOSurface、GPU 纹理）只体现在 RSS，
@@ -56,19 +63,22 @@ enum MemoryGuard {
             let delta = Int64(mb) - Int64(lastSampleMB)
             if delta > 300 {
                 Diagnostics.log("⚠️ 内存快速增长 +\(delta)MB（采样间隔 2s）")
-                // 暴涨「进行中」就抓一张分区快照：和退出时那张对比，即可看出
-                // 这 1~2 秒里涨的是哪个区（MALLOC 堆 / IOSurface / 图层）。只抓一次。
-                if !grewDumped {
+                // 瞬时渲染/LaunchServices 尖峰通常很快回落；不要为每次尖峰运行 heap。
+                // 只有越过软阈值才抓一次，并放到后台队列，避免彩虹圈卡住主线程。
+                if mb >= softLimitMB, !grewDumped, !snapshotInFlight {
                     grewDumped = true
-                    dumpVmmapSummary(to: "/tmp/hunk_vmmap_grow.txt")
-                    // heap 按对象类型聚合，直接看出 GB 级堆里堆的是什么（String/Array/
-                    // AttributedString/自定义类）。在「刚开始涨」时抓最安全（内存尚低）。
-                    dumpHeap(to: "/tmp/hunk_heap_grow.txt")
-                    Diagnostics.log("已抓进行中分区+堆快照 → /tmp/hunk_vmmap_grow.txt /tmp/hunk_heap_grow.txt")
+                    snapshotInFlight = true
+                    snapshotQueue.async {
+                        dumpVmmapSummary(to: "/tmp/hunk_vmmap_grow.txt")
+                        // heap 按对象类型聚合，直接看出 GB 级堆里堆的是什么类型对象。
+                        dumpHeap(to: "/tmp/hunk_heap_grow.txt")
+                        Diagnostics.log("已抓进行中分区+堆快照 → /tmp/hunk_vmmap_grow.txt /tmp/hunk_heap_grow.txt")
+                        DispatchQueue.main.async { snapshotInFlight = false }
+                    }
                 }
             } else {
                 Diagnostics.log("内存采样")
-                if mb < softLimitMB { grewDumped = false }  // 回落到安全区后，允许下次暴涨再抓
+                if mb < recoveryLimitMB { grewDumped = false }  // 完全回落后允许下次异常抓取
             }
             lastSampleMB = mb
 

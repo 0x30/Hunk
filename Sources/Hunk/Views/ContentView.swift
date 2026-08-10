@@ -122,7 +122,15 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            guard vm.repoRoot != nil, !vm.isSyncing else { return }
+            // 应用从后台回来时只刷新当前 key window；此前每个项目窗口都启动一轮
+            // 约 12 个 git 子进程，多窗口同时激活会造成明显卡顿。
+            guard vm.window?.isKeyWindow == true, vm.repoRoot != nil, !vm.isSyncing else { return }
+            Task { await vm.refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let window = vm.window,
+                  (note.object as? NSWindow) === window,
+                  vm.repoRoot != nil, !vm.isSyncing else { return }
             Task { await vm.refresh() }
         }
         // 命令行路由要求开新窗口（当前窗口都被占用时）

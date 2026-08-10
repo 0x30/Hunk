@@ -54,9 +54,12 @@ struct DiffTextView: NSViewRepresentable {
         let storage = NSTextStorage()
         let layoutManager = NSLayoutManager()
         storage.addLayoutManager(layoutManager)
+        // 和编辑器一致：超长/超大 diff 禁止软换行。对一行几 MB 的压缩文件，
+        // 软换行会为每个字符计算 glyph 行，直接把主线程拖进彩虹圈。
+        let largeDiff = Self.hasLargeLine(diff)
         let container = NSTextContainer(containerSize: NSSize(width: contentSize.width,
                                                               height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = true
+        container.widthTracksTextView = !largeDiff
         layoutManager.addTextContainer(container)
 
         let textView = SelectableDiffTextView(frame: NSRect(origin: .zero, size: contentSize),
@@ -70,10 +73,15 @@ struct DiffTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 4, height: 6)
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
+        textView.isHorizontallyResizable = largeDiff
+        textView.autoresizingMask = largeDiff ? [] : [.width]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        scroll.hasHorizontalScroller = largeDiff
+        if largeDiff {
+            container.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                              height: CGFloat.greatestFiniteMagnitude)
+        }
 
         scroll.documentView = textView
         context.coordinator.textView = textView
@@ -83,7 +91,22 @@ struct DiffTextView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.applyWrapping(for: diff, scrollView: nsView)
         context.coordinator.rebuildIfNeeded(self)
+    }
+
+    /// 复用编辑器的长行保护阈值，避免 diff 切换到压缩/生成文件时软换行。
+    private static func hasLargeLine(_ diff: FileDiff) -> Bool {
+        var totalBytes = 0
+        for hunk in diff.hunks {
+            for line in hunk.lines {
+                totalBytes += line.text.utf8.count
+                if totalBytes > 1_000_000 || line.text.utf16.count > 20_000 {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     // MARK: Coordinator
@@ -93,8 +116,26 @@ struct DiffTextView: NSViewRepresentable {
         weak var textView: SelectableDiffTextView?
         private var contentKey: String = ""
         private var buildToken = 0
+        private var wrappingDiffHash: Int?
 
         init(_ parent: DiffTextView) { self.parent = parent }
+
+        func applyWrapping(for diff: FileDiff, scrollView: NSScrollView) {
+            guard let textView, let container = textView.textContainer else { return }
+            let diffHash = diff.hashValue
+            guard wrappingDiffHash != diffHash else { return }
+            wrappingDiffHash = diffHash
+            let large = DiffTextView.hasLargeLine(diff)
+            let wrap = !large
+            guard container.widthTracksTextView == wrap else { return }
+            textView.isHorizontallyResizable = large
+            textView.autoresizingMask = large ? [] : [.width]
+            container.widthTracksTextView = wrap
+            container.containerSize = large
+                ? NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+                : NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+            scrollView.hasHorizontalScroller = large
+        }
 
         /// 内容签名变了才重建（diff/主题/字号）。
         func rebuildIfNeeded(_ p: DiffTextView) {
@@ -105,7 +146,7 @@ struct DiffTextView: NSViewRepresentable {
         }
 
         private func rebuild(_ p: DiffTextView) {
-            guard let textView else { return }
+            guard textView != nil else { return }
             let font = NSFont.monospacedSystemFont(ofSize: max(9, p.fontSize), weight: .regular)
             // 主线程快照配色，后台只做纯计算
             let colors = Dictionary(uniqueKeysWithValues:
@@ -579,7 +620,7 @@ struct SplitDiffTextView: NSViewRepresentable {
         }
 
         private func rebuild(_ p: SplitDiffTextView) {
-            guard let leftView, let rightView else { return }
+            guard leftView != nil, rightView != nil else { return }
             let font = NSFont.monospacedSystemFont(ofSize: max(9, p.fontSize), weight: .regular)
             let colors = Dictionary(uniqueKeysWithValues:
                 TokenType.allCases.map { ($0, NSColor(p.settings.tokenColor(for: $0))) })
